@@ -112,6 +112,57 @@ func runCBXWithHomeAndDir(t *testing.T, home, dir string, env map[string]string,
 	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), exitCode
 }
 
+// runCBXInteractive runs cbx with piped stdin for interactive testing.
+func runCBXInteractive(t *testing.T, home, dir string, env map[string]string, stdinLines []string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+
+	cmd := exec.Command(binaryPath, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+
+	if home == "" {
+		tmpDir := t.TempDir()
+		home = filepath.Join(tmpDir, "home")
+		if err := os.MkdirAll(home, 0o755); err != nil {
+			t.Fatalf("creating fake home: %v", err)
+		}
+	}
+
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("creating stdin pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting cbx %s: %v", strings.Join(args, " "), err)
+	}
+
+	for _, line := range stdinLines {
+		_, _ = fmt.Fprintln(stdinPipe, line)
+	}
+	_ = stdinPipe.Close()
+
+	err = cmd.Wait()
+	exitCode = 0
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("running cbx %s: %v", strings.Join(args, " "), err)
+	}
+
+	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), exitCode
+}
+
 func requireFileExists(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {

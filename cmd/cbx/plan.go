@@ -1,23 +1,27 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan"
 
 	"github.com/spf13/cobra"
 )
 
 func newPlanCmd() *cobra.Command {
-	var outputDir string
+	var (
+		outputDir   string
+		interactive bool
+		noTUI       bool
+	)
 	cmd := &cobra.Command{
-		Use:   `plan "<intent>"`,
+		Use:   `plan ["<intent>"]`,
 		Short: "Generate an architecture plan from a natural-language intent",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			intent := args[0]
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("loading config: %w", err)
@@ -32,96 +36,61 @@ func newPlanCmd() *cobra.Command {
 				dir = "."
 			}
 
-			adrPath := fmt.Sprintf("%s/plan.adr.md", dir)
-			d2Path := fmt.Sprintf("%s/plan.d2", dir)
-
-			adrContent := generateADR(intent)
-			d2Content := generateD2(intent)
-
-			if err := os.WriteFile(adrPath, []byte(adrContent), 0o644); err != nil {
-				return fmt.Errorf("writing ADR: %w", err)
-			}
-			if err := os.WriteFile(d2Path, []byte(d2Content), 0o644); err != nil {
-				return fmt.Errorf("writing diagram: %w", err)
+			var intent string
+			if len(args) > 0 {
+				intent = args[0]
 			}
 
-			if !quietFlag {
-				fmt.Printf("✓ Wrote %s (%d bytes)\n", adrPath, len(adrContent))
-				fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(d2Content))
+			if noTUI {
+				if intent == "" {
+					return fmt.Errorf("intent required in non-interactive mode")
+				}
+				return runOneShot(cfg, intent, dir)
 			}
-			return nil
+
+			if interactive || intent == "" {
+				return runInteractive(cfg, intent, dir)
+			}
+
+			return runOneShot(cfg, intent, dir)
 		},
 	}
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory for plan files")
+	cmd.Flags().BoolVar(&interactive, "interactive", false, "Force interactive mode")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive one-shot mode")
 	return cmd
 }
 
-func generateADR(intent string) string {
-	intent = strings.ToLower(intent)
-	title := strings.Title(intent)
+func runOneShot(cfg *config.Config, intent, dir string) error {
+	client := &plan.MockClient{}
+	provider := cfg.LLM.Default
+	if provider == "" {
+		provider = "claude"
+	}
+	p, err := client.GeneratePlan(context.Background(), intent, provider)
+	if err != nil {
+		return err
+	}
 
-	return fmt.Sprintf(`# ADR: %s
+	adrPath := fmt.Sprintf("%s/plan.adr.md", dir)
+	d2Path := fmt.Sprintf("%s/plan.d2", dir)
 
-## Status
-Proposed
+	if err := os.WriteFile(adrPath, []byte(p.ADRContent), 0o644); err != nil {
+		return fmt.Errorf("writing ADR: %w", err)
+	}
+	if err := os.WriteFile(d2Path, []byte(p.D2Content), 0o644); err != nil {
+		return fmt.Errorf("writing diagram: %w", err)
+	}
 
-## Context
-The user requested: "%s"
-
-## Decision
-We will deploy a serverless architecture using AWS services.
-
-## Components
-- **CloudFront** — CDN and edge caching
-- **S3** — Static asset hosting
-- **Lambda** — Serverless compute
-- **API Gateway** — REST API fronting
-- **DynamoDB** — NoSQL data store
-- **Cognito** — User authentication and authorization
-
-## Consequences
-- Scalable without managing servers
-- Pay-per-use cost model
-- Fast global delivery via CloudFront
-`, title, intent)
+	if !quietFlag {
+		fmt.Printf("✓ Wrote %s (%d bytes)\n", adrPath, len(p.ADRContent))
+		fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
+	}
+	return nil
 }
 
-func generateD2(intent string) string {
-	return `direction: right
-
-users: Users {
-  shape: person
-}
-
-cdn: CloudFront {
-  shape: cloud
-}
-
-s3: S3 Bucket {
-  shape: cylinder
-}
-
-api: API Gateway {
-  shape: diamond
-}
-
-lambda: Lambda {
-  shape: hexagon
-}
-
-db: DynamoDB {
-  shape: cylinder
-}
-
-auth: Cognito {
-  shape: circle
-}
-
-users -> cdn: static assets
-cdn -> s3: origin
-users -> api: API calls
-api -> lambda: invoke
-lambda -> db: read/write
-lambda -> auth: verify token
-`
+func runInteractive(cfg *config.Config, intent, dir string) error {
+	session := plan.NewSession(dir)
+	client := &plan.MockClient{}
+	return plan.REPL(session, client, cfg, os.Stdin, os.Stdout, intent)
 }

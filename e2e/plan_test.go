@@ -83,4 +83,52 @@ func TestPlanEndToEnd(t *testing.T) {
 		requireFileExists(t, filepath.Join(outDir, "plan.adr.md"))
 		requireFileExists(t, filepath.Join(outDir, "plan.d2"))
 	})
+
+	t.Run("interactive_refine_and_save_with_diff", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
+
+		// Login
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		if code != 0 {
+			t.Fatalf("login failed with code %d", code)
+		}
+
+		// Run interactive plan: save v1, refine with CDN, save v2, quit
+		_, _, code = runCBXInteractive(t, homeDir, tmpDir, nil,
+			[]string{
+				`/save v1`,
+				`/refine "add CDN"`,
+				`/save v2`,
+				`/quit`,
+			},
+			"plan", "--interactive", "static site with auth",
+		)
+		if code != 0 {
+			t.Fatalf("interactive plan exited %d", code)
+		}
+
+		v1Path := filepath.Join(tmpDir, "v1", "plan.adr.md")
+		v2Path := filepath.Join(tmpDir, "v2", "plan.adr.md")
+		requireFileExists(t, v1Path)
+		requireFileExists(t, v2Path)
+
+		v1Data, err := os.ReadFile(v1Path)
+		if err != nil {
+			t.Fatalf("reading v1 plan: %v", err)
+		}
+		v2Data, err := os.ReadFile(v2Path)
+		if err != nil {
+			t.Fatalf("reading v2 plan: %v", err)
+		}
+
+		// v1 should not have CloudFront (added by CDN refine)
+		if strings.Contains(string(v1Data), "CloudFront") {
+			t.Fatalf("v1 plan should not contain CloudFront before refine, got:\n%s", string(v1Data))
+		}
+		// v2 should have CloudFront
+		if !strings.Contains(string(v2Data), "CloudFront") {
+			t.Fatalf("v2 plan should contain CloudFront after refine, got:\n%s", string(v2Data))
+		}
+	})
 }
