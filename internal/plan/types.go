@@ -43,7 +43,7 @@ type Session struct {
 func NewSession(outputDir string) *Session {
 	return &Session{
 		History:       make([]Turn, 0),
-		DiagramFormat: "d2",
+		DiagramFormat: "mermaid",
 		OutputDir:     outputDir,
 	}
 }

@@ -20,6 +20,15 @@ func TestRenderADR(t *testing.T) {
 	if !strings.Contains(adr, "S3") {
 		t.Fatalf("expected S3 component, got:\n%s", adr)
 	}
+	if !strings.Contains(adr, "## Options") {
+		t.Fatalf("expected Options section, got:\n%s", adr)
+	}
+	if !strings.Contains(adr, "## Tradeoffs") {
+		t.Fatalf("expected Tradeoffs section, got:\n%s", adr)
+	}
+	if !strings.Contains(adr, "## S3") {
+		t.Fatalf("expected per-component S3 section, got:\n%s", adr)
+	}
 }
 
 func TestRenderD2(t *testing.T) {
@@ -53,6 +62,34 @@ func TestRenderMermaid(t *testing.T) {
 	}
 	if !strings.Contains(mmd, "lambda[Lambda]") {
 		t.Fatalf("expected Lambda node, got:\n%s", mmd)
+	}
+	if !strings.Contains(mmd, "click lambda href \"#lambda\"") {
+		t.Fatalf("expected click directive, got:\n%s", mmd)
+	}
+}
+
+func TestRenderMermaidClickEvents(t *testing.T) {
+	p := &Plan{
+		Intent: "static site with auth",
+		Components: []Component{
+			{Name: "S3", Description: "Static hosting", Service: "S3"},
+			{Name: "API Gateway", Description: "REST API fronting", Service: "APIGateway"},
+			{Name: "Lambda", Description: "Serverless compute", Service: "Lambda"},
+			{Name: "Cognito", Description: "Auth", Service: "Cognito"},
+		},
+		Version: 1,
+	}
+	mmd := RenderMermaid(p)
+	wantLinks := []string{
+		"click s3 href \"#s3\"",
+		"click api_gateway href \"#api-gateway\"",
+		"click lambda href \"#lambda\"",
+		"click cognito href \"#cognito\"",
+	}
+	for _, want := range wantLinks {
+		if !strings.Contains(mmd, want) {
+			t.Fatalf("expected %q in mermaid, got:\n%s", want, mmd)
+		}
 	}
 }
 
