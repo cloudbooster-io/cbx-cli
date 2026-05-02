@@ -1,0 +1,199 @@
+package plan
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
+)
+
+// LLMCaller streams prompts to the user's configured LLM provider.
+type LLMCaller struct {
+	Provider config.LLMProvider
+	Token    string
+	client   *http.Client
+}
+
+// NewLLMCaller creates a new LLM streaming caller. Token is fetched from the
+// keychain for the given provider; an empty token is acceptable for offline
+// providers like ollama.
+func NewLLMCaller(provider config.LLMProvider) *LLMCaller {
+	token, _ := llm.GetToken(provider.Name)
+	return &LLMCaller{
+		Provider: provider,
+		Token:    token,
+		client:   &http.Client{},
+	}
+}
+
+// Stream sends the prompt to the LLM and calls onToken for each received token.
+func (c *LLMCaller) Stream(ctx context.Context, prompt string, onToken func(string)) error {
+	switch c.Provider.Name {
+	case "claude":
+		return c.streamClaude(ctx, prompt, onToken)
+	case "openai":
+		return c.streamOpenAI(ctx, prompt, onToken)
+	case "ollama":
+		return c.streamOllama(ctx, prompt, onToken)
+	default:
+		return fmt.Errorf("unsupported provider: %s", c.Provider.Name)
+	}
+}
+
+func (c *LLMCaller) streamClaude(ctx context.Context, prompt string, onToken func(string)) error {
+	body, err := json.Marshal(map[string]any{
+		"model":       c.Provider.Model,
+		"max_tokens":  1024,
+		"messages":    []map[string]string{{"role": "user", "content": prompt}},
+		"stream":      true,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Provider.BaseURL+"/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", c.Token)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("claude request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("claude returned status %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		if data == "[DONE]" {
+			break
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Delta struct {
+				Text string `json:"text"`
+			} `json:"delta"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		if event.Type == "content_block_delta" {
+			onToken(event.Delta.Text)
+		}
+	}
+	return scanner.Err()
+}
+
+func (c *LLMCaller) streamOpenAI(ctx context.Context, prompt string, onToken func(string)) error {
+	body, err := json.Marshal(map[string]any{
+		"model":    c.Provider.Model,
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
+		"stream":   true,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Provider.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("openai request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("openai returned status %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := line[6:]
+		if data == "[DONE]" {
+			break
+		}
+		var event struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
+		if len(event.Choices) > 0 {
+			onToken(event.Choices[0].Delta.Content)
+		}
+	}
+	return scanner.Err()
+}
+
+func (c *LLMCaller) streamOllama(ctx context.Context, prompt string, onToken func(string)) error {
+	body, err := json.Marshal(map[string]any{
+		"model":  c.Provider.Model,
+		"prompt": prompt,
+		"stream": true,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Provider.BaseURL+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		var event struct {
+			Response string `json:"response"`
+			Done     bool   `json:"done"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		onToken(event.Response)
+		if event.Done {
+			break
+		}
+	}
+	return scanner.Err()
+}
