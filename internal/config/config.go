@@ -9,10 +9,10 @@ import (
 
 // Config holds the CLI configuration.
 type Config struct {
-	Auth       AuthConfig            `json:"auth,omitempty"`
-	LLM        LLMConfig             `json:"llm,omitempty"`
-	APIURL     string                `json:"api_url,omitempty"`
-	DefaultOrg string                `json:"default_org,omitempty"`
+	Auth       AuthConfig `json:"auth,omitempty"`
+	LLM        LLMConfig  `json:"llm,omitempty"`
+	APIURL     string     `json:"api_url,omitempty"`
+	DefaultOrg string     `json:"default_org,omitempty"`
 }
 
 // AuthConfig holds CloudBooster authentication metadata.
@@ -28,13 +28,13 @@ type LLMConfig struct {
 	Default   string                 `json:"default,omitempty"`
 }
 
-// LLMProvider holds credentials for a single LLM provider.
+// LLMProvider holds metadata for a single LLM provider.
+// Secrets are stored in the OS keychain, not in this struct.
 type LLMProvider struct {
-	Name      string `json:"name"`
-	APIKey    string `json:"api_key,omitempty"`
-	BaseURL   string `json:"base_url,omitempty"`
-	Model     string `json:"model,omitempty"`
-	LoggedIn  bool   `json:"logged_in"`
+	Name     string `json:"name"`
+	BaseURL  string `json:"base_url,omitempty"`
+	Model    string `json:"model,omitempty"`
+	LoggedIn bool   `json:"logged_in"`
 }
 
 // Dir returns the configuration directory for cbx.

@@ -24,9 +24,13 @@ func TestPlanEndToEnd(t *testing.T) {
 	t.Run("llm_login_claude_then_plan_writes_md", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// Step 1: cbx llm login claude
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "llm", "login", "claude", "--token", "sk-ant-plan01")
 		if code != 0 {
 			t.Fatalf("cbx llm login claude exited %d", code)
 		}
@@ -35,7 +39,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		}
 
 		// Step 2: cbx plan "static site with auth"
-		stdout, _, code = runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "static site with auth")
+		stdout, _, code = runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "plan", "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -60,15 +64,19 @@ func TestPlanEndToEnd(t *testing.T) {
 	t.Run("plan_with_diagram_d2_writes_md_and_d2", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "llm", "login", "claude", "--token", "sk-ant-plan02")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
 
 		// Plan with --diagram=d2
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--diagram=d2", "static site with auth")
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "plan", "--diagram=d2", "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -84,15 +92,19 @@ func TestPlanEndToEnd(t *testing.T) {
 	t.Run("plan_with_json_flag_emits_envelope", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "llm", "login", "claude", "--token", "sk-ant-plan03")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
 
 		// Plan with --json
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--json", "static site with auth")
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "plan", "--json", "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -113,9 +125,13 @@ func TestPlanEndToEnd(t *testing.T) {
 		tmpDir := t.TempDir()
 		outDir := filepath.Join(tmpDir, "output")
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "llm", "login", "claude", "--token", "sk-ant-plan04")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
@@ -126,7 +142,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		}
 
 		// Plan with --output flag
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "-o", outDir, "static site with auth")
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "plan", "-o", outDir, "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -140,15 +156,19 @@ func TestPlanEndToEnd(t *testing.T) {
 	t.Run("interactive_refine_and_save_with_diff", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, env, "llm", "login", "claude", "--token", "sk-ant-plan05")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
 
 		// Run interactive plan: save v1, refine with CDN, save v2, quit
-		_, _, code = runCBXInteractive(t, homeDir, tmpDir, nil,
+		_, _, code = runCBXInteractive(t, homeDir, tmpDir, env,
 			[]string{
 				`/save v1`,
 				`/refine "add CDN"`,
