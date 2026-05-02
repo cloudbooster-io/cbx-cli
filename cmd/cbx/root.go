@@ -10,6 +10,7 @@ var (
 	date      = "unknown"
 	jsonFlag  bool
 	quietFlag bool
+	noTUI     bool
 )
 
 func newRootCmd() *cobra.Command {
@@ -24,6 +25,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 
 	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	root.PersistentFlags().BoolVar(&quietFlag, "quiet", false, "Suppress non-error output")
+	root.PersistentFlags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode without TUI")
 
 	root.AddCommand(
 		newVersionCmd(),

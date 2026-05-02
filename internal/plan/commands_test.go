@@ -3,50 +3,9 @@ package plan
 import (
 	"strings"
 	"testing"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
 )
-
-func TestParseSlashCommand(t *testing.T) {
-	tests := []struct {
-		input   string
-		wantCmd string
-		wantArgs []string
-		wantErr bool
-	}{
-		{"/save", "save", nil, false},
-		{"/save v1", "save", []string{"v1"}, false},
-		{"/refine add CDN", "refine", []string{"add", "CDN"}, false},
-		{"/diagram mermaid", "diagram", []string{"mermaid"}, false},
-		{"save", "", nil, true},
-		{"/", "", nil, true},
-		{"", "", nil, true},
-	}
-
-	for _, tt := range tests {
-		cmd, err := ParseSlashCommand(tt.input)
-		if tt.wantErr {
-			if err == nil {
-				t.Errorf("ParseSlashCommand(%q) expected error", tt.input)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("ParseSlashCommand(%q) unexpected error: %v", tt.input, err)
-			continue
-		}
-		if cmd.Name != tt.wantCmd {
-			t.Errorf("ParseSlashCommand(%q) cmd.Name = %q, want %q", tt.input, cmd.Name, tt.wantCmd)
-		}
-		if len(cmd.Args) != len(tt.wantArgs) {
-			t.Errorf("ParseSlashCommand(%q) cmd.Args = %v, want %v", tt.input, cmd.Args, tt.wantArgs)
-			continue
-		}
-		for i := range cmd.Args {
-			if cmd.Args[i] != tt.wantArgs[i] {
-				t.Errorf("ParseSlashCommand(%q) cmd.Args[%d] = %q, want %q", tt.input, i, cmd.Args[i], tt.wantArgs[i])
-			}
-		}
-	}
-}
 
 func TestCmdVariantsCap(t *testing.T) {
 	session := NewSession(".")
@@ -73,7 +32,7 @@ func TestCmdQuitUnsaved(t *testing.T) {
 
 	// Second quit should succeed
 	msg, err = cmdQuit(session)
-	if err != ErrQuit {
+	if err != chat.ErrQuit {
 		t.Fatalf("expected ErrQuit on second quit, got: %v", err)
 	}
 	if !strings.Contains(msg, "Goodbye") {
