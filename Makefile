@@ -1,4 +1,4 @@
-.PHONY: all build test test-e2e test-e2e-staging test-smoke-brew lint vet clean
+.PHONY: all build test test-e2e test-e2e-staging test-smoke-brew lint vet codegen codegen-check clean
 
 BINARY := cbx
 CMD := ./cmd/cbx
@@ -31,6 +31,13 @@ lint:
 
 vet:
 	go vet ./...
+
+codegen:
+	./tools/codegen/generate.sh
+
+codegen-check: codegen
+	@echo "Checking for generated code drift..."
+	git diff --exit-code core/api/v1/client.gen.go
 
 clean:
 	rm -rf bin/
