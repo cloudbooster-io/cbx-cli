@@ -1,6 +1,8 @@
 package main
 
 import (
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+
 	"github.com/spf13/cobra"
 )
 
@@ -19,9 +21,13 @@ func newRootCmd() *cobra.Command {
 		Short: "CloudBooster CLI — plan, audit, and manage cloud infrastructure",
 		Long: `cbx is the CloudBooster CLI for planning cloud infrastructure,
 auditing existing deployments, and interacting with the CloudBooster platform.`,
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+
+	root.SetHelpTemplate(output.HelpTemplate())
+	root.SetUsageTemplate(output.UsageTemplate())
 
 	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 	root.PersistentFlags().BoolVar(&quietFlag, "quiet", false, "Suppress non-error output")
@@ -34,8 +40,10 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newLogoutCmd(),
 		newStatusCmd(),
 		newLLMCmd(),
+		newKnowledgeCmd(),
 		newPlanCmd(),
 		newAuditCmd(),
+		newUpgradeCmd(),
 	)
 
 	return root

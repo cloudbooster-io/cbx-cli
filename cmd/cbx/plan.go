@@ -118,5 +118,5 @@ func runInteractive(cfg *config.Config, intent, dir, diagramFormat string) error
 	session := plan.NewSession(dir)
 	session.DiagramFormat = diagramFormat
 	client := &plan.MockClient{}
-	return plan.REPL(session, client, cfg, os.Stdin, os.Stdout, intent)
+	return plan.REPL(session, client, cfg, os.Stdin, os.Stdout, intent, false)
 }
