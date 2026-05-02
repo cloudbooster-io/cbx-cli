@@ -390,6 +390,20 @@ func TestAuditEndToEnd(t *testing.T) {
 			t.Fatalf("expected three-line error (2 newlines), got %d lines: %s", lines+1, stderr)
 		}
 	})
+
+	t.Run("audit_all_scanners_fail_exits_nonzero", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--pulumi-state", pulumiFixture, "--scanners", "tfsec")
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code when all scanners fail, got %d", code)
+		}
+		if !strings.Contains(stderr, "tfsec") {
+			t.Fatalf("expected stderr to mention tfsec failure, got: %s", stderr)
+		}
+	})
 }
 
 func createLargeStateFile(t *testing.T, path string) {
