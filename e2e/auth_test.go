@@ -99,9 +99,13 @@ func TestAuthFlow(t *testing.T) {
 	t.Run("llm_login_list_default_logout", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
+		env := map[string]string{
+			"CBX_KEYCHAIN_MOCK":     "1",
+			"CBX_LLM_SKIP_VALIDATE": "1",
+		}
 
 		// List: empty
-		stdout, _, code := runCBXWithHome(t, homeDir, nil, "llm", "list")
+		stdout, _, code := runCBXWithHome(t, homeDir, env, "llm", "list")
 		if code != 0 {
 			t.Fatalf("llm list failed: %d", code)
 		}
@@ -109,14 +113,14 @@ func TestAuthFlow(t *testing.T) {
 			t.Fatalf("expected empty list, got: %s", stdout)
 		}
 
-		// Login claude
-		_, _, code = runCBXWithHome(t, homeDir, nil, "llm", "login", "claude")
+		// Login claude with fake token that passes format validation
+		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("llm login claude failed: %d", code)
 		}
 
 		// List: shows claude
-		stdout, _, code = runCBXWithHome(t, homeDir, nil, "llm", "list")
+		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "list")
 		if code != 0 {
 			t.Fatalf("llm list failed: %d", code)
 		}
@@ -127,35 +131,35 @@ func TestAuthFlow(t *testing.T) {
 			t.Fatalf("expected claude marked as default, got: %s", stdout)
 		}
 
-		// Login openai
-		_, _, code = runCBXWithHome(t, homeDir, nil, "llm", "login", "openai")
+		// Login codex
+		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "login", "codex", "--token", "sk-test456")
 		if code != 0 {
-			t.Fatalf("llm login openai failed: %d", code)
+			t.Fatalf("llm login codex failed: %d", code)
 		}
 
-		// Set default to openai
-		_, _, code = runCBXWithHome(t, homeDir, nil, "llm", "default", "openai")
+		// Set default to codex
+		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "default", "codex")
 		if code != 0 {
-			t.Fatalf("llm default openai failed: %d", code)
+			t.Fatalf("llm default codex failed: %d", code)
 		}
 
-		// List: openai is default
-		stdout, _, code = runCBXWithHome(t, homeDir, nil, "llm", "list")
+		// List: codex is default
+		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "list")
 		if code != 0 {
 			t.Fatalf("llm list failed: %d", code)
 		}
-		if !strings.Contains(stdout, "openai (default)") {
-			t.Fatalf("expected openai as default, got: %s", stdout)
+		if !strings.Contains(stdout, "codex (default)") {
+			t.Fatalf("expected codex as default, got: %s", stdout)
 		}
 
 		// Logout claude
-		_, _, code = runCBXWithHome(t, homeDir, nil, "llm", "logout", "claude")
+		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "logout", "claude")
 		if code != 0 {
 			t.Fatalf("llm logout claude failed: %d", code)
 		}
 
-		// List: only openai
-		stdout, _, code = runCBXWithHome(t, homeDir, nil, "llm", "list")
+		// List: only codex
+		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "list")
 		if code != 0 {
 			t.Fatalf("llm list failed: %d", code)
 		}

@@ -1,62 +1,92 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
 
 	"github.com/spf13/cobra"
 )
 
 func newLLMCmd() *cobra.Command {
-	llm := &cobra.Command{
+	llmCmd := &cobra.Command{
 		Use:   "llm",
 		Short: "Manage LLM provider authentication",
 	}
-	llm.AddCommand(
+	llmCmd.AddCommand(
 		newLLMLoginCmd(),
 		newLLMLogoutCmd(),
 		newLLMListCmd(),
 		newLLMDefaultCmd(),
 	)
-	return llm
+	return llmCmd
 }
 
 func newLLMLoginCmd() *cobra.Command {
-	return &cobra.Command{
+	var tokenFlag string
+	cmd := &cobra.Command{
 		Use:   "login <provider>",
 		Short: "Log in to an LLM provider",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider := args[0]
+
+			p, ok := llm.Providers[provider]
+			if !ok {
+				return fmt.Errorf("unknown provider: %s (supported: claude, codex)", provider)
+			}
+
+			token := tokenFlag
+			if token == "" {
+				token = os.Getenv("CBX_LLM_TOKEN")
+			}
+
+			fromOAuth := false
+			if token == "" && provider == "claude" {
+				var err error
+				token, err = llm.ClaudeOAuthLogin()
+				if err != nil {
+					return fmt.Errorf("Claude OAuth login failed: %w", err)
+				}
+				fromOAuth = true
+			}
+
+			if token == "" {
+				// Interactive prompt for token.
+				fmt.Fprintf(cmd.OutOrStdout(), "Enter your %s API key: ", provider)
+				// Read password-like input without echo.
+				// For simplicity we read plain text; TTY masking can be added later.
+				var input string
+				if _, err := fmt.Fscanln(cmd.InOrStdin(), &input); err != nil {
+					return fmt.Errorf("reading token: %w", err)
+				}
+				token = input
+			}
+
+			if !fromOAuth {
+				if err := llm.ValidateTokenFormat(provider, token); err != nil {
+					return err
+				}
+				if err := llm.ValidateToken(provider, token); err != nil {
+					return fmt.Errorf("token validation failed: %w", err)
+				}
+			}
+
+			if err := llm.StoreToken(provider, token); err != nil {
+				return fmt.Errorf("storing token: %w", err)
+			}
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
-
-			apiKey := fmt.Sprintf("%s_test_key_%d", provider, 42)
-			baseURL := ""
-			model := ""
-			switch provider {
-			case "claude":
-				baseURL = "https://api.anthropic.com"
-				model = "claude-sonnet-4-20250514"
-			case "openai":
-				baseURL = "https://api.openai.com"
-				model = "gpt-4o"
-			case "ollama":
-				baseURL = "http://localhost:11434"
-				model = "llama3"
-			default:
-				return fmt.Errorf("unknown provider: %s", provider)
-			}
-
 			cfg.LLM.Providers[provider] = config.LLMProvider{
 				Name:     provider,
-				APIKey:   apiKey,
-				BaseURL:  baseURL,
-				Model:    model,
+				BaseURL:  p.BaseURL,
+				Model:    p.Model,
 				LoggedIn: true,
 			}
 			if cfg.LLM.Default == "" {
@@ -65,10 +95,24 @@ func newLLMLoginCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged in to " + provider))
+
+			if jsonFlag {
+				out := map[string]any{
+					"provider": provider,
+					"status":   "logged_in",
+					"default":  cfg.LLM.Default == provider,
+				}
+				b, _ := json.Marshal(out)
+				fmt.Println(string(b))
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged in to %s\n", provider)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&tokenFlag, "token", "", "API key (skips interactive prompt)")
+	return cmd
 }
 
 func newLLMLogoutCmd() *cobra.Command {
@@ -78,10 +122,15 @@ func newLLMLogoutCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider := args[0]
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
+
+			// Always attempt to delete from keychain, even if not in config.
+			_ = llm.DeleteToken(provider)
+
 			delete(cfg.LLM.Providers, provider)
 			if cfg.LLM.Default == provider {
 				cfg.LLM.Default = ""
@@ -89,7 +138,18 @@ func newLLMLogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged out of " + provider))
+
+			if jsonFlag {
+				out := map[string]any{
+					"provider": provider,
+					"status":   "logged_out",
+				}
+				b, _ := json.Marshal(out)
+				fmt.Println(string(b))
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged out of %s\n", provider)
 			return nil
 		},
 	}
@@ -104,8 +164,25 @@ func newLLMListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			if jsonFlag {
+				var providers []map[string]any
+				for name, p := range cfg.LLM.Providers {
+					providers = append(providers, map[string]any{
+						"name":     name,
+						"model":    p.Model,
+						"default":  cfg.LLM.Default == name,
+						"loggedIn": p.LoggedIn,
+					})
+				}
+				out := map[string]any{"providers": providers}
+				b, _ := json.Marshal(out)
+				fmt.Println(string(b))
+				return nil
+			}
+
 			if len(cfg.LLM.Providers) == 0 {
-				fmt.Println("No LLM providers configured.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No LLM providers configured.")
 				return nil
 			}
 			for name, p := range cfg.LLM.Providers {
@@ -113,7 +190,7 @@ func newLLMListCmd() *cobra.Command {
 				if cfg.LLM.Default == name {
 					marker = " (default)"
 				}
-				fmt.Printf("%s%s — %s\n", name, marker, p.Model)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s%s — %s\n", name, marker, p.Model)
 			}
 			return nil
 		},
@@ -138,7 +215,18 @@ func newLLMDefaultCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println(output.Success.Render(output.Symbol("check") + " Default LLM provider set to " + provider))
+
+			if jsonFlag {
+				out := map[string]any{
+					"provider": provider,
+					"status":   "set_default",
+				}
+				b, _ := json.Marshal(out)
+				fmt.Println(string(b))
+				return nil
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ Default LLM provider set to %s\n", provider)
 			return nil
 		},
 	}
