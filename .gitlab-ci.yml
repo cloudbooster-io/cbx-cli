@@ -1,0 +1,80 @@
+variables:
+  GO_VERSION: "1.24"
+
+stages:
+  - validate
+  - test
+  - e2e
+
+# ---------------------------------------------------------------------------
+# Validate
+# ---------------------------------------------------------------------------
+validate:
+  stage: validate
+  image: golang:${GO_VERSION}
+  script:
+    - go mod download
+    - go vet ./...
+    - go build ./cmd/cbx
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Unit + local E2E tests
+# ---------------------------------------------------------------------------
+test:
+  stage: test
+  image: golang:${GO_VERSION}
+  script:
+    - go test -v ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# E2E matrix — linux + macOS runners
+# ---------------------------------------------------------------------------
+e2e-matrix:
+  stage: e2e
+  parallel:
+    matrix:
+      - RUNNER_OS: [linux, darwin]
+  tags:
+    - ${RUNNER_OS}
+  script:
+    - go test -v ./e2e/...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Staging E2E — runs against staging API on every PR
+# Gating: this job must pass before merge.
+# ---------------------------------------------------------------------------
+e2e-staging:
+  stage: e2e
+  image: golang:${GO_VERSION}
+  variables:
+    CB_API_URL: "https://api.staging.cloudbooster.io"
+  script:
+    - go test -v ./e2e/... -tags=e2e_staging
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Brew smoke test — post-release verification
+# Runs only on tags or when explicitly requested.
+# ---------------------------------------------------------------------------
+smoke-brew:
+  stage: e2e
+  image: homebrew/brew:latest
+  tags:
+    - darwin
+  script:
+    - ./scripts/smoke-brew.sh
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$RUN_SMOKE_BREW == "true"'
+  allow_failure: true  # TODO: remove once brew tap is public and L1.19 ships

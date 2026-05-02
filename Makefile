@@ -1,0 +1,30 @@
+.PHONY: all build test test-e2e test-e2e-staging test-smoke-brew lint vet clean
+
+BINARY := cbx
+CMD := ./cmd/cbx
+
+all: build
+
+build:
+	go build -o bin/$(BINARY) $(CMD)
+
+test:
+	go test ./...
+
+test-e2e:
+	go test -v ./e2e/...
+
+test-e2e-staging:
+	CB_API_URL=$${CB_API_URL:-https://api.staging.cloudbooster.io} go test -v ./e2e/... -tags=e2e_staging
+
+test-smoke-brew:
+	./scripts/smoke-brew.sh
+
+lint:
+	golangci-lint run ./...
+
+vet:
+	go vet ./...
+
+clean:
+	rm -rf bin/
