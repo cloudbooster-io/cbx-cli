@@ -4,7 +4,7 @@ import "testing"
 
 func TestStaticScannerS3(t *testing.T) {
 	scanners := MockScanners()
-	resources := []Resource{
+	resources := []DiscoveredResource{
 		{Type: "aws:s3/bucket:Bucket", URN: "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket"},
 	}
 	findings := RunScanners(scanners, resources)
@@ -30,7 +30,7 @@ func TestStaticScannerS3(t *testing.T) {
 
 func TestStaticScannerSecurityGroup(t *testing.T) {
 	scanners := MockScanners()
-	resources := []Resource{
+	resources := []DiscoveredResource{
 		{Type: "aws_security_group", URN: "sg-123"},
 	}
 	findings := RunScanners(scanners, resources)
@@ -44,7 +44,7 @@ func TestStaticScannerSecurityGroup(t *testing.T) {
 
 func TestStaticScannerNoMatch(t *testing.T) {
 	scanners := MockScanners()
-	resources := []Resource{
+	resources := []DiscoveredResource{
 		{Type: "aws:unknown:Type", URN: "unknown"},
 	}
 	findings := RunScanners(scanners, resources)
@@ -56,7 +56,7 @@ func TestStaticScannerNoMatch(t *testing.T) {
 func TestRunScannersDedupe(t *testing.T) {
 	// Run the same scanner twice to verify deduplication.
 	scanners := []Scanner{&staticScanner{}, &staticScanner{}}
-	resources := []Resource{
+	resources := []DiscoveredResource{
 		{Type: "aws:s3/bucket:Bucket", URN: "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket"},
 	}
 	findings := RunScanners(scanners, resources)

@@ -21,6 +21,7 @@ func newAuditCmd() *cobra.Command {
 		interactive        bool
 		timeout            time.Duration
 		timeoutPerScanner  time.Duration
+		yes                bool
 	)
 
 	cmd := &cobra.Command{
@@ -64,6 +65,7 @@ func newAuditCmd() *cobra.Command {
 				Interactive:       interactive,
 				NoTUI:             noTUI,
 				Quiet:             quietFlag,
+				Yes:               yes,
 				MockScanners:      true,
 				Timeout:           timeout,
 				TimeoutPerScanner: timeoutPerScanner,
@@ -113,6 +115,7 @@ func newAuditCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "Enable interactive follow-up mode")
 	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Minute, "Overall audit timeout")
 	cmd.Flags().DurationVar(&timeoutPerScanner, "timeout-per-scanner", 5*time.Minute, "Timeout per scanner/provider")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Skip interactive confirmations")
 
 	return cmd
 }
