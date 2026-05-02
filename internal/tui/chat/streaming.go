@@ -1,12 +1,25 @@
 package chat
 
-import "strings"
+import (
+	"strings"
 
-// TokenStream is the interface consumed by the stream renderer.
-// TODO(CB-398): migrate to core/llm/ streaming interface when available.
-type TokenStream interface {
-	// Next returns the next token or an error. An empty string signals EOF.
-	Next() (string, error)
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
+)
+
+// StreamAdapter wraps an llm.Stream so it can be consumed by the TUI stream
+// renderer. It is the migration target for the old TokenStream interface.
+type StreamAdapter struct {
+	stream *llm.Stream
+}
+
+// NewStreamAdapter creates an adapter from a core/llm stream.
+func NewStreamAdapter(stream *llm.Stream) *StreamAdapter {
+	return &StreamAdapter{stream: stream}
+}
+
+// Next returns the next token or an error. An empty string signals EOF.
+func (a *StreamAdapter) Next() (string, error) {
+	return a.stream.Next()
 }
 
 // StreamRenderer incrementally renders a token stream into viewport content.
