@@ -16,6 +16,9 @@ var (
 	noColorFlag bool
 )
 
+// executedCommand tracks which subcommand was run (used by background update check).
+var executedCommand string
+
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "cbx",
@@ -27,6 +30,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			output.Configure(noColorFlag, quietFlag)
+			executedCommand = cmd.Name()
 			return nil
 		},
 	}

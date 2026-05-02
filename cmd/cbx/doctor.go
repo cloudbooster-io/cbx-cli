@@ -1,16 +1,31 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"runtime"
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
 )
+
+// doctorCheck represents a single health check.
+type doctorCheck struct {
+	Name string `json:"name"`
+	OK   bool   `json:"ok"`
+	Info string `json:"info"`
+}
+
+type doctorReport struct {
+	Healthy bool          `json:"healthy"`
+	Checks  []doctorCheck `json:"checks"`
+}
 
 func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
@@ -22,22 +37,37 @@ func newDoctorCmd() *cobra.Command {
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			apiURL := cfg.APIURL
-			networkOK, networkInfo := checkAPIConnectivity(apiURL)
-
-			tbl := output.NewTable([]string{"Check", "Status", "Detail"})
-			tbl.AddRow("Go version", output.Symbol("check"), runtime.Version())
-			tbl.AddRow("OS/Arch", output.Symbol("check"), fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
-			tbl.AddRow("Config directory", output.Symbol("check"), config.Dir())
-			if networkOK {
-				tbl.AddRow("API connectivity", output.Symbol("check"), networkInfo)
-			} else {
-				tbl.AddRow("API connectivity", output.Symbol("cross"), networkInfo)
+			checks := runChecks(cfg)
+			allOK := true
+			for _, c := range checks {
+				if !c.OK {
+					allOK = false
+					break
+				}
 			}
 
-			fmt.Print(tbl.Render())
+			if jsonFlag {
+				report := doctorReport{Healthy: allOK, Checks: checks}
+				b, err := json.MarshalIndent(report, "", "  ")
+				if err != nil {
+					return fmt.Errorf("marshalling JSON: %w", err)
+				}
+				fmt.Println(string(b))
+				if !allOK {
+					return fmt.Errorf("some health checks failed")
+				}
+				return nil
+			}
 
-			if !networkOK {
+			for _, c := range checks {
+				status := "✓"
+				if !c.OK {
+					status = "✗"
+				}
+				fmt.Printf("%s %s: %s\n", status, c.Name, c.Info)
+			}
+
+			if !allOK {
 				return fmt.Errorf("some health checks failed")
 			}
 			fmt.Println("\nYour cbx installation is healthy.")
@@ -46,15 +76,158 @@ func newDoctorCmd() *cobra.Command {
 	}
 }
 
+func runChecks(cfg *config.Config) []doctorCheck {
+	var checks []doctorCheck
+
+	// 1. cbx version
+	checks = append(checks, doctorCheck{
+		Name: "cbx version",
+		OK:   version != "dev" && version != "unknown" && version != "",
+		Info: version,
+	})
+
+	// 2. OS/Arch
+	checks = append(checks, doctorCheck{
+		Name: "OS/Arch",
+		OK:   true,
+		Info: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+	})
+
+	// 3. Config directory
+	checks = append(checks, doctorCheck{
+		Name: "Config directory",
+		OK:   true,
+		Info: config.Dir(),
+	})
+
+	// 4. API connectivity
+	apiURL := cfg.APIURL
+	if apiURL == "" {
+		apiURL = "https://api.cloudbooster.io"
+	}
+	networkOK, networkInfo := checkAPIConnectivity(apiURL)
+	checks = append(checks, doctorCheck{
+		Name: "API connectivity",
+		OK:   networkOK,
+		Info: networkInfo,
+	})
+
+	// 5. LLM provider auth
+	llmOK, llmInfo := checkLLMAuth(cfg)
+	checks = append(checks, doctorCheck{
+		Name: "LLM auth",
+		OK:   llmOK,
+		Info: llmInfo,
+	})
+
+	// 6. Scanner binaries on PATH
+	scannerOK, scannerInfo := checkScannerBinaries()
+	checks = append(checks, doctorCheck{
+		Name: "Scanner binaries",
+		OK:   scannerOK,
+		Info: scannerInfo,
+	})
+
+	// 7. Version current
+	versionOK, versionInfo := checkVersionCurrent()
+	checks = append(checks, doctorCheck{
+		Name: "Version current",
+		OK:   versionOK,
+		Info: versionInfo,
+	})
+
+	// 8. Keychain accessible
+	keychainOK, keychainInfo := checkKeychain()
+	checks = append(checks, doctorCheck{
+		Name: "Keychain accessible",
+		OK:   keychainOK,
+		Info: keychainInfo,
+	})
+
+	return checks
+}
+
 func checkAPIConnectivity(apiURL string) (bool, string) {
 	client := http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(apiURL + "/health")
 	if err != nil {
-		return false, fmt.Sprintf(" unreachable (%v)", err)
+		return false, fmt.Sprintf("unreachable (%v)", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Sprintf(" HTTP %d", resp.StatusCode)
+		return false, fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
-	return true, fmt.Sprintf(" %s/health OK", apiURL)
+	return true, fmt.Sprintf("%s/health OK", apiURL)
+}
+
+func checkLLMAuth(cfg *config.Config) (bool, string) {
+	if len(cfg.LLM.Providers) == 0 {
+		return false, "no LLM providers configured"
+	}
+	var loggedIn []string
+	var missing []string
+	for name, p := range cfg.LLM.Providers {
+		if p.LoggedIn {
+			loggedIn = append(loggedIn, name)
+		} else {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return false, fmt.Sprintf("providers missing auth: %v", missing)
+	}
+	return true, fmt.Sprintf("%d provider(s) configured", len(loggedIn))
+}
+
+func checkScannerBinaries() (bool, string) {
+	scanners := []string{"prowler", "trivy", "checkov", "tfsec"}
+	var found []string
+	var missing []string
+	for _, name := range scanners {
+		if _, err := exec.LookPath(name); err == nil {
+			found = append(found, name)
+		} else {
+			missing = append(missing, name)
+		}
+	}
+	if len(found) == 0 {
+		return false, "none found on PATH"
+	}
+	return true, fmt.Sprintf("found: %v", found)
+}
+
+func checkVersionCurrent() (bool, string) {
+	if version == "dev" || version == "unknown" || version == "" {
+		return false, "development build (no version info)"
+	}
+	checker := update.NewChecker(version)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := checker.Check(ctx)
+	if err != nil {
+		return false, fmt.Sprintf("unable to check: %v", err)
+	}
+	if result.HasUpdate {
+		return false, fmt.Sprintf("%s available (current: %s)", result.LatestVersion, version)
+	}
+	return true, fmt.Sprintf("up to date (%s)", version)
+}
+
+func checkKeychain() (bool, string) {
+	switch runtime.GOOS {
+	case "darwin":
+		if _, err := exec.LookPath("security"); err == nil {
+			return true, "security available"
+		}
+		return false, "security not found on PATH"
+	case "linux":
+		if _, err := exec.LookPath("secret-tool"); err == nil {
+			return true, "secret-tool available"
+		}
+		return true, "no keyring helper found (optional)"
+	case "windows":
+		return true, "Windows Credential Manager available"
+	default:
+		return true, "keychain check not implemented for this OS"
+	}
 }

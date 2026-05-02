@@ -46,6 +46,15 @@ func Dir() string {
 	return filepath.Join(home, ".cbx")
 }
 
+// CacheDir returns the cache directory for cbx.
+func CacheDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	return filepath.Join(home, ".cache", "cb")
+}
+
 // Path returns the full path to the config file.
 func Path() string {
 	return filepath.Join(Dir(), "config.json")

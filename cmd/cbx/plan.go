@@ -15,10 +15,10 @@ import (
 
 func newPlanCmd() *cobra.Command {
 	var (
-		outputDir       string
-		noTUI           bool
-		diagramFormat   string
-		llmProvider     string
+		outputDir     string
+		noTUI         bool
+		diagramFormat string
+		llmProvider   string
 	)
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
