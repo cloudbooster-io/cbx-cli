@@ -15,7 +15,7 @@ type Result struct {
 
 // Run executes the full audit pipeline for the given state file.
 func Run(opts Options) (*Result, error) {
-	resources, err := ParseState(opts.StateFile)
+	resources, err := ParseState(opts)
 	if err != nil {
 		return nil, err
 	}

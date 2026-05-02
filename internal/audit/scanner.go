@@ -44,7 +44,7 @@ func (s *staticScanner) Scan(_ context.Context, resources []Resource) ([]Finding
 	return findings, nil
 }
 
-func evaluateResource(res Resource) []Finding {
+func evaluateResource(res DiscoveredResource) []Finding {
 	var findings []Finding
 	resType := res.Type
 	resURN := res.URN

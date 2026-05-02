@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -275,4 +276,156 @@ func TestAuditEndToEnd(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("audit_large_file_no_tui_fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		largeFile := filepath.Join(tmpDir, "large.tfstate")
+		createLargeStateFile(t, largeFile)
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--terraform-state", largeFile, "--no-tui")
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code, got %d", code)
+		}
+		if !strings.Contains(stderr, "size limit") {
+			t.Fatalf("expected size limit error, got: %s", stderr)
+		}
+	})
+
+	t.Run("audit_large_file_with_yes_succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		largeFile := filepath.Join(tmpDir, "large.tfstate")
+		createLargeStateFile(t, largeFile)
+
+		// With --yes the size guard is bypassed. The parser then fails
+		// because the state contains no real resources, proving the guard
+		// was skipped.
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--terraform-state", largeFile, "--yes")
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code (no resources), got %d", code)
+		}
+		if strings.Contains(stderr, "size limit") {
+			t.Fatalf("did not expect size limit error, got: %s", stderr)
+		}
+	})
+
+	t.Run("audit_large_file_prompt_decline", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		largeFile := filepath.Join(tmpDir, "large.tfstate")
+		createLargeStateFile(t, largeFile)
+
+		_, stderr, code := runCBXInteractive(t, "", tmpDir, nil, []string{"n"},
+			"audit", "--terraform-state", largeFile)
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code, got %d", code)
+		}
+		if !strings.Contains(stderr, "user declined") {
+			t.Fatalf("expected user declined message, got: %s", stderr)
+		}
+	})
+
+	t.Run("audit_malformed_json_three_line_error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		badFile := filepath.Join(tmpDir, "bad.json")
+		if err := os.WriteFile(badFile, []byte(`{"invalid`), 0o644); err != nil {
+			t.Fatalf("writing file: %v", err)
+		}
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--pulumi-state", badFile)
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code, got %d", code)
+		}
+		lines := strings.Count(stderr, "\n")
+		if lines != 2 {
+			t.Fatalf("expected three-line error (2 newlines), got %d lines: %s", lines+1, stderr)
+		}
+	})
+
+	t.Run("audit_terraform_remote_exec_blocked", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		badFile := filepath.Join(tmpDir, "bad.tfstate")
+		state := map[string]interface{}{
+			"terraform_version": "1.5.0",
+			"serial":            1,
+			"resources": []interface{}{
+				map[string]interface{}{
+					"mode": "managed",
+					"type": "aws_instance",
+					"name": "web",
+					"provisioner": []interface{}{
+						map[string]interface{}{
+							"type":   "remote-exec",
+							"inline": []interface{}{"echo hello"},
+						},
+					},
+					"instances": []interface{}{
+						map[string]interface{}{
+							"attributes": map[string]interface{}{
+								"ami": "ami-123",
+							},
+						},
+					},
+				},
+			},
+		}
+		writeJSONFile(t, badFile, state)
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--terraform-state", badFile)
+
+		if code == 0 {
+			t.Fatalf("expected non-zero exit code, got %d", code)
+		}
+		if !strings.Contains(stderr, "blocked provisioner") {
+			t.Fatalf("expected blocked provisioner error, got: %s", stderr)
+		}
+		lines := strings.Count(stderr, "\n")
+		if lines != 2 {
+			t.Fatalf("expected three-line error (2 newlines), got %d lines: %s", lines+1, stderr)
+		}
+	})
+}
+
+func createLargeStateFile(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("creating file: %v", err)
+	}
+	defer f.Close()
+
+	header := `{"terraform_version":"1.0.0","serial":1,"resources":[],"pad":"`
+	footer := `"}`
+	target := 100*1024*1024 + 1
+	padding := target - len(header) - len(footer)
+	if padding < 0 {
+		padding = 0
+	}
+
+	if _, err := f.WriteString(header); err != nil {
+		t.Fatalf("writing header: %v", err)
+	}
+	if _, err := f.WriteString(strings.Repeat(" ", padding)); err != nil {
+		t.Fatalf("writing padding: %v", err)
+	}
+	if _, err := f.WriteString(footer); err != nil {
+		t.Fatalf("writing footer: %v", err)
+	}
+}
+
+func writeJSONFile(t *testing.T, path string, v interface{}) {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshaling JSON: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
 }
