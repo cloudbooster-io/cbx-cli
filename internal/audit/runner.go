@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -45,7 +46,7 @@ func Run(opts Options) (*Result, error) {
 		reportPath = base + "_audit_report.md"
 	}
 
-	if err := WriteMarkdownReport(reportPath, findings); err != nil {
+	if err := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); err != nil {
 		return nil, fmt.Errorf("writing report: %w", err)
 	}
 
