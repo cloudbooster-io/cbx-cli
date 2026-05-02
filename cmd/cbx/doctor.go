@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -24,28 +25,19 @@ func newDoctorCmd() *cobra.Command {
 			apiURL := cfg.APIURL
 			networkOK, networkInfo := checkAPIConnectivity(apiURL)
 
-			checks := []struct {
-				name string
-				ok   bool
-				info string
-			}{
-				{"Go version", true, runtime.Version()},
-				{"OS/Arch", true, fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)},
-				{"Config directory", true, config.Dir()},
-				{"API connectivity", networkOK, networkInfo},
+			tbl := output.NewTable([]string{"Check", "Status", "Detail"})
+			tbl.AddRow("Go version", output.Symbol("check"), runtime.Version())
+			tbl.AddRow("OS/Arch", output.Symbol("check"), fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+			tbl.AddRow("Config directory", output.Symbol("check"), config.Dir())
+			if networkOK {
+				tbl.AddRow("API connectivity", output.Symbol("check"), networkInfo)
+			} else {
+				tbl.AddRow("API connectivity", output.Symbol("cross"), networkInfo)
 			}
 
-			allOK := true
-			for _, c := range checks {
-				status := "✓"
-				if !c.ok {
-					status = "✗"
-					allOK = false
-				}
-				fmt.Printf("%s %s: %s\n", status, c.name, c.info)
-			}
+			fmt.Print(tbl.Render())
 
-			if !allOK {
+			if !networkOK {
 				return fmt.Errorf("some health checks failed")
 			}
 			fmt.Println("\nYour cbx installation is healthy.")

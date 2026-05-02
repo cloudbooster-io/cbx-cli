@@ -1,33 +1,31 @@
 package output
 
-// HelpTemplate returns the Cobra-compatible help template for cbx.
-// It renders a gh-style help surface: one-line description, usage,
-// available commands, flags, examples, and a "Learn more" link.
-func HelpTemplate() string {
-	return `{{.Short}}
+import "github.com/spf13/cobra"
 
-USAGE
+// helpTemplate is the upgraded Cobra help template.
+const helpTemplate = `{{with .Long}}{{ . | trim }}
+
+{{end}}Usage:
   {{.UseLine}}
 
-{{if .HasAvailableSubCommands}}AVAILABLE COMMANDS{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+{{if .HasExample}}Examples:
+{{.Example}}
+
+{{end}}{{if .HasAvailableSubCommands}}Commands:{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
   {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}
 
-{{end}}{{if .HasAvailableLocalFlags}}FLAGS
+{{end}}{{if .HasAvailableLocalFlags}}Flags:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
 
-{{end}}EXAMPLES
-  # Log in to CloudBooster
-  $ cbx login
+{{end}}{{if .HasAvailableInheritedFlags}}Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
 
-  # Generate an architecture plan
-  $ cbx plan "deploy a static site to AWS"
-
-LEARN MORE
-  http://docs.cloudbooster.io
+{{end}}Learn more: https://docs.cloudbooster.io
 `
-}
 
-// UsageTemplate returns the Cobra-compatible usage template for cbx.
-func UsageTemplate() string {
-	return HelpTemplate()
+// InstallHelpTemplate applies the custom help and usage templates to root
+// and propagates them to all subcommands.
+func InstallHelpTemplate(root *cobra.Command) {
+	root.SetHelpTemplate(helpTemplate)
+	root.SetUsageTemplate(helpTemplate)
 }

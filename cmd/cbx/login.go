@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -22,7 +23,7 @@ func newLoginCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println("✓ Logged in to CloudBooster")
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged in to CloudBooster"))
 			return nil
 		},
 	}
@@ -41,7 +42,7 @@ func newLogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println("✓ Logged out of CloudBooster")
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged out of CloudBooster"))
 			return nil
 		},
 	}

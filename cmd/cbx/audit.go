@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -71,11 +72,9 @@ func newAuditCmd() *cobra.Command {
 			// Output rendering
 			switch outputFormat {
 			case "json":
-				out, err := audit.RenderJSON(result.Findings)
-				if err != nil {
+				if err := output.PrintJSON(result.Findings, nil); err != nil {
 					return err
 				}
-				fmt.Println(out)
 			case "sarif":
 				out, err := audit.RenderSARIF(result.Findings)
 				if err != nil {
@@ -94,7 +93,7 @@ func newAuditCmd() *cobra.Command {
 			}
 
 			if !quietFlag {
-				fmt.Fprintf(os.Stderr, "✓ Wrote markdown report: %s\n", result.ReportPath)
+				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+result.ReportPath))
 			}
 
 			return audit.ExitWithSeverity(result.Findings)

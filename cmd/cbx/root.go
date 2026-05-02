@@ -7,12 +7,13 @@ import (
 )
 
 var (
-	version   = "dev"
-	commit    = "unknown"
-	date      = "unknown"
-	jsonFlag  bool
-	quietFlag bool
-	noTUI     bool
+	version     = "dev"
+	commit      = "unknown"
+	date        = "unknown"
+	jsonFlag    bool
+	quietFlag   bool
+	noTUI       bool
+	noColorFlag bool
 )
 
 func newRootCmd() *cobra.Command {
@@ -24,14 +25,18 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			output.Configure(noColorFlag, quietFlag)
+			return nil
+		},
 	}
 
-	root.SetHelpTemplate(output.HelpTemplate())
-	root.SetUsageTemplate(output.UsageTemplate())
-
 	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
-	root.PersistentFlags().BoolVar(&quietFlag, "quiet", false, "Suppress non-error output")
+	root.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-error output")
 	root.PersistentFlags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode without TUI")
+	root.PersistentFlags().BoolVar(&noColorFlag, "no-color", false, "Disable colored output")
+
+	output.InstallHelpTemplate(root)
 
 	root.AddCommand(
 		newVersionCmd(),

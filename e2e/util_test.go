@@ -26,12 +26,14 @@ func TestVersion(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("version exited %d", code)
 		}
-		var out map[string]string
+		var out struct {
+			Data map[string]string `json:"data"`
+		}
 		if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 			t.Fatalf("expected valid JSON: %v", err)
 		}
-		if _, ok := out["version"]; !ok {
-			t.Fatalf("expected 'version' field in JSON")
+		if _, ok := out.Data["version"]; !ok {
+			t.Fatalf("expected 'version' field in JSON data")
 		}
 	})
 }
