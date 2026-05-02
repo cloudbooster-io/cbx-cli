@@ -3,8 +3,6 @@ package plan
 import (
 	"strings"
 	"testing"
-
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
 )
 
 func TestCmdVariantsCap(t *testing.T) {
@@ -32,7 +30,7 @@ func TestCmdQuitUnsaved(t *testing.T) {
 
 	// Second quit should succeed
 	msg, err = cmdQuit(session)
-	if err != chat.ErrQuit {
+	if err != ErrQuit {
 		t.Fatalf("expected ErrQuit on second quit, got: %v", err)
 	}
 	if !strings.Contains(msg, "Goodbye") {

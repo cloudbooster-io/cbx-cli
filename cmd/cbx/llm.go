@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -64,7 +65,7 @@ func newLLMLoginCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("✓ Logged in to %s\n", provider)
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged in to " + provider))
 			return nil
 		},
 	}
@@ -88,7 +89,7 @@ func newLLMLogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("✓ Logged out of %s\n", provider)
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Logged out of " + provider))
 			return nil
 		},
 	}
@@ -137,7 +138,7 @@ func newLLMDefaultCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Printf("✓ Default LLM provider set to %s\n", provider)
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Default LLM provider set to " + provider))
 			return nil
 		},
 	}

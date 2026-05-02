@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -79,17 +78,9 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 	md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
 
 	if jsonFlag {
-		envelope := map[string]any{
-			"data": map[string]string{
-				"markdown": md,
-			},
-		}
-		b, err := json.Marshal(envelope)
-		if err != nil {
-			return fmt.Errorf("marshalling JSON: %w", err)
-		}
-		fmt.Println(string(b))
-		return nil
+		return output.PrintJSON(map[string]string{
+			"markdown": md,
+		}, nil)
 	}
 
 	mdPath := fmt.Sprintf("%s/plan.md", dir)
@@ -98,7 +89,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 	}
 
 	if !quietFlag {
-		fmt.Printf("✓ Wrote %s (%d bytes)\n", mdPath, len(md))
+		fmt.Println(output.Success.Render(output.Symbol("check") + " Wrote " + mdPath))
 	}
 
 	if diagramFormat == "d2" {
@@ -107,7 +98,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 			return fmt.Errorf("writing D2 diagram: %w", err)
 		}
 		if !quietFlag {
-			fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
+			fmt.Println(output.Success.Render(output.Symbol("check") + " Wrote " + d2Path))
 		}
 	}
 

@@ -31,10 +31,13 @@ func TestAuditEndToEnd(t *testing.T) {
 
 		requireJSONValid(t, stdout)
 
-		var findings []map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &findings); err != nil {
-			t.Fatalf("parsing JSON findings: %v", err)
+		var envelope struct {
+			Data []map[string]interface{} `json:"data"`
 		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("parsing JSON envelope: %v", err)
+		}
+		findings := envelope.Data
 		if len(findings) == 0 {
 			t.Fatal("expected at least one finding")
 		}
@@ -125,10 +128,13 @@ func TestAuditEndToEnd(t *testing.T) {
 
 		requireJSONValid(t, stdout)
 
-		var findings []map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &findings); err != nil {
-			t.Fatalf("parsing JSON findings: %v", err)
+		var envelope struct {
+			Data []map[string]interface{} `json:"data"`
 		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("parsing JSON envelope: %v", err)
+		}
+		findings := envelope.Data
 		if len(findings) == 0 {
 			t.Fatal("expected at least one finding")
 		}

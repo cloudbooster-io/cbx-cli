@@ -1,0 +1,5 @@
+Check       Result  Detail     
+----------  ------  -----------
+Go version  [OK]    go1.24.2   
+OS/Arch     [OK]    linux/amd64
+API         [FAIL]  unreachable
