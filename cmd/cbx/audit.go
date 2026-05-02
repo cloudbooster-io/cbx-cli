@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
@@ -18,6 +19,8 @@ func newAuditCmd() *cobra.Command {
 		reportFile         string
 		noTUI              bool
 		interactive        bool
+		timeout            time.Duration
+		timeoutPerScanner  time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -55,13 +58,15 @@ func newAuditCmd() *cobra.Command {
 			}
 
 			opts := audit.Options{
-				StateFile:    stateFile,
-				OutputFormat: outputFormat,
-				ReportFile:   reportFile,
-				Interactive:  interactive,
-				NoTUI:        noTUI,
-				Quiet:        quietFlag,
-				MockScanners: true,
+				StateFile:         stateFile,
+				OutputFormat:      outputFormat,
+				ReportFile:        reportFile,
+				Interactive:       interactive,
+				NoTUI:             noTUI,
+				Quiet:             quietFlag,
+				MockScanners:      true,
+				Timeout:           timeout,
+				TimeoutPerScanner: timeoutPerScanner,
 			}
 
 			result, err := audit.Run(opts)
@@ -106,6 +111,8 @@ func newAuditCmd() *cobra.Command {
 	cmd.Flags().StringVar(&reportFile, "report-file", "", "Path for markdown report output")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode (no-op for v1)")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "Enable interactive follow-up mode")
+	cmd.Flags().DurationVar(&timeout, "timeout", 20*time.Minute, "Overall audit timeout")
+	cmd.Flags().DurationVar(&timeoutPerScanner, "timeout-per-scanner", 5*time.Minute, "Timeout per scanner/provider")
 
 	return cmd
 }

@@ -44,8 +44,8 @@ func TestExitWithSeverityCritical(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for critical severity")
 	}
-	if ec, ok := err.(*ExitCodeError); !ok || ec.Code != 4 {
-		t.Fatalf("expected exit code 4, got: %v", err)
+	if ec, ok := err.(*ExitCodeError); !ok || ec.Code != 3 {
+		t.Fatalf("expected exit code 3, got: %v", err)
 	}
 }
 

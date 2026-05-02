@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -19,17 +20,24 @@ func Run(opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	var scanners []Scanner
+	var providers []FindingProvider
 	if opts.MockScanners {
-		scanners = MockScanners()
+		providers = MockScanners()
 	} else {
 		// Production path: in a future iteration this would load real
 		// prowler / trivy / checkov / tfsec adapters. For now we keep
 		// the same zero-network behaviour by defaulting to mocks.
-		scanners = MockScanners()
+		providers = MockScanners()
 	}
 
-	findings := RunScanners(scanners, resources)
+	ctx := context.Background()
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+
+	findings := RunProviders(ctx, providers, resources, opts.TimeoutPerScanner)
 
 	reportPath := opts.ReportFile
 	if reportPath == "" {
