@@ -1,0 +1,123 @@
+package audit
+
+// Scanner evaluates a set of resources and returns security findings.
+type Scanner interface {
+	Name() string
+	Scan(resources []Resource) []Finding
+}
+
+// RunScanners executes all given scanners against the resources and
+// returns a deduplicated slice of findings.
+func RunScanners(scanners []Scanner, resources []Resource) []Finding {
+	seen := make(map[string]struct{})
+	var findings []Finding
+	for _, s := range scanners {
+		for _, f := range s.Scan(resources) {
+			key := f.RuleID + "|" + f.Resource
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			findings = append(findings, f)
+		}
+	}
+	return findings
+}
+
+// MockScanners returns a set of scanner implementations that do not
+// perform any outbound network calls or invoke external binaries.
+func MockScanners() []Scanner {
+	return []Scanner{
+		&staticScanner{},
+	}
+}
+
+// staticScanner implements Scanner with hard-coded rules that mirror
+// the checks originally in cmd/cbx/audit.go.
+type staticScanner struct{}
+
+func (s *staticScanner) Name() string { return "static" }
+
+func (s *staticScanner) Scan(resources []Resource) []Finding {
+	var findings []Finding
+	for _, res := range resources {
+		findings = append(findings, evaluateResource(res)...)
+	}
+	return findings
+}
+
+func evaluateResource(res Resource) []Finding {
+	var findings []Finding
+	resType := res.Type
+	resURN := res.URN
+	if resURN == "" {
+		resURN = res.ID
+	}
+	if resURN == "" {
+		resURN = "unknown"
+	}
+
+	switch resType {
+	case "aws:s3/bucket:Bucket", "aws_s3_bucket":
+		findings = append(findings, Finding{
+			RuleID:      "S3-001",
+			Title:       "S3 bucket versioning not enabled",
+			Description: "The S3 bucket does not have versioning enabled, which prevents recovery from accidental deletion or overwrites.",
+			Severity:    SeverityWarning,
+			Resource:    resURN,
+			Service:     "S3",
+			Remediation: "Enable versioning on the S3 bucket.",
+		})
+		findings = append(findings, Finding{
+			RuleID:      "S3-002",
+			Title:       "S3 bucket encryption not configured",
+			Description: "The S3 bucket lacks server-side encryption configuration.",
+			Severity:    SeverityHigh,
+			Resource:    resURN,
+			Service:     "S3",
+			Remediation: "Enable SSE-S3 or SSE-KMS encryption on the bucket.",
+		})
+	case "aws:ec2/securityGroup:SecurityGroup", "aws_security_group":
+		findings = append(findings, Finding{
+			RuleID:      "EC2-001",
+			Title:       "Security group allows unrestricted ingress",
+			Description: "A security group rule allows ingress from 0.0.0.0/0 on a sensitive port.",
+			Severity:    SeverityHigh,
+			Resource:    resURN,
+			Service:     "EC2",
+			Remediation: "Restrict security group ingress to specific CIDR blocks.",
+		})
+	case "aws:iam/role:Role", "aws_iam_role":
+		findings = append(findings, Finding{
+			RuleID:      "IAM-001",
+			Title:       "IAM role has overly permissive trust policy",
+			Description: "The IAM role trust policy allows broad principal access.",
+			Severity:    SeverityWarning,
+			Resource:    resURN,
+			Service:     "IAM",
+			Remediation: "Scope the trust policy principal to specific roles or services.",
+		})
+	case "aws:rds/instance:Instance", "aws_db_instance":
+		findings = append(findings, Finding{
+			RuleID:      "RDS-001",
+			Title:       "RDS instance not in a VPC",
+			Description: "The RDS instance is not deployed inside a VPC.",
+			Severity:    SeverityHigh,
+			Resource:    resURN,
+			Service:     "RDS",
+			Remediation: "Migrate the RDS instance into a VPC with private subnets.",
+		})
+	case "aws:lambda/function:Function", "aws_lambda_function":
+		findings = append(findings, Finding{
+			RuleID:      "LAMBDA-001",
+			Title:       "Lambda function environment variables may contain secrets",
+			Description: "Environment variables on Lambda functions are visible in plain text.",
+			Severity:    SeverityInfo,
+			Resource:    resURN,
+			Service:     "Lambda",
+			Remediation: "Use AWS Secrets Manager or Parameter Store for sensitive values.",
+		})
+	}
+
+	return findings
+}
