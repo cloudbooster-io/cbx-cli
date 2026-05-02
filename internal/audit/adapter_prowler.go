@@ -1,0 +1,101 @@
+package audit
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// prowlerAdapter implements Scanner by invoking the prowler binary.
+// prowler scans live AWS infrastructure for security issues.
+// Network access: allowed (prowler requires AWS API access).
+// AWS_* environment variables are passed through to the subprocess.
+type prowlerAdapter struct{}
+
+func (a *prowlerAdapter) Name() string { return "prowler" }
+
+func (a *prowlerAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
+	meta := scannerRegistry["prowler"]
+	if err := checkVersion(meta); err != nil {
+		return nil, err
+	}
+
+	outDir, err := os.MkdirTemp("", "cbx-prowler-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating prowler output dir: %w", err)
+	}
+	defer os.RemoveAll(outDir)
+
+	// Prowler writes JSON output to a file in the output directory.
+	_, err = runScanner(meta.Name, []string{"--output-mode", "json", "--output-directory", outDir, "--status", "FAIL"}, meta.AllowAWS)
+	if err != nil {
+		// Prowler may exit non-zero even on successful scan; try to read output anyway.
+	}
+
+	// Find the JSON output file prowler created.
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading prowler output dir: %w", err)
+	}
+	var jsonFile string
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			jsonFile = filepath.Join(outDir, entry.Name())
+			break
+		}
+	}
+	if jsonFile == "" {
+		return nil, fmt.Errorf("prowler did not produce JSON output in %s", outDir)
+	}
+
+	data, err := os.ReadFile(jsonFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading prowler output: %w", err)
+	}
+
+	return parseProwlerOutput(data)
+}
+
+func parseProwlerOutput(data []byte) ([]Finding, error) {
+	var rawFindings []struct {
+		AssessmentStartTime string `json:"AssessmentStartTime"`
+		FindingUniqueId     string `json:"FindingUniqueId"`
+		Provider            string `json:"Provider"`
+		CheckID             string `json:"CheckID"`
+		CheckTitle          string `json:"CheckTitle"`
+		ServiceName         string `json:"ServiceName"`
+		Status              string `json:"Status"`
+		StatusExtended      string `json:"StatusExtended"`
+		Severity            string `json:"Severity"`
+		ResourceId          string `json:"ResourceId"`
+		ResourceArn         string `json:"ResourceArn"`
+		Region              string `json:"Region"`
+	}
+	if err := json.Unmarshal(data, &rawFindings); err != nil {
+		return nil, fmt.Errorf("parsing prowler output: %w", err)
+	}
+
+	var findings []Finding
+	for _, f := range rawFindings {
+		if f.Status != "FAIL" {
+			continue
+		}
+		res := f.ResourceId
+		if res == "" {
+			res = f.ResourceArn
+		}
+		findings = append(findings, Finding{
+			RuleID:      f.CheckID,
+			Title:       f.CheckTitle,
+			Description: f.StatusExtended,
+			Severity:    mapProwlerSeverity(f.Severity),
+			Resource:    res,
+			Service:     strings.ToUpper(f.ServiceName),
+			Remediation: "Review " + f.CheckID + " in Prowler documentation.",
+		})
+	}
+	return findings, nil
+}

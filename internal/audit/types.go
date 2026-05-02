@@ -55,6 +55,7 @@ type Options struct {
 	Quiet             bool
 	Yes               bool          // when true, bypass interactive confirmations
 	MockScanners      bool          // when true, use mock scanner implementations (zero network)
+	Scanners          []string      // scanner names to run; empty means all available
 	Timeout           time.Duration // overall audit timeout
 	TimeoutPerScanner time.Duration // timeout for each individual scanner/provider
 }

@@ -7,7 +7,10 @@ func TestStaticScannerS3(t *testing.T) {
 	resources := []DiscoveredResource{
 		{Type: "aws:s3/bucket:Bucket", URN: "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket"},
 	}
-	findings := RunScanners(scanners, resources)
+	findings, err := RunScanners(scanners, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings for S3 bucket, got %d", len(findings))
 	}
@@ -33,7 +36,10 @@ func TestStaticScannerSecurityGroup(t *testing.T) {
 	resources := []DiscoveredResource{
 		{Type: "aws_security_group", URN: "sg-123"},
 	}
-	findings := RunScanners(scanners, resources)
+	findings, err := RunScanners(scanners, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding for security group, got %d", len(findings))
 	}
@@ -47,7 +53,10 @@ func TestStaticScannerNoMatch(t *testing.T) {
 	resources := []DiscoveredResource{
 		{Type: "aws:unknown:Type", URN: "unknown"},
 	}
-	findings := RunScanners(scanners, resources)
+	findings, err := RunScanners(scanners, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings for unknown type, got %d", len(findings))
 	}
@@ -59,7 +68,10 @@ func TestRunScannersDedupe(t *testing.T) {
 	resources := []DiscoveredResource{
 		{Type: "aws:s3/bucket:Bucket", URN: "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket"},
 	}
-	findings := RunScanners(scanners, resources)
+	findings, err := RunScanners(scanners, resources)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 deduplicated findings, got %d", len(findings))
 	}

@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "rule_id": "AVD-AWS-0089",
+      "long_id": "aws-s3-enable-versioning",
+      "rule_description": "S3 bucket should have versioning enabled",
+      "rule_provider": "aws",
+      "rule_service": "s3",
+      "impact": "Deleted or modified data would not be recoverable",
+      "resolution": "Enable versioning for S3 buckets",
+      "description": "Resource 'my-bucket' does not have versioning enabled",
+      "severity": "MEDIUM",
+      "status": 0,
+      "resource": "my-bucket",
+      "location": {
+        "filename": "main.tf",
+        "start_line": 1,
+        "end_line": 5
+      }
+    },
+    {
+      "rule_id": "AVD-AWS-0132",
+      "long_id": "aws-s3-encryption-customer-key",
+      "rule_description": "S3 bucket encryption should use Customer Managed Keys",
+      "rule_provider": "aws",
+      "rule_service": "s3",
+      "impact": "Using AWS managed keys does not allow for fine-grained control",
+      "resolution": "Enable encryption using a customer-managed key",
+      "description": "Resource 'my-bucket' does not use a customer-managed key",
+      "severity": "HIGH",
+      "status": 0,
+      "resource": "my-bucket",
+      "location": {
+        "filename": "main.tf",
+        "start_line": 1,
+        "end_line": 5
+      }
+    }
+  ]
+}

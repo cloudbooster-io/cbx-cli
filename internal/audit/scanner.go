@@ -1,16 +1,27 @@
 package audit
 
-import "context"
+import (
+	"context"
+	"errors"
+	"fmt"
+)
 
 // RunScanners executes all given scanners against the resources and
-// returns a deduplicated slice of findings.
+// returns a deduplicated slice of findings. Errors from individual
+// scanners are collected and returned as a joined error; scanners that
+// fail do not block findings from successful scanners.
 // Deprecated: use RunProviders from the orchestrator instead.
-func RunScanners(scanners []Scanner, resources []Resource) []Finding {
+func RunScanners(scanners []Scanner, resources []Resource) ([]Finding, error) {
 	seen := make(map[string]struct{})
 	var findings []Finding
+	var errs []error
 	for _, s := range scanners {
-		ff, _ := s.Scan(context.Background(), resources)
-		for _, f := range ff {
+		res, err := s.Scan(context.Background(), resources)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.Name(), err))
+			continue
+		}
+		for _, f := range res {
 			key := f.RuleID + "|" + f.Resource
 			if _, ok := seen[key]; ok {
 				continue
@@ -19,7 +30,7 @@ func RunScanners(scanners []Scanner, resources []Resource) []Finding {
 			findings = append(findings, f)
 		}
 	}
-	return findings
+	return findings, errors.Join(errs...)
 }
 
 // MockScanners returns a set of scanner implementations that do not
@@ -27,6 +38,19 @@ func RunScanners(scanners []Scanner, resources []Resource) []Finding {
 func MockScanners() []FindingProvider {
 	return []FindingProvider{
 		&staticScanner{},
+	}
+}
+
+// AllScanners returns every available scanner including external-tool
+// adapters. Callers should be prepared for individual adapters to fail
+// when their underlying binary is not installed.
+func AllScanners() []Scanner {
+	return []Scanner{
+		&staticScanner{},
+		&tfsecAdapter{},
+		&checkovAdapter{},
+		&prowlerAdapter{},
+		&trivyAdapter{},
 	}
 }
 
