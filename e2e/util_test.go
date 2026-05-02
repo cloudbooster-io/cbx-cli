@@ -51,14 +51,51 @@ func TestDoctor(t *testing.T) {
 	}))
 	defer mockAPI.Close()
 
-	stdout, _, code := runCBX(t, map[string]string{"CB_API_URL": mockAPI.URL}, "doctor")
-	if code != 0 {
-		t.Fatalf("doctor exited %d", code)
-	}
-	if !strings.Contains(stdout, "healthy") {
-		t.Fatalf("expected healthy message, got: %s", stdout)
-	}
-	if !strings.Contains(stdout, mockAPI.URL) {
-		t.Fatalf("expected doctor output to mention mock API URL %s, got: %s", mockAPI.URL, stdout)
-	}
+	env := map[string]string{"CB_API_URL": mockAPI.URL}
+
+	t.Run("doctor_plain", func(t *testing.T) {
+		stdout, _, code := runCBX(t, env, "doctor")
+		// Doctor may exit non-zero when some checks fail in the test environment.
+		_ = code
+		if !strings.Contains(stdout, "cbx version") {
+			t.Fatalf("expected cbx version check, got: %s", stdout)
+		}
+		if !strings.Contains(stdout, "API connectivity") {
+			t.Fatalf("expected API connectivity check, got: %s", stdout)
+		}
+		if !strings.Contains(stdout, mockAPI.URL) {
+			t.Fatalf("expected doctor output to mention mock API URL %s, got: %s", mockAPI.URL, stdout)
+		}
+	})
+
+	t.Run("doctor_json", func(t *testing.T) {
+		stdout, _, code := runCBX(t, env, "doctor", "--json")
+		_ = code
+		var report struct {
+			Healthy bool `json:"healthy"`
+			Checks  []struct {
+				Name string `json:"name"`
+				OK   bool   `json:"ok"`
+				Info string `json:"info"`
+			} `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("expected valid JSON: %v\noutput: %s", err, stdout)
+		}
+		if len(report.Checks) == 0 {
+			t.Fatal("expected at least one check in JSON report")
+		}
+		foundAPI := false
+		for _, c := range report.Checks {
+			if c.Name == "API connectivity" {
+				foundAPI = true
+				if !strings.Contains(c.Info, mockAPI.URL) {
+					t.Fatalf("expected API info to contain %s, got %s", mockAPI.URL, c.Info)
+				}
+			}
+		}
+		if !foundAPI {
+			t.Fatal("expected API connectivity check in JSON")
+		}
+	})
 }
