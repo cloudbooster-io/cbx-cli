@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -221,13 +222,57 @@ func TestAuditEndToEnd(t *testing.T) {
 	t.Run("audit_zero_outbound_http", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		// The mock scanner path should not make any HTTP calls.
-		// We verify by simply running the command successfully.
-		_, _, code := runCBXInDir(t, tmpDir, nil,
+		// Run with an invalid HTTP proxy and a fake SENTRY_DSN.
+		// If the audit code path (or any dependency) makes an outbound
+		// HTTP call, the invalid proxy will cause a connection error.
+		env := map[string]string{
+			"SENTRY_DSN": "https://fake@example.com/1",
+			"HTTP_PROXY": "http://127.0.0.1:1",
+		}
+		stdout, stderr, code := runCBXInDir(t, tmpDir, env,
 			"audit", "--pulumi-state", pulumiFixture, "--output", "json")
 
-		if code == 0 {
-			t.Fatalf("expected non-zero exit code due to findings, got %d", code)
+		// Exit code should still be driven by findings (high severity → 3),
+		// not by an HTTP / proxy error.
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from findings, got %d (stderr: %s)", code, stderr)
+		}
+
+		// Assert valid JSON output — an HTTP failure would likely prevent this.
+		requireJSONValid(t, stdout)
+
+		// Assert stderr does not contain proxy-related error indicators.
+		lower := strings.ToLower(stderr)
+		indicators := []string{"proxy", "connection refused", "dial tcp", "timeout", "no such host"}
+		for _, ind := range indicators {
+			if strings.Contains(lower, ind) {
+				t.Fatalf("unexpected network error indicator %q in stderr (possible outbound HTTP): %s", ind, stderr)
+			}
+		}
+	})
+
+	t.Run("audit_no_api_imports", func(t *testing.T) {
+		// Verify that internal/audit does not import network/API packages.
+		// This is a compile-time package boundary guard.
+		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "../internal/audit")
+		cmd.Dir = "."
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list failed: %v\n%s", err, out)
+		}
+
+		forbidden := []string{
+			"net/http",
+			"internal/plan",
+		}
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			for _, f := range forbidden {
+				if line == f || strings.HasSuffix(line, "/"+f) {
+					t.Fatalf("internal/audit imports forbidden package %q", f)
+				}
+			}
 		}
 	})
 }

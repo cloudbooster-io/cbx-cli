@@ -1,18 +1,16 @@
 package audit
 
-// Scanner evaluates a set of resources and returns security findings.
-type Scanner interface {
-	Name() string
-	Scan(resources []Resource) []Finding
-}
+import "context"
 
 // RunScanners executes all given scanners against the resources and
 // returns a deduplicated slice of findings.
+// Deprecated: use RunProviders from the orchestrator instead.
 func RunScanners(scanners []Scanner, resources []Resource) []Finding {
 	seen := make(map[string]struct{})
 	var findings []Finding
 	for _, s := range scanners {
-		for _, f := range s.Scan(resources) {
+		ff, _ := s.Scan(context.Background(), resources)
+		for _, f := range ff {
 			key := f.RuleID + "|" + f.Resource
 			if _, ok := seen[key]; ok {
 				continue
@@ -26,24 +24,24 @@ func RunScanners(scanners []Scanner, resources []Resource) []Finding {
 
 // MockScanners returns a set of scanner implementations that do not
 // perform any outbound network calls or invoke external binaries.
-func MockScanners() []Scanner {
-	return []Scanner{
+func MockScanners() []FindingProvider {
+	return []FindingProvider{
 		&staticScanner{},
 	}
 }
 
-// staticScanner implements Scanner with hard-coded rules that mirror
+// staticScanner implements FindingProvider with hard-coded rules that mirror
 // the checks originally in cmd/cbx/audit.go.
 type staticScanner struct{}
 
 func (s *staticScanner) Name() string { return "static" }
 
-func (s *staticScanner) Scan(resources []Resource) []Finding {
+func (s *staticScanner) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	var findings []Finding
 	for _, res := range resources {
 		findings = append(findings, evaluateResource(res)...)
 	}
-	return findings
+	return findings, nil
 }
 
 func evaluateResource(res Resource) []Finding {

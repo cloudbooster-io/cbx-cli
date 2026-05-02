@@ -14,7 +14,7 @@ func (e *ExitCodeError) Error() string {
 
 // ExitWithSeverity returns an ExitCodeError reflecting the maximum
 // severity among the given findings, or nil when there are no findings.
-// Severity mapping: info → 1, warning → 2, high → 3, critical → 4.
+// Severity mapping: info → 1, warning → 2, high → 3, critical → 3.
 func ExitWithSeverity(findings []Finding) error {
 	maxSeverity := 0
 	for _, f := range findings {
@@ -27,13 +27,9 @@ func ExitWithSeverity(findings []Finding) error {
 			if maxSeverity < 2 {
 				maxSeverity = 2
 			}
-		case SeverityHigh:
+		case SeverityHigh, SeverityCritical:
 			if maxSeverity < 3 {
 				maxSeverity = 3
-			}
-		case SeverityCritical:
-			if maxSeverity < 4 {
-				maxSeverity = 4
 			}
 		}
 	}
