@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
@@ -14,23 +15,21 @@ import (
 )
 
 // REPL runs the interactive planning TUI.
-func REPL(session *Session, client Client, cfg *config.Config, in io.Reader, out io.Writer, initialIntent string, noTUI bool) error {
-	if initialIntent != "" {
-		plan, err := client.GeneratePlan(context.Background(), initialIntent, getProvider(session, cfg))
-		if err != nil {
-			return err
-		}
-		session.SetPlan(plan)
-		session.AppendTurn(initialIntent, false, plan)
-	}
-
+func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, initialIntent string, noTUI bool) error {
 	m := chat.NewModel()
+	m.SetStreamRenderer(chat.NewStreamRenderer())
 
 	// Status bar
 	provider := getProvider(session, cfg)
-	m.SetStatusBar(fmt.Sprintf("model: %s", provider), "")
+	provCfg, ok := cfg.LLM.Providers[provider]
+	statusRight := ""
+	if ok && (strings.Contains(provCfg.BaseURL, "localhost") || strings.Contains(provCfg.BaseURL, "127.0.0.1")) {
+		statusRight = "BYO LLM — cost not tracked"
+	}
+	m.SetStatusBar(fmt.Sprintf("%s | %s", provider, provCfg.Model), statusRight)
 
-	// Build slash-command registry
+	// Build slash-command registry (uses MockClient for backward compat).
+	client := &MockClient{}
 	registry := chat.NewRegistry()
 	wrap := func(f func([]string) (string, error)) func([]string) (string, error) {
 		return func(args []string) (string, error) {
@@ -84,8 +83,19 @@ func REPL(session *Session, client Client, cfg *config.Config, in io.Reader, out
 	}
 	m.SetContent(sb.String())
 
-	// Submit handler for natural-language input
+	var p *tea.Program
+	pipeline := NewPipeline(nil, cfg, session)
+
+	// Submit handler for natural-language input.
+	// In TUI mode we run the async streaming pipeline; in pipe mode we fall
+	// back to the synchronous MockClient so that scripted input (e2e tests)
+	// remains deterministic.
 	m.OnSubmit = func(input string) (string, error) {
+		if chat.IsTUIAvailable(in, noTUI) {
+			pipeline.Start(input)
+			return "", nil
+		}
+		// Pipe mode: synchronous fallback.
 		ctx := context.Background()
 		provider := getProvider(session, cfg)
 		if session.CurrentPlan == nil {
@@ -106,6 +116,10 @@ func REPL(session *Session, client Client, cfg *config.Config, in io.Reader, out
 		return formatTurn(session.History[len(session.History)-1]), nil
 	}
 
+	m.OnCancel = func() {
+		pipeline.Cancel()
+	}
+
 	m.OnBeforeQuit = func() (bool, string) {
 		if session.Unsaved && !session.PendingQuit {
 			session.PendingQuit = true
@@ -114,12 +128,17 @@ func REPL(session *Session, client Client, cfg *config.Config, in io.Reader, out
 		return true, ""
 	}
 
-	var p *tea.Program
+	wrapper := newReplModel(m, session, pipeline)
+
 	if chat.IsTUIAvailable(in, noTUI) {
-		p = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithAltScreen())
+		p = tea.NewProgram(wrapper, tea.WithInput(in), tea.WithOutput(out), tea.WithAltScreen())
 	} else {
-		p = tea.NewProgram(m, tea.WithInput(strings.NewReader("")), tea.WithOutput(out))
+		p = tea.NewProgram(wrapper, tea.WithInput(strings.NewReader("")), tea.WithOutput(out))
 		go func() {
+			// In pipe mode, send the initial intent before user-provided lines.
+			if initialIntent != "" {
+				p.Send(chat.InputMsg(initialIntent))
+			}
 			scanner := bufio.NewScanner(in)
 			for scanner.Scan() {
 				p.Send(chat.InputMsg(scanner.Text()))
@@ -128,8 +147,79 @@ func REPL(session *Session, client Client, cfg *config.Config, in io.Reader, out
 		}()
 	}
 
+	// Bind the real program to the pipeline now that it exists.
+	pipeline.sender = p
+
+	// Auto-start if an initial intent was provided in TUI mode.
+	if initialIntent != "" && chat.IsTUIAvailable(in, noTUI) {
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			p.Send(chat.InputMsg(initialIntent))
+		}()
+	}
+
 	_, err := p.Run()
 	return err
+}
+
+// replModel wraps chat.Model to handle pipeline-specific messages.
+type replModel struct {
+	inner    chat.Model
+	session  *Session
+	pipeline *Pipeline
+}
+
+func newReplModel(inner chat.Model, session *Session, pipeline *Pipeline) replModel {
+	return replModel{inner: inner, session: session, pipeline: pipeline}
+}
+
+func (m replModel) Init() tea.Cmd {
+	return m.inner.Init()
+}
+
+func (m replModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case chat.PipelineStartMsg:
+		m.inner.SetPipelineRunning(true)
+		return m, nil
+	case chat.StatusMsg:
+		m.inner.SetStatusBar(msg.Left, msg.Right)
+		return m, nil
+	case chat.ProposalCandidateMsg:
+		m.inner.AppendContent(fmt.Sprintf("  • %s — %s", msg.Name, msg.Description))
+		return m, nil
+	case chat.CommitStreamMsg:
+		m.inner.CommitStream()
+		return m, nil
+	case chat.ResolveCompleteMsg:
+		m.inner.SetPipelineRunning(false)
+		plan := &Plan{
+			Intent:     msg.Intent,
+			Components: convertComponentInfo(msg.Components),
+			Version:    msg.Version,
+		}
+		plan.ADRContent = msg.ADR
+		plan.D2Content = msg.D2
+		plan.MermaidContent = msg.Mermaid
+		plan.HTMLContent = msg.HTML
+		m.session.SetPlan(plan)
+		m.session.AppendTurn(msg.Intent, false, plan)
+		m.inner.AppendContent(chat.HeaderStyle.Render(fmt.Sprintf("--- Plan v%d ---", plan.Version)))
+		m.inner.AppendContent(plan.ADRContent)
+		return m, nil
+	case chat.PipelineErrorMsg:
+		m.inner.SetPipelineRunning(false)
+		m.inner.AppendContent(chat.ErrorStyle.Render(fmt.Sprintf("Error: %v", msg.Err)))
+		return m, nil
+	}
+
+	updated, cmd := m.inner.Update(msg)
+	m.inner = updated.(chat.Model)
+	return m, cmd
+}
+
+func (m replModel) View() string {
+	return m.inner.View()
 }
 
 func formatTurn(t Turn) string {
@@ -144,4 +234,12 @@ func formatTurn(t Turn) string {
 	sb.WriteString(fmt.Sprintf("--- Plan v%d ---\n", t.Plan.Version))
 	sb.WriteString(t.Plan.ADRContent)
 	return sb.String()
+}
+
+func convertComponentInfo(infos []chat.ComponentInfo) []Component {
+	out := make([]Component, len(infos))
+	for i, c := range infos {
+		out[i] = Component{Name: c.Name, Description: c.Description, Service: c.Service}
+	}
+	return out
 }

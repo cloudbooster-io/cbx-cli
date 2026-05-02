@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -15,9 +16,9 @@ import (
 func newPlanCmd() *cobra.Command {
 	var (
 		outputDir       string
-		interactive     bool
 		noTUI           bool
 		diagramFormat   string
+		llmProvider     string
 	)
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
@@ -43,24 +44,20 @@ func newPlanCmd() *cobra.Command {
 				intent = args[0]
 			}
 
-			if noTUI {
+			if noTUI || jsonFlag {
 				if intent == "" {
 					return fmt.Errorf("intent required in non-interactive mode")
 				}
 				return runOneShot(cfg, intent, dir, diagramFormat)
 			}
 
-			if interactive || intent == "" {
-				return runInteractive(cfg, intent, dir, diagramFormat)
-			}
-
-			return runOneShot(cfg, intent, dir, diagramFormat)
+			return runInteractive(cfg, intent, dir, diagramFormat, noTUI, llmProvider)
 		},
 	}
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory for plan files")
-	cmd.Flags().BoolVar(&interactive, "interactive", false, "Force interactive mode")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive one-shot mode")
 	cmd.Flags().StringVar(&diagramFormat, "diagram", "mermaid", "Diagram output format (mermaid or d2)")
+	cmd.Flags().StringVar(&llmProvider, "llm", "", "Override the default LLM provider for this run")
 	return cmd
 }
 
@@ -78,9 +75,17 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 	md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
 
 	if jsonFlag {
-		return output.PrintJSON(map[string]string{
-			"markdown": md,
-		}, nil)
+		envelope := map[string]any{
+			"data": map[string]string{
+				"markdown": md,
+			},
+		}
+		b, err := json.Marshal(envelope)
+		if err != nil {
+			return fmt.Errorf("marshalling JSON: %w", err)
+		}
+		fmt.Println(string(b))
+		return nil
 	}
 
 	mdPath := fmt.Sprintf("%s/plan.md", dir)
@@ -89,7 +94,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 	}
 
 	if !quietFlag {
-		fmt.Println(output.Success.Render(output.Symbol("check") + " Wrote " + mdPath))
+		fmt.Printf("✓ Wrote %s (%d bytes)\n", mdPath, len(md))
 	}
 
 	if diagramFormat == "d2" {
@@ -98,16 +103,16 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 			return fmt.Errorf("writing D2 diagram: %w", err)
 		}
 		if !quietFlag {
-			fmt.Println(output.Success.Render(output.Symbol("check") + " Wrote " + d2Path))
+			fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
 		}
 	}
 
 	return nil
 }
 
-func runInteractive(cfg *config.Config, intent, dir, diagramFormat string) error {
+func runInteractive(cfg *config.Config, intent, dir, diagramFormat string, noTUI bool, llmProvider string) error {
 	session := plan.NewSession(dir)
 	session.DiagramFormat = diagramFormat
-	client := &plan.MockClient{}
-	return plan.REPL(session, client, cfg, os.Stdin, os.Stdout, intent, false)
+	session.ActiveProvider = llmProvider
+	return plan.REPL(session, cfg, os.Stdin, os.Stdout, intent, noTUI)
 }

@@ -18,6 +18,47 @@ type EOFMsg struct{}
 // StreamTokenMsg carries a single token from the LLM stream.
 type StreamTokenMsg string
 
+// PipelineStartMsg signals that the pipeline has started.
+type PipelineStartMsg struct{}
+
+// StatusMsg updates the status bar text.
+type StatusMsg struct {
+	Left  string
+	Right string
+}
+
+// ProposalCandidateMsg carries a single component candidate from the propose phase.
+type ProposalCandidateMsg struct {
+	Name        string
+	Description string
+}
+
+// CommitStreamMsg forces the stream renderer to commit its content.
+type CommitStreamMsg struct{}
+
+// ComponentInfo is a plan-component snapshot sent through the TUI.
+type ComponentInfo struct {
+	Name        string
+	Description string
+	Service     string
+}
+
+// ResolveCompleteMsg carries the final resolved plan.
+type ResolveCompleteMsg struct {
+	Intent     string
+	Components []ComponentInfo
+	Version    int
+	ADR        string
+	Mermaid    string
+	D2         string
+	HTML       string
+}
+
+// PipelineErrorMsg signals a pipeline error.
+type PipelineErrorMsg struct {
+	Err error
+}
+
 // Model is the generic chat TUI Bubble Tea model.
 type Model struct {
 	viewport    viewport.Model
@@ -44,11 +85,17 @@ type Model struct {
 
 	// OnSubmit is called when the user submits non-slash input.
 	// The returned string is appended to the viewport as an assistant message.
+	// An empty response with a nil error is ignored, enabling async pipelines.
 	OnSubmit func(input string) (response string, err error)
 
 	// OnBeforeQuit is called before quitting. If it returns false and a
 	// warning message, the quit is cancelled and the warning is shown.
 	OnBeforeQuit func() (allow bool, warning string)
+
+	// OnCancel is called when Ctrl+C is pressed while a pipeline is running.
+	OnCancel func()
+
+	pipelineRunning bool
 }
 
 // NewModel creates a new chat TUI model with sensible defaults.
@@ -120,6 +167,16 @@ func (m *Model) SetRegistry(r *Registry) {
 // SetStreamRenderer assigns the stream renderer used for incremental output.
 func (m *Model) SetStreamRenderer(r *StreamRenderer) {
 	m.streamRenderer = r
+}
+
+// SetOnCancel assigns the cancellation callback.
+func (m *Model) SetOnCancel(fn func()) {
+	m.OnCancel = fn
+}
+
+// SetPipelineRunning updates the pipeline-running flag.
+func (m *Model) SetPipelineRunning(running bool) {
+	m.pipelineRunning = running
 }
 
 // CommitStream finalizes the current stream content into the permanent viewport
@@ -220,6 +277,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 		return true
 
 	case "ctrl+c":
+		if m.pipelineRunning && m.OnCancel != nil {
+			m.OnCancel()
+			return true
+		}
 		m.textarea.SetValue("")
 		m.paletteMode = false
 		return true
@@ -352,7 +413,9 @@ func (m *Model) handleSubmit() {
 			m.AppendContent(ErrorStyle.Render(fmt.Sprintf("Error: %v", err)))
 			return
 		}
-		m.AppendContent(response)
+		if response != "" {
+			m.AppendContent(response)
+		}
 	}
 }
 

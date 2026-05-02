@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
 )
 
 const maxFreeVariants = 2
@@ -137,7 +139,7 @@ func cmdRegenerate(session *Session, client Client, cfg *config.Config) (string,
 	}
 	intent := session.History[0].Input
 	provider := getProvider(session, cfg)
-	plan, err := client.GeneratePlan(nil, intent, provider)
+	plan, err := client.GeneratePlan(context.Background(), intent, provider)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +157,7 @@ func cmdRefine(args []string, session *Session, client Client, cfg *config.Confi
 	}
 	refineText := strings.Join(args, " ")
 	provider := getProvider(session, cfg)
-	plan, err := client.RefinePlan(nil, session.CurrentPlan, refineText, provider)
+	plan, err := client.RefinePlan(context.Background(), session.CurrentPlan, refineText, provider)
 	if err != nil {
 		return "", err
 	}
@@ -240,20 +242,12 @@ func cmdHelp() string {
 	return sb.String()
 }
 
-// ErrQuit signals that the REPL should exit.
-var ErrQuit = fmt.Errorf("quit")
-
 func cmdQuit(session *Session) (string, error) {
 	if session.Unsaved && !session.PendingQuit {
 		session.PendingQuit = true
 		return "You have unsaved changes. Use /save first, or /quit again to discard.", nil
 	}
-	return "Goodbye!", ErrQuit
+	return "Goodbye!", chat.ErrQuit
 }
 
-func getProvider(session *Session, cfg *config.Config) string {
-	if session.ActiveProvider != "" {
-		return session.ActiveProvider
-	}
-	return cfg.LLM.Default
-}
+
