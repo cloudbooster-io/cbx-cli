@@ -33,6 +33,19 @@ test:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 # ---------------------------------------------------------------------------
+# Mermaid fixture validation — ensures mermaid v10+ syntax is correct
+# ---------------------------------------------------------------------------
+mermaid-validate:
+  stage: test
+  image: node:22-slim
+  script:
+    - npm install -g @mermaid-js/mermaid-cli
+    - mmdc -i internal/output/testdata/diagram.mmd -o /tmp/out.svg
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
 # E2E matrix — linux + macOS runners
 # ---------------------------------------------------------------------------
 e2e-matrix:

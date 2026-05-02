@@ -4,21 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
 // RenderADR generates an Architecture Decision Record in Markdown.
 func RenderADR(p *Plan) string {
 	var sb strings.Builder
-	title := strings.Title(p.Intent)
-	sb.WriteString(fmt.Sprintf("# ADR: %s\n\n", title))
+	sb.WriteString(fmt.Sprintf("# ADR: %s\n\n", output.TitleCase(p.Intent)))
 	sb.WriteString("## Status\nProposed\n\n")
 	sb.WriteString(fmt.Sprintf("## Context\nThe user requested: %q\n\n", p.Intent))
+	sb.WriteString("## Options\n")
+	sb.WriteString("- Serverless (AWS Lambda + API Gateway)\n")
+	sb.WriteString("- Containerized (ECS/Fargate)\n")
+	sb.WriteString("- VM-based (EC2)\n\n")
 	sb.WriteString("## Decision\nWe will deploy a serverless architecture using AWS services.\n\n")
-	sb.WriteString("## Components\n")
-	for _, c := range p.Components {
-		sb.WriteString(fmt.Sprintf("- **%s** — %s\n", c.Name, c.Description))
-	}
-	sb.WriteString("\n## Consequences\n")
+	sb.WriteString("## Tradeoffs\n")
+	sb.WriteString("- **Operational complexity** — Reduced with managed services\n")
+	sb.WriteString("- **Cost predictability** — Pay-per-use vs. provisioned capacity\n\n")
+	sb.WriteString("## Consequences\n")
 	sb.WriteString("- Scalable without managing servers\n")
 	sb.WriteString("- Pay-per-use cost model\n")
 	if hasComponent(p.Components, "CloudFront") {
@@ -26,6 +30,10 @@ func RenderADR(p *Plan) string {
 	}
 	if hasComponent(p.Components, "DynamoDB Global Tables") {
 		sb.WriteString("- Multi-region data replication\n")
+	}
+	sb.WriteString("\n")
+	for _, c := range p.Components {
+		sb.WriteString(fmt.Sprintf("## %s\n\n%s\n\n", c.Name, c.Description))
 	}
 	return sb.String()
 }
@@ -115,6 +123,11 @@ func RenderMermaid(p *Plan) string {
 		}
 	}
 
+	// Click events linking to ADR anchors (dash-style slugs for GitHub compatibility).
+	for _, c := range p.Components {
+		sb.WriteString(fmt.Sprintf("    click %s href \"#%s\"\n", nodeID(c.Name), slugID(c.Name)))
+	}
+
 	return sb.String()
 }
 
@@ -146,6 +159,10 @@ func ExportJSON(p *Plan) (string, error) {
 
 func nodeID(name string) string {
 	return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+}
+
+func slugID(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 }
 
 func findComponent(components []Component, name string) *Component {

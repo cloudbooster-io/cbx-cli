@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
 const maxFreeVariants = 2
@@ -110,30 +111,24 @@ func cmdSave(args []string, session *Session) (string, error) {
 		return "", fmt.Errorf("creating output dir: %w", err)
 	}
 
-	adrPath := filepath.Join(dir, "plan.adr.md")
-	var diagramPath string
-	var diagramContent string
-	if session.DiagramFormat == "mermaid" {
-		diagramPath = filepath.Join(dir, "plan.mmd")
-		diagramContent = session.CurrentPlan.MermaidContent
-	} else {
-		diagramPath = filepath.Join(dir, "plan.d2")
-		diagramContent = session.CurrentPlan.D2Content
+	mdPath := filepath.Join(dir, "plan.md")
+	md := output.RenderPlanMD(session.CurrentPlan.Intent, session.CurrentPlan.Version, session.CurrentPlan.ADRContent, session.CurrentPlan.MermaidContent)
+	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
+		return "", fmt.Errorf("writing plan markdown: %w", err)
 	}
-	htmlPath := filepath.Join(dir, "plan.html")
 
-	if err := os.WriteFile(adrPath, []byte(session.CurrentPlan.ADRContent), 0o644); err != nil {
-		return "", fmt.Errorf("writing ADR: %w", err)
-	}
-	if err := os.WriteFile(diagramPath, []byte(diagramContent), 0o644); err != nil {
-		return "", fmt.Errorf("writing diagram: %w", err)
-	}
-	if err := os.WriteFile(htmlPath, []byte(session.CurrentPlan.HTMLContent), 0o644); err != nil {
-		return "", fmt.Errorf("writing HTML preview: %w", err)
+	var parts []string
+	parts = append(parts, fmt.Sprintf("%s (%d bytes)", mdPath, len(md)))
+	if session.DiagramFormat == "d2" {
+		d2Path := filepath.Join(dir, "plan.d2")
+		if err := os.WriteFile(d2Path, []byte(session.CurrentPlan.D2Content), 0o644); err != nil {
+			return "", fmt.Errorf("writing D2 diagram: %w", err)
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d bytes)", d2Path, len(session.CurrentPlan.D2Content)))
 	}
 
 	session.MarkSaved()
-	return fmt.Sprintf("Saved plan v%d to %s (ADR, %s, HTML)", session.CurrentPlan.Version, dir, filepath.Ext(diagramPath)[1:]), nil
+	return fmt.Sprintf("Saved plan v%d to %s (%s)", session.CurrentPlan.Version, dir, strings.Join(parts, ", ")), nil
 }
 
 func cmdRegenerate(session *Session, client Client, cfg *config.Config) (string, error) {

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan"
 
 	"github.com/spf13/cobra"
@@ -13,9 +15,10 @@ import (
 
 func newPlanCmd() *cobra.Command {
 	var (
-		outputDir   string
-		interactive bool
-		noTUI       bool
+		outputDir       string
+		interactive     bool
+		noTUI           bool
+		diagramFormat   string
 	)
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
@@ -45,23 +48,24 @@ func newPlanCmd() *cobra.Command {
 				if intent == "" {
 					return fmt.Errorf("intent required in non-interactive mode")
 				}
-				return runOneShot(cfg, intent, dir)
+				return runOneShot(cfg, intent, dir, diagramFormat)
 			}
 
 			if interactive || intent == "" {
-				return runInteractive(cfg, intent, dir)
+				return runInteractive(cfg, intent, dir, diagramFormat)
 			}
 
-			return runOneShot(cfg, intent, dir)
+			return runOneShot(cfg, intent, dir, diagramFormat)
 		},
 	}
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory for plan files")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "Force interactive mode")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive one-shot mode")
+	cmd.Flags().StringVar(&diagramFormat, "diagram", "mermaid", "Diagram output format (mermaid or d2)")
 	return cmd
 }
 
-func runOneShot(cfg *config.Config, intent, dir string) error {
+func runOneShot(cfg *config.Config, intent, dir, diagramFormat string) error {
 	client := &plan.MockClient{}
 	provider := cfg.LLM.Default
 	if provider == "" {
@@ -72,25 +76,47 @@ func runOneShot(cfg *config.Config, intent, dir string) error {
 		return err
 	}
 
-	adrPath := fmt.Sprintf("%s/plan.adr.md", dir)
-	d2Path := fmt.Sprintf("%s/plan.d2", dir)
+	md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
 
-	if err := os.WriteFile(adrPath, []byte(p.ADRContent), 0o644); err != nil {
-		return fmt.Errorf("writing ADR: %w", err)
+	if jsonFlag {
+		envelope := map[string]any{
+			"data": map[string]string{
+				"markdown": md,
+			},
+		}
+		b, err := json.Marshal(envelope)
+		if err != nil {
+			return fmt.Errorf("marshalling JSON: %w", err)
+		}
+		fmt.Println(string(b))
+		return nil
 	}
-	if err := os.WriteFile(d2Path, []byte(p.D2Content), 0o644); err != nil {
-		return fmt.Errorf("writing diagram: %w", err)
+
+	mdPath := fmt.Sprintf("%s/plan.md", dir)
+	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
+		return fmt.Errorf("writing plan markdown: %w", err)
 	}
 
 	if !quietFlag {
-		fmt.Printf("✓ Wrote %s (%d bytes)\n", adrPath, len(p.ADRContent))
-		fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
+		fmt.Printf("✓ Wrote %s (%d bytes)\n", mdPath, len(md))
 	}
+
+	if diagramFormat == "d2" {
+		d2Path := fmt.Sprintf("%s/plan.d2", dir)
+		if err := os.WriteFile(d2Path, []byte(p.D2Content), 0o644); err != nil {
+			return fmt.Errorf("writing D2 diagram: %w", err)
+		}
+		if !quietFlag {
+			fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
+		}
+	}
+
 	return nil
 }
 
-func runInteractive(cfg *config.Config, intent, dir string) error {
+func runInteractive(cfg *config.Config, intent, dir, diagramFormat string) error {
 	session := plan.NewSession(dir)
+	session.DiagramFormat = diagramFormat
 	client := &plan.MockClient{}
 	return plan.REPL(session, client, cfg, os.Stdin, os.Stdout, intent)
 }

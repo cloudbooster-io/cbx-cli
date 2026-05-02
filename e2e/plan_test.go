@@ -21,7 +21,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("llm_login_claude_then_plan_writes_adr_and_d2", func(t *testing.T) {
+	t.Run("llm_login_claude_then_plan_writes_md", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
 
@@ -43,16 +43,70 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("expected output mentioning written files, got: %s", stdout)
 		}
 
-		// Assert plan.adr.md exists and has expected content
-		adrPath := filepath.Join(tmpDir, "plan.adr.md")
-		requireFileExists(t, adrPath)
-		requireFileContains(t, adrPath, "ADR:")
-		requireFileContains(t, adrPath, "static site with auth")
+		// Assert plan.md exists and has expected content
+		mdPath := filepath.Join(tmpDir, "plan.md")
+		requireFileExists(t, mdPath)
+		requireFileContains(t, mdPath, "ADR:")
+		requireFileContains(t, mdPath, "static site with auth")
+		requireFileContains(t, mdPath, "```mermaid")
 
-		// Assert plan.d2 exists and has expected content
+		// Default is mermaid, so plan.d2 should NOT exist
 		d2Path := filepath.Join(tmpDir, "plan.d2")
-		requireFileExists(t, d2Path)
-		requireFileContains(t, d2Path, "direction:")
+		if _, err := os.Stat(d2Path); err == nil {
+			t.Fatalf("expected plan.d2 to NOT exist in default mermaid mode")
+		}
+	})
+
+	t.Run("plan_with_diagram_d2_writes_md_and_d2", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
+
+		// Login
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		if code != 0 {
+			t.Fatalf("login failed with code %d", code)
+		}
+
+		// Plan with --diagram=d2
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--diagram=d2", "static site with auth")
+		if code != 0 {
+			t.Fatalf("cbx plan exited %d", code)
+		}
+		if !strings.Contains(stdout, "Wrote") {
+			t.Fatalf("expected output mentioning written files, got: %s", stdout)
+		}
+
+		requireFileExists(t, filepath.Join(tmpDir, "plan.md"))
+		requireFileExists(t, filepath.Join(tmpDir, "plan.d2"))
+		requireFileContains(t, filepath.Join(tmpDir, "plan.d2"), "direction:")
+	})
+
+	t.Run("plan_with_json_flag_emits_envelope", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
+
+		// Login
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "llm", "login", "claude")
+		if code != 0 {
+			t.Fatalf("login failed with code %d", code)
+		}
+
+		// Plan with --json
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--json", "static site with auth")
+		if code != 0 {
+			t.Fatalf("cbx plan exited %d", code)
+		}
+
+		requireJSONValid(t, stdout)
+		if !strings.Contains(stdout, `"markdown"`) {
+			t.Fatalf("expected markdown in JSON envelope, got: %s", stdout)
+		}
+
+		// Should not write files in --json mode
+		mdPath := filepath.Join(tmpDir, "plan.md")
+		if _, err := os.Stat(mdPath); err == nil {
+			t.Fatalf("expected plan.md to NOT exist in --json mode")
+		}
 	})
 
 	t.Run("plan_with_output_dir_flag", func(t *testing.T) {
@@ -80,8 +134,7 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("expected output dir in stdout, got: %s", stdout)
 		}
 
-		requireFileExists(t, filepath.Join(outDir, "plan.adr.md"))
-		requireFileExists(t, filepath.Join(outDir, "plan.d2"))
+		requireFileExists(t, filepath.Join(outDir, "plan.md"))
 	})
 
 	t.Run("interactive_refine_and_save_with_diff", func(t *testing.T) {
@@ -108,8 +161,8 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("interactive plan exited %d", code)
 		}
 
-		v1Path := filepath.Join(tmpDir, "v1", "plan.adr.md")
-		v2Path := filepath.Join(tmpDir, "v2", "plan.adr.md")
+		v1Path := filepath.Join(tmpDir, "v1", "plan.md")
+		v2Path := filepath.Join(tmpDir, "v2", "plan.md")
 		requireFileExists(t, v1Path)
 		requireFileExists(t, v2Path)
 
