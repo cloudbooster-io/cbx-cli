@@ -17,7 +17,6 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 	cfg.Auth.Email = "test@example.com"
-	cfg.Auth.Token = "token123"
 	cfg.LLM.Providers["claude"] = LLMProvider{Name: "claude", LoggedIn: true}
 
 	if err := Save(cfg); err != nil {

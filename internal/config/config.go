@@ -15,9 +15,9 @@ type Config struct {
 	DefaultOrg string                `json:"default_org,omitempty"`
 }
 
-// AuthConfig holds CloudBooster authentication state.
+// AuthConfig holds CloudBooster authentication metadata.
+// The actual tokens are stored in the OS keyring, never on disk.
 type AuthConfig struct {
-	Token     string `json:"token,omitempty"`
 	Email     string `json:"email,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
