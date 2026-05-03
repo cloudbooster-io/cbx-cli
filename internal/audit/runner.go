@@ -15,8 +15,9 @@ type Result struct {
 	ReportPath string
 }
 
-// Run executes the full audit pipeline for the given state file.
-func Run(opts Options) (*Result, error) {
+// Collect executes the audit pipeline and returns findings without writing a
+// report. It is used by the interactive TUI path.
+func Collect(opts Options) ([]Finding, error) {
 	resources, err := ParseState(opts)
 	if err != nil {
 		return nil, err
@@ -54,9 +55,17 @@ func Run(opts Options) (*Result, error) {
 			findings = append(findings, f)
 		}
 	}
-	var scanErr error
 	if len(scanErrs) > 0 {
-		scanErr = errors.Join(scanErrs...)
+		return findings, errors.Join(scanErrs...)
+	}
+	return findings, nil
+}
+
+// Run executes the full audit pipeline for the given state file.
+func Run(opts Options) (*Result, error) {
+	findings, err := Collect(opts)
+	if err != nil && findings == nil {
+		return nil, err
 	}
 
 	reportPath := opts.ReportFile
@@ -65,8 +74,8 @@ func Run(opts Options) (*Result, error) {
 		reportPath = base + "_audit_report.md"
 	}
 
-	if err := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); err != nil {
-		return nil, fmt.Errorf("writing report: %w", err)
+	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); writeErr != nil {
+		return nil, fmt.Errorf("writing report: %w", writeErr)
 	}
 
 	result := &Result{
@@ -74,8 +83,8 @@ func Run(opts Options) (*Result, error) {
 		ReportPath: reportPath,
 	}
 
-	if scanErr != nil {
-		return result, fmt.Errorf("running scanners: %w", scanErr)
+	if err != nil {
+		return result, fmt.Errorf("running scanners: %w", err)
 	}
 	return result, nil
 }

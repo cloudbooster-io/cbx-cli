@@ -206,17 +206,20 @@ func TestAuditEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("audit_interactive_prints_message", func(t *testing.T) {
+	t.Run("audit_interactive_fallback_without_tty", func(t *testing.T) {
 		tmpDir := t.TempDir()
 
-		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+		stdout, stderr, code := runCBXInDir(t, tmpDir, nil,
 			"audit", "--pulumi-state", pulumiFixture, "--interactive")
 
-		if code != 0 {
-			t.Fatalf("expected exit code 0 for interactive mode, got %d", code)
+		if code != 3 {
+			t.Fatalf("expected exit code 3 (fallback to standard output), got %d", code)
 		}
-		if !strings.Contains(stderr, "follow-up phase") {
-			t.Fatalf("expected follow-up phase message, got: %s", stderr)
+		if !strings.Contains(stderr, "requires a terminal") {
+			t.Fatalf("expected terminal fallback message, got: %s", stderr)
+		}
+		if !strings.Contains(stdout, "S3-001") {
+			t.Fatalf("expected standard audit output, got: %s", stdout)
 		}
 	})
 
