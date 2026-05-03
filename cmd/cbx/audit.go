@@ -3,12 +3,17 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	tui "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/audit"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -42,11 +47,6 @@ Use --scanners to enable real scanner binaries.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pulumiStateFile == "" && terraformStateFile == "" {
 				return fmt.Errorf("--pulumi-state or --terraform-state is required")
-			}
-
-			if interactive {
-				fmt.Fprintln(os.Stderr, "Interactive audit mode is a follow-up phase. See https://docs.cloudbooster.io/audit for details.")
-				return nil
 			}
 
 			stateFile := pulumiStateFile
@@ -94,6 +94,13 @@ Use --scanners to enable real scanner binaries.`,
 				Scanners:          scannerNames,
 				Timeout:           timeout,
 				TimeoutPerScanner: timeoutPerScanner,
+			}
+
+			if interactive {
+				if chat.IsTUIAvailable(os.Stdin, noTUI) && isatty.IsTerminal(os.Stdout.Fd()) && outputFormat == "" && !jsonFlag {
+					return runInteractiveAudit(opts)
+				}
+				fmt.Fprintln(os.Stderr, "Interactive mode requires a terminal. Falling back to standard output.")
 			}
 
 			result, err := audit.Run(opts)
@@ -154,4 +161,50 @@ Use --scanners to enable real scanner binaries.`,
 	cmd.Flags().StringVar(&scanners, "scanners", "", "Comma-separated list of scanners to run (tfsec,checkov,prowler,trivy)")
 
 	return cmd
+}
+
+func runInteractiveAudit(opts audit.Options) error {
+	// Bypass the stdin size-guard prompt since we own the terminal.
+	opts.Yes = true
+
+	findings, err := audit.Collect(opts)
+	if err != nil && findings == nil {
+		return err
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+
+	model := tui.NewModel(findings)
+	model.SetSize(80, 24) // default; will be updated by WindowSizeMsg
+
+	p := tea.NewProgram(model, tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithAltScreen())
+
+	_, tuiErr := p.Run()
+	if tuiErr != nil {
+		return fmt.Errorf("running TUI: %w", tuiErr)
+	}
+
+	// Write report on exit
+	reportPath := opts.ReportFile
+	if reportPath == "" {
+		base := strings.TrimSuffix(filepath.Base(opts.StateFile), filepath.Ext(opts.StateFile))
+		reportPath = base + "_audit_report.md"
+	}
+	if writeErr := os.WriteFile(reportPath, []byte(audit.RenderMarkdown(findings)), 0o644); writeErr != nil {
+		return fmt.Errorf("writing report: %w", writeErr)
+	}
+
+	if !opts.Quiet {
+		fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+reportPath))
+	}
+
+	severityErr := audit.ExitWithSeverity(findings)
+	if severityErr != nil {
+		return severityErr
+	}
+	if err != nil {
+		return &audit.ExitCodeError{Code: 1}
+	}
+	return nil
 }
