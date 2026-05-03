@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,6 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -46,8 +50,14 @@ type ExchangeResult struct {
 	Email string
 }
 
+// PKCEOptions configures the authorization-code + PKCE browser flow.
+type PKCEOptions struct {
+	NoBrowser bool
+	Stdin     io.Reader
+}
+
 // RunPKCEFlow performs the authorization-code + PKCE browser flow.
-func RunPKCEFlow(ctx context.Context, cfg *Config) (*ExchangeResult, error) {
+func RunPKCEFlow(ctx context.Context, cfg *Config, opts PKCEOptions) (*ExchangeResult, error) {
 	verifier := oauth2.GenerateVerifier()
 
 	stateBytes := make([]byte, 16)
@@ -56,16 +66,80 @@ func RunPKCEFlow(ctx context.Context, cfg *Config) (*ExchangeResult, error) {
 	}
 	state := base64.RawURLEncoding.EncodeToString(stateBytes)
 
+	ocfg := cfg.oauth2Config("")
+
+	if opts.NoBrowser {
+		// Bind to a local port to get a valid redirect URI, then hold it
+		// so no other process can steal the port while the user visits the URL.
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, fmt.Errorf("listen: %w", err)
+		}
+		defer listener.Close()
+		port := listener.Addr().(*net.TCPAddr).Port
+		redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+
+		// Hold the port open in the background so the redirect URI remains valid.
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+		}()
+
+		ocfg.RedirectURL = redirectURI
+		authURL := ocfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
+
+		fmt.Fprintln(os.Stderr, "Please open the following URL in your browser:")
+		fmt.Fprintln(os.Stderr, authURL)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprint(os.Stderr, "Paste the authorization code here: ")
+
+		stdin := opts.Stdin
+		if stdin == nil {
+			stdin = os.Stdin
+		}
+
+		var code string
+		scanner := bufio.NewScanner(stdin)
+		if scanner.Scan() {
+			code = strings.TrimSpace(scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("reading code: %w", err)
+		}
+		if code == "" {
+			return nil, fmt.Errorf("no authorization code provided")
+		}
+
+		// User may paste the full callback URL; extract the code.
+		if strings.HasPrefix(code, "http") {
+			if u, err := url.Parse(code); err == nil {
+				if q := u.Query().Get("code"); q != "" {
+					code = q
+				}
+			}
+		}
+
+		return exchangeCode(ctx, cfg.APIURL+"/v1/auth/cli/exchange", code, verifier, redirectURI)
+	}
+
+	// Browser mode: start callback server and open browser.
 	callbackURL, codeCh, errCh, err := startCallbackServer(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("starting callback server: %w", err)
 	}
 
-	ocfg := cfg.oauth2Config(callbackURL)
+	ocfg.RedirectURL = callbackURL
 	authURL := ocfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier))
 
-	fmt.Println("Please open the following URL in your browser:")
-	fmt.Println(authURL)
+	if err := openBrowser(authURL); err != nil {
+		fmt.Fprintln(os.Stderr, "Could not open browser. Please open the following URL manually:")
+		fmt.Fprintln(os.Stderr, authURL)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -77,6 +151,24 @@ func RunPKCEFlow(ctx context.Context, cfg *Config) (*ExchangeResult, error) {
 	}
 }
 
+// openBrowser attempts to open url in the user's default browser.
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+		args = []string{url}
+	case "windows":
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	default:
+		cmd = "xdg-open"
+		args = []string{url}
+	}
+	return exec.Command(cmd, args...).Start()
+}
+
 // RunDeviceFlow performs the OAuth2 device-authorization flow.
 func RunDeviceFlow(ctx context.Context, cfg *Config) (*ExchangeResult, error) {
 	ocfg := cfg.oauth2Config("")
@@ -86,7 +178,7 @@ func RunDeviceFlow(ctx context.Context, cfg *Config) (*ExchangeResult, error) {
 		return nil, fmt.Errorf("device authorization: %w", err)
 	}
 
-	fmt.Printf("Please enter code %s at %s\n", da.UserCode, da.VerificationURI)
+	fmt.Fprintf(os.Stderr, "Please enter code %s at %s\n", da.UserCode, da.VerificationURI)
 
 	token, err := ocfg.DeviceAccessToken(ctx, da)
 	if err != nil {

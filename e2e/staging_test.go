@@ -51,4 +51,57 @@ func TestStagingConnectivity(t *testing.T) {
 			t.Fatalf("staging health endpoint returned HTTP %d, expected 200", resp.StatusCode)
 		}
 	})
+
+	t.Run("staging_auth_flow", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		homeDir := tmpDir + "/home"
+		keyringDir := tmpDir + "/keyring"
+
+		env := map[string]string{
+			"CB_API_URL":          apiURL,
+			"CB_KEYRING_BACKEND":  "file",
+			"CB_KEYRING_FILE_DIR": keyringDir,
+		}
+
+		// Before login: status should report not logged in.
+		stdout, stderr, code := runCBXWithHomeAndDir(t, homeDir, "", env, "status")
+		if code != 0 {
+			t.Fatalf("cbx status exited %d before login; stderr:\n%s", code, stderr)
+		}
+		if !strings.Contains(stdout, "Not logged in") {
+			t.Fatalf("expected 'Not logged in' before login, got:\n%s", stdout)
+		}
+
+		// Login via device-code flow against staging.
+		// (We cannot open a browser in CI, so device-code is the only viable
+		// option for an automated end-to-end test.)
+		_, stderr, code := runCBXWithHomeAndDir(t, homeDir, "", env, "login", "--device-code")
+		if code != 0 {
+			t.Fatalf("cbx login --device-code exited %d against staging; stderr:\n%s", code, stderr)
+		}
+
+		// After login: status should report the user email.
+		stdout, stderr, code = runCBXWithHomeAndDir(t, homeDir, "", env, "status")
+		if code != 0 {
+			t.Fatalf("cbx status exited %d after login; stderr:\n%s", code, stderr)
+		}
+		if !strings.Contains(stdout, "Account") {
+			t.Fatalf("expected status table with 'Account' after login, got:\n%s", stdout)
+		}
+
+		// Logout.
+		_, stderr, code = runCBXWithHomeAndDir(t, homeDir, "", env, "logout")
+		if code != 0 {
+			t.Fatalf("cbx logout exited %d against staging; stderr:\n%s", code, stderr)
+		}
+
+		// After logout: status should report not logged in.
+		stdout, stderr, code = runCBXWithHomeAndDir(t, homeDir, "", env, "status")
+		if code != 0 {
+			t.Fatalf("cbx status exited %d after logout; stderr:\n%s", code, stderr)
+		}
+		if !strings.Contains(stdout, "Not logged in") {
+			t.Fatalf("expected 'Not logged in' after logout, got:\n%s", stdout)
+		}
+	})
 }

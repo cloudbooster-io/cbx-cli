@@ -304,6 +304,89 @@ func TestSavingTokenSourcePersistsRefreshedToken(t *testing.T) {
 	}
 }
 
+func TestPKCENoBrowser(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var receivedVerifier string
+	var receivedCode string
+
+	mux.HandleFunc("/v1/auth/cli/exchange", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		receivedVerifier = r.FormValue("code_verifier")
+		receivedCode = r.FormValue("code")
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "test-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+			"email":        "bob@example.com",
+		})
+	})
+
+	cfg := &Config{APIURL: server.URL}
+	stdin := strings.NewReader("auth-code-123\n")
+
+	result, err := RunPKCEFlow(context.Background(), cfg, PKCEOptions{NoBrowser: true, Stdin: stdin})
+	if err != nil {
+		t.Fatalf("no-browser flow failed: %v", err)
+	}
+	if result.Token.AccessToken != "test-token" {
+		t.Fatalf("expected test-token, got %q", result.Token.AccessToken)
+	}
+	if result.Email != "bob@example.com" {
+		t.Fatalf("expected bob@example.com, got %q", result.Email)
+	}
+	if receivedCode != "auth-code-123" {
+		t.Fatalf("expected code auth-code-123, got %q", receivedCode)
+	}
+	if receivedVerifier == "" {
+		t.Fatal("expected code_verifier to be sent")
+	}
+}
+
+func TestPKCENoBrowserPastesURL(t *testing.T) {
+	mux := http.NewServeMux()
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	var receivedCode string
+	mux.HandleFunc("/v1/auth/cli/exchange", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		receivedCode = r.FormValue("code")
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "test-token",
+			"token_type":   "Bearer",
+			"expires_in":   3600,
+		})
+	})
+
+	cfg := &Config{APIURL: server.URL}
+	// User pastes the full callback URL instead of just the code.
+	stdin := strings.NewReader("http://127.0.0.1:12345/callback?code=url-code-456&state=xyz\n")
+
+	result, err := RunPKCEFlow(context.Background(), cfg, PKCEOptions{NoBrowser: true, Stdin: stdin})
+	if err != nil {
+		t.Fatalf("no-browser flow failed: %v", err)
+	}
+	if result.Token.AccessToken != "test-token" {
+		t.Fatalf("expected test-token, got %q", result.Token.AccessToken)
+	}
+	if receivedCode != "url-code-456" {
+		t.Fatalf("expected code url-code-456 to be extracted from URL, got %q", receivedCode)
+	}
+}
+
 // mockKeyring is an in-memory keyring for testing.
 type mockKeyring struct {
 	data map[string]string

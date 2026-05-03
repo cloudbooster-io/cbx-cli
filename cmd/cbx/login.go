@@ -2,16 +2,21 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
 
 func newLoginCmd() *cobra.Command {
 	var deviceCode bool
+	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Log in to CloudBooster",
@@ -31,7 +36,18 @@ func newLoginCmd() *cobra.Command {
 			if deviceCode {
 				result, err = auth.RunDeviceFlow(cmd.Context(), ocfg)
 			} else {
-				result, err = auth.RunPKCEFlow(cmd.Context(), ocfg)
+				var spinner *output.Spinner
+				if !noBrowser && !jsonFlag && !quietFlag {
+					spinner = output.NewSpinner("Waiting for browser callback…")
+					spinner.Start()
+				}
+				result, err = auth.RunPKCEFlow(cmd.Context(), ocfg, auth.PKCEOptions{
+					NoBrowser: noBrowser,
+					Stdin:     cmd.InOrStdin(),
+				})
+				if spinner != nil {
+					spinner.Stop()
+				}
 			}
 			if err != nil {
 				return fmt.Errorf("login failed: %w", err)
@@ -49,15 +65,24 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("saving config: %w", err)
 			}
 
-			if result.Email != "" {
-				fmt.Printf("✓ Logged in to CloudBooster as %s\n", result.Email)
-			} else {
-				fmt.Println("✓ Logged in to CloudBooster")
+			if jsonFlag {
+				return output.PrintJSON(map[string]string{
+					"email": result.Email,
+				}, nil)
+			}
+
+			if !quietFlag {
+				if result.Email != "" {
+					fmt.Printf("%s Logged in as %s\n", output.Success.Render(output.Symbol("check")), result.Email)
+				} else {
+					fmt.Printf("%s Logged in to CloudBooster\n", output.Success.Render(output.Symbol("check")))
+				}
 			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&deviceCode, "device-code", false, "Use device-code flow for headless/SSH sessions")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the auth URL and wait for manual paste-back")
 	return cmd
 }
 
@@ -83,7 +108,14 @@ func newLogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			fmt.Println("✓ Logged out of CloudBooster")
+
+			if jsonFlag {
+				return output.PrintJSON(map[string]string{"status": "logged_out"}, nil)
+			}
+
+			if !quietFlag {
+				fmt.Printf("%s Logged out of CloudBooster\n", output.Success.Render(output.Symbol("check")))
+			}
 			return nil
 		},
 	}
@@ -103,19 +135,113 @@ func newStatusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("keyring: %w", err)
 			}
-			loggedIn, err := auth.IsAuthenticated(kr)
+
+			token, err := auth.LoadToken(kr)
 			if err != nil {
-				return fmt.Errorf("checking auth: %w", err)
-			}
-			if !loggedIn {
+				if jsonFlag {
+					return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
+				}
 				fmt.Println("Not logged in.")
 				return nil
 			}
-			if cfg.Auth.Email != "" {
-				fmt.Printf("Logged in as %s\n", cfg.Auth.Email)
-			} else {
-				fmt.Println("Logged in.")
+
+			httpClient, err := auth.AuthenticatedClient(cmd.Context(), cfg.APIURL, kr)
+			if err != nil {
+				if jsonFlag {
+					return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
+				}
+				fmt.Println("Not logged in.")
+				return nil
 			}
+
+			client, err := v1.NewClientWithResponses(cfg.APIURL, v1.WithHTTPClient(httpClient))
+			if err != nil {
+				return fmt.Errorf("creating API client: %w", err)
+			}
+
+			resp, err := client.GetMeWithResponse(cmd.Context())
+			if err != nil {
+				errStr := err.Error()
+				if strings.Contains(errStr, "401") || strings.Contains(errStr, "Unauthorized") || strings.Contains(errStr, "cannot fetch token") {
+					if jsonFlag {
+						_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
+						return fmt.Errorf("authentication expired")
+					}
+					return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+						What: "your session has expired",
+						Why:  "the authentication token is no longer valid",
+						Fix:  "run `cbx login` to re-authenticate",
+						Code: "E_AUTH_EXPIRED",
+					}))
+				}
+				return fmt.Errorf("checking status: %w", err)
+			}
+
+			if resp.StatusCode() == http.StatusUnauthorized {
+				if jsonFlag {
+					_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
+					return fmt.Errorf("authentication expired")
+				}
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: "your session has expired",
+					Why:  "the server returned HTTP 401 Unauthorized",
+					Fix:  "run `cbx login` to re-authenticate",
+					Code: "E_AUTH_EXPIRED",
+				}))
+			}
+
+			if resp.StatusCode() != http.StatusOK {
+				return fmt.Errorf("server returned HTTP %d", resp.StatusCode())
+			}
+
+			// Reload token from keyring in case AuthenticatedClient silently refreshed it.
+			token, err = auth.LoadToken(kr)
+			if err != nil {
+				token = nil
+			}
+
+			email := ""
+			if resp.JSON200 != nil && resp.JSON200.Email != nil {
+				email = *resp.JSON200.Email
+			}
+			if email == "" {
+				email = cfg.Auth.Email
+			}
+
+			fingerprint := "—"
+			if token != nil && len(token.AccessToken) > 16 {
+				fingerprint = token.AccessToken[:8] + "…" + token.AccessToken[len(token.AccessToken)-8:]
+			} else if token != nil && token.AccessToken != "" {
+				fingerprint = token.AccessToken
+			}
+
+			expiry := "—"
+			if token != nil && !token.Expiry.IsZero() {
+				expiry = token.Expiry.Format(time.RFC3339)
+			}
+
+			org := cfg.DefaultOrg
+			if org == "" {
+				org = "—"
+			}
+
+			if jsonFlag {
+				return output.PrintJSON(map[string]string{
+					"account":     email,
+					"org":         org,
+					"project":     "—",
+					"fingerprint": fingerprint,
+					"expiry":      expiry,
+				}, nil)
+			}
+
+			tbl := output.NewTable([]string{"Field", "Value"})
+			tbl.AddRow("Account", email)
+			tbl.AddRow("Org", org)
+			tbl.AddRow("Project", "—")
+			tbl.AddRow("API key fingerprint", fingerprint)
+			tbl.AddRow("Expiry", expiry)
+			fmt.Print(tbl.Render())
 			return nil
 		},
 	}
