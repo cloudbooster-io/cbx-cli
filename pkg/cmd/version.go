@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"fmt"
@@ -15,12 +15,12 @@ func newVersionCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jsonFlag {
 				return output.PrintJSON(map[string]string{
-					"version": version,
-					"commit":  commit,
-					"date":    date,
+					"version": Version,
+					"commit":  Commit,
+					"date":    Date,
 				}, nil)
 			}
-			fmt.Printf("cbx version %s (commit: %s, built: %s)\n", version, commit, date)
+			fmt.Printf("cbx version %s (commit: %s, built: %s)\n", Version, Commit, Date)
 			return nil
 		},
 	}

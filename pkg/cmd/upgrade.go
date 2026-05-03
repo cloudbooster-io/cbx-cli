@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"context"
@@ -26,10 +26,10 @@ func newUpgradeCmd() *cobra.Command {
 		Use:   "upgrade",
 		Short: "Upgrade cbx to the latest version",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if version == "dev" || version == "unknown" || version == "" {
+			if Version == "dev" || Version == "unknown" || Version == "" {
 				if jsonFlag {
 					out, _ := json.MarshalIndent(upgradeResult{
-						CurrentVersion: version,
+						CurrentVersion: Version,
 						Message:        "cannot upgrade development build",
 					}, "", "  ")
 					fmt.Println(string(out))
@@ -40,7 +40,7 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 
-			checker := update.NewChecker(version)
+			checker := update.NewChecker(Version)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -48,7 +48,7 @@ func newUpgradeCmd() *cobra.Command {
 			if err != nil {
 				if jsonFlag {
 					out, _ := json.MarshalIndent(upgradeResult{
-						CurrentVersion: version,
+						CurrentVersion: Version,
 						Message:        fmt.Sprintf("failed to check for updates: %v", err),
 					}, "", "  ")
 					fmt.Println(string(out))
@@ -60,7 +60,7 @@ func newUpgradeCmd() *cobra.Command {
 			if !result.HasUpdate {
 				if jsonFlag {
 					out, _ := json.MarshalIndent(upgradeResult{
-						CurrentVersion: version,
+						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      false,
 						InstallMethod:  string(result.InstallMethod),
@@ -70,14 +70,14 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Println(string(out))
 					return nil
 				}
-				fmt.Printf("Already up to date (%s).\n", version)
+				fmt.Printf("Already up to date (%s).\n", Version)
 				return nil
 			}
 
 			if dryRun {
 				if jsonFlag {
 					out, _ := json.MarshalIndent(upgradeResult{
-						CurrentVersion: version,
+						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      true,
 						InstallMethod:  string(result.InstallMethod),
@@ -87,7 +87,7 @@ func newUpgradeCmd() *cobra.Command {
 					fmt.Println(string(out))
 					return nil
 				}
-				fmt.Printf("Update available: %s → %s\n", version, result.LatestVersion)
+				fmt.Printf("Update available: %s → %s\n", Version, result.LatestVersion)
 				fmt.Printf("Install method: %s\n", result.InstallMethod)
 				fmt.Printf("Would run: %s\n", update.UpgradeCommand(result))
 				return nil
@@ -96,7 +96,7 @@ func newUpgradeCmd() *cobra.Command {
 			if jsonFlag {
 				// JSON mode: report what would happen but don't actually run package manager
 				out, _ := json.MarshalIndent(upgradeResult{
-					CurrentVersion: version,
+					CurrentVersion: Version,
 					LatestVersion:  result.LatestVersion,
 					HasUpdate:      true,
 					InstallMethod:  string(result.InstallMethod),
@@ -107,7 +107,7 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("Upgrading cbx %s → %s (%s)\n", version, result.LatestVersion, result.InstallMethod)
+			fmt.Printf("Upgrading cbx %s → %s (%s)\n", Version, result.LatestVersion, result.InstallMethod)
 			if result.InstallMethod == update.InstallDirect {
 				fmt.Printf("Direct download upgrade is not automated.\n")
 				fmt.Printf("Download the latest release from:\n  %s\n", result.ReleaseURL)

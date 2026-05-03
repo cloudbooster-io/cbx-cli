@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestRootVersionFlag(t *testing.T) {
-	cmd := newRootCmd()
+	cmd := NewRootCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -23,7 +23,7 @@ func TestRootVersionFlag(t *testing.T) {
 }
 
 func TestRootHelpFlag(t *testing.T) {
-	cmd := newRootCmd()
+	cmd := NewRootCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -35,7 +35,7 @@ func TestRootHelpFlag(t *testing.T) {
 }
 
 func TestRootUnknownSubcommand(t *testing.T) {
-	cmd := newRootCmd()
+	cmd := NewRootCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
