@@ -142,6 +142,32 @@ func TestPlanEndToEnd(t *testing.T) {
 		requireFileExists(t, filepath.Join(outDir, "plan.md"))
 	})
 
+	t.Run("plan_with_variants_writes_multiple_files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		homeDir := filepath.Join(tmpDir, "home")
+
+		// Login
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		if code != 0 {
+			t.Fatalf("login failed with code %d", code)
+		}
+
+		// Plan with --variants=2 --no-tui
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "--variants=2", "static site with auth")
+		if code != 0 {
+			t.Fatalf("cbx plan exited %d", code)
+		}
+		if !strings.Contains(stdout, "plan.md") {
+			t.Fatalf("expected plan.md in summary, got: %s", stdout)
+		}
+		if !strings.Contains(stdout, "plan-v2.md") {
+			t.Fatalf("expected plan-v2.md in summary, got: %s", stdout)
+		}
+
+		requireFileExists(t, filepath.Join(tmpDir, "plan.md"))
+		requireFileExists(t, filepath.Join(tmpDir, "plan-v2.md"))
+	})
+
 	t.Run("interactive_refine_and_save_with_diff", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
@@ -152,15 +178,17 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("login failed with code %d", code)
 		}
 
-		// Run interactive plan: save v1, refine with CDN, save v2, quit
+		// Run interactive plan: send intent via stdin, then slash commands.
+		// No positional intent so auto-detect does not route to headless.
 		_, _, code = runCBXInteractive(t, homeDir, tmpDir, nil,
 			[]string{
+				`static site with auth`,
 				`/save v1`,
 				`/refine "add CDN"`,
 				`/save v2`,
 				`/quit`,
 			},
-			"plan", "static site with auth",
+			"plan",
 		)
 		if code != 0 {
 			t.Fatalf("interactive plan exited %d", code)

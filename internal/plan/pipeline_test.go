@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,11 +16,22 @@ import (
 )
 
 type testSender struct {
+	mu   sync.Mutex
 	msgs []tea.Msg
 }
 
 func (s *testSender) Send(msg tea.Msg) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.msgs = append(s.msgs, msg)
+}
+
+func (s *testSender) Messages() []tea.Msg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]tea.Msg, len(s.msgs))
+	copy(out, s.msgs)
+	return out
 }
 
 func TestPipelineFullFlow(t *testing.T) {
@@ -72,10 +84,12 @@ func TestPipelineFullFlow(t *testing.T) {
 	pipeline.Start("static site")
 
 	// Wait for pipeline to finish.
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1 * time.Second)
+
+	msgs := sender.Messages()
 
 	// Verify message sequence.
-	if len(sender.msgs) == 0 {
+	if len(msgs) == 0 {
 		t.Fatal("expected messages from pipeline")
 	}
 
@@ -83,7 +97,7 @@ func TestPipelineFullFlow(t *testing.T) {
 	var tokenCount, candidateCount int
 	var resolveMsg *chat.ResolveCompleteMsg
 
-	for _, msg := range sender.msgs {
+	for _, msg := range msgs {
 		switch m := msg.(type) {
 		case chat.StatusMsg:
 			if strings.Contains(m.Left, "proposing") {
@@ -175,7 +189,7 @@ func TestPipelineCancel(t *testing.T) {
 
 	// We should have received at least the proposing status and a cancelled status.
 	var sawCancelled bool
-	for _, msg := range sender.msgs {
+	for _, msg := range sender.Messages() {
 		if m, ok := msg.(chat.StatusMsg); ok && m.Right == "cancelled" {
 			sawCancelled = true
 		}
@@ -205,7 +219,7 @@ func TestPipelineFallbackWhenAPIUnreachable(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	var resolveMsg *chat.ResolveCompleteMsg
-	for _, msg := range sender.msgs {
+	for _, msg := range sender.Messages() {
 		if m, ok := msg.(chat.ResolveCompleteMsg); ok {
 			resolveMsg = &m
 		}

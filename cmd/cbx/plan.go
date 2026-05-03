@@ -2,16 +2,18 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"os"
+	"path/filepath"
 
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
+
+	coreplan "gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan"
-
-	"github.com/spf13/cobra"
 )
 
 func newPlanCmd() *cobra.Command {
@@ -23,6 +25,7 @@ func newPlanCmd() *cobra.Command {
 		htmlPreview   bool
 		noOpen        bool
 		previewPort   int
+		variants      int
 	)
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
@@ -48,11 +51,12 @@ func newPlanCmd() *cobra.Command {
 				intent = args[0]
 			}
 
-			if noTUI || jsonFlag {
+			isHeadless := noTUI || jsonFlag || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
+			if isHeadless {
 				if intent == "" {
 					return fmt.Errorf("intent required in non-interactive mode")
 				}
-				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort)
+				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort, llmProvider, variants)
 			}
 
 			return runInteractive(cfg, intent, dir, diagramFormat, noTUI, llmProvider)
@@ -65,59 +69,92 @@ func newPlanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&htmlPreview, "html", false, "Start a local HTML preview server after writing plan files (one-shot mode)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Do not auto-open the HTML preview in a browser (requires --html)")
 	cmd.Flags().IntVar(&previewPort, "port", 0, "Local HTML preview server port (0 = random; requires --html)")
+	cmd.Flags().IntVar(&variants, "variants", 1, "Number of plan variants to generate")
 	return cmd
 }
 
-func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int) error {
-	client := &plan.MockClient{}
-	provider := cfg.LLM.Default
-	if provider == "" {
-		provider = "claude"
+type headlessProgress struct {
+	silent bool
+}
+
+func (p *headlessProgress) PhaseStart(phase, total int, label string) {
+	if p.silent {
+		return
 	}
-	p, err := client.GeneratePlan(context.Background(), intent, provider)
-	if err != nil {
-		return err
+	output.PrintPhase(os.Stderr, phase, total, label)
+}
+
+func (p *headlessProgress) SetStatus(left, right string) {}
+
+func (p *headlessProgress) Token(token string) {}
+
+func (p *headlessProgress) Candidate(name, description string) {}
+
+func (p *headlessProgress) Commit() {}
+
+func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int, llmProvider string, variants int) error {
+	if variants < 1 {
+		return fmt.Errorf("variants must be at least 1")
+	}
+	if variants > 2 {
+		return fmt.Errorf("free tier capped at 2 variants")
 	}
 
-	md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
+	runner := coreplan.NewRunner(cfg, llmProvider)
+	ctx := context.Background()
+
+	var plans []*coreplan.Plan
+	for i := 0; i < variants; i++ {
+		plan, err := runner.Run(ctx, intent, &headlessProgress{silent: jsonFlag})
+		if err != nil {
+			return err
+		}
+		plans = append(plans, plan)
+	}
 
 	if jsonFlag {
-		envelope := map[string]any{
-			"data": map[string]string{
-				"markdown": md,
-			},
+		if variants == 1 {
+			md := output.RenderPlanMD(plans[0].Intent, plans[0].Version, plans[0].ADRContent, plans[0].MermaidContent)
+			return output.PrintJSON(map[string]string{"markdown": md}, nil)
 		}
-		b, err := json.Marshal(envelope)
-		if err != nil {
-			return fmt.Errorf("marshalling JSON: %w", err)
+		var variantsData []map[string]string
+		for _, p := range plans {
+			md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
+			variantsData = append(variantsData, map[string]string{"markdown": md})
 		}
-		fmt.Println(string(b))
-		return nil
+		return output.PrintJSON(map[string]any{"variants": variantsData}, nil)
 	}
 
-	mdPath := fmt.Sprintf("%s/plan.md", dir)
-	if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
-		return fmt.Errorf("writing plan markdown: %w", err)
+	// Write files for each variant.
+	var files []string
+	var totalBytes int
+	for i, p := range plans {
+		md := output.RenderPlanMD(p.Intent, p.Version, p.ADRContent, p.MermaidContent)
+		mdPath := planFilePath(dir, "plan.md", i)
+		if err := os.WriteFile(mdPath, []byte(md), 0o644); err != nil {
+			return fmt.Errorf("writing plan markdown: %w", err)
+		}
+		files = append(files, mdPath)
+		totalBytes += len(md)
+
+		if diagramFormat == "d2" {
+			d2Path := planFilePath(dir, "plan.d2", i)
+			if err := os.WriteFile(d2Path, []byte(p.D2Content), 0o644); err != nil {
+				return fmt.Errorf("writing D2 diagram: %w", err)
+			}
+			files = append(files, d2Path)
+			totalBytes += len(p.D2Content)
+		}
 	}
 
 	if !quietFlag {
-		fmt.Printf("✓ Wrote %s (%d bytes)\n", mdPath, len(md))
-	}
-
-	if diagramFormat == "d2" {
-		d2Path := fmt.Sprintf("%s/plan.d2", dir)
-		if err := os.WriteFile(d2Path, []byte(p.D2Content), 0o644); err != nil {
-			return fmt.Errorf("writing D2 diagram: %w", err)
-		}
-		if !quietFlag {
-			fmt.Printf("✓ Wrote %s (%d bytes)\n", d2Path, len(p.D2Content))
-		}
+		output.PrintPlanSummary(os.Stdout, files, totalBytes, len(plans[0].Components))
 	}
 
 	// Optional HTML preview server (CB-422). Opt-in via --html. Skip in --json
 	// or when running with d2 diagrams (the template renders mermaid only).
-	if htmlPreview && !jsonFlag && diagramFormat != "d2" {
-		htmlBytes, err := generatePlanHTML(p.Intent, p.ADRContent, template.HTML(p.MermaidContent))
+	if htmlPreview && !jsonFlag && diagramFormat != "d2" && len(plans) > 0 {
+		htmlBytes, err := generatePlanHTML(plans[0].Intent, plans[0].ADRContent, template.HTML(plans[0].MermaidContent))
 		if err != nil {
 			if !quietFlag {
 				fmt.Fprintf(os.Stderr, "warning: failed to generate HTML preview: %v\n", err)
@@ -130,6 +167,15 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 	}
 
 	return nil
+}
+
+func planFilePath(dir, base string, idx int) string {
+	if idx == 0 {
+		return filepath.Join(dir, base)
+	}
+	ext := filepath.Ext(base)
+	name := base[:len(base)-len(ext)]
+	return filepath.Join(dir, fmt.Sprintf("%s-v%d%s", name, idx+1, ext))
 }
 
 func runInteractive(cfg *config.Config, intent, dir, diagramFormat string, noTUI bool, llmProvider string) error {

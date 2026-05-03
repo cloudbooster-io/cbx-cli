@@ -138,7 +138,7 @@ func cmdRegenerate(session *Session, client Client, cfg *config.Config) (string,
 		return "", fmt.Errorf("no previous intent to regenerate")
 	}
 	intent := session.History[0].Input
-	provider := getProvider(session, cfg)
+	provider := GetProvider(session, cfg)
 	plan, err := client.GeneratePlan(context.Background(), intent, provider)
 	if err != nil {
 		return "", err
@@ -156,7 +156,7 @@ func cmdRefine(args []string, session *Session, client Client, cfg *config.Confi
 		return "", fmt.Errorf("no plan to refine; start with an intent first")
 	}
 	refineText := strings.Join(args, " ")
-	provider := getProvider(session, cfg)
+	provider := GetProvider(session, cfg)
 	plan, err := client.RefinePlan(context.Background(), session.CurrentPlan, refineText, provider)
 	if err != nil {
 		return "", err

@@ -78,6 +78,7 @@ var symbolMap = map[string][2]string{
 	"bullet":  {"▸", ">"},
 	"diamond": {"◆", "#"},
 	"warning": {"⚠", "[WARN]"},
+	"phase":   {"⏵", ">"},
 }
 
 // Symbol returns the styled or ASCII version of a named symbol.

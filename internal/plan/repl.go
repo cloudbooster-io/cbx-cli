@@ -20,7 +20,7 @@ func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, ini
 	m.SetStreamRenderer(chat.NewStreamRenderer())
 
 	// Status bar
-	provider := getProvider(session, cfg)
+	provider := GetProvider(session, cfg)
 	provCfg, ok := cfg.LLM.Providers[provider]
 	statusRight := ""
 	if ok && (strings.Contains(provCfg.BaseURL, "localhost") || strings.Contains(provCfg.BaseURL, "127.0.0.1")) {
@@ -97,7 +97,7 @@ func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, ini
 		}
 		// Pipe mode: synchronous fallback.
 		ctx := context.Background()
-		provider := getProvider(session, cfg)
+		provider := GetProvider(session, cfg)
 		if session.CurrentPlan == nil {
 			plan, err := client.GeneratePlan(ctx, input, provider)
 			if err != nil {
