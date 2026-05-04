@@ -1,0 +1,45 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+If you believe you have found a security vulnerability in `cbx-cli`,
+please report it privately. **Do not open a public GitLab issue.**
+
+Email: **security@cloudbooster.io**
+
+Please include:
+
+- A description of the issue and its potential impact
+- Steps to reproduce (proof-of-concept, affected version, platform)
+- Any suggested mitigation, if known
+
+If possible, encrypt sensitive details. We will acknowledge receipt
+within 5 business days.
+
+## Disclosure policy
+
+We follow a **coordinated disclosure** model with a 90-day window:
+
+- Day 0: Report received and acknowledged.
+- Day 0–90: We investigate, develop a fix, and prepare a release.
+- By day 90: The issue is publicly disclosed, either via a release
+  with the fix or — if a fix is not yet available — via a security
+  advisory describing the issue and any available mitigations.
+
+We may extend the window by mutual agreement when a fix requires
+significant coordination across downstream consumers. We will not
+extend it unilaterally.
+
+## Supported versions
+
+Security fixes are issued against the latest released minor version.
+Older versions are supported on a best-effort basis only.
+
+## Scope
+
+In scope: the `cbx` binary built from this repository, including its
+authentication, configuration, and network behavior.
+
+Out of scope: third-party services that `cbx` integrates with (report
+those to the respective vendor), and issues in dependencies that have
+no exploitation path through `cbx-cli` itself.

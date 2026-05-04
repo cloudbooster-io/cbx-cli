@@ -1,0 +1,29 @@
+# Build output
+/bin/
+/dist/
+/cbx
+/cbx.exe
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Vendored deps (we don't vendor)
+/vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local tooling
+.direnv/
+.envrc.local
