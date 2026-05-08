@@ -30,6 +30,29 @@ type CLIExchangeResponse struct {
 	Token *string `json:"token,omitempty"`
 }
 
+// EnvironmentCostResponse defines model for EnvironmentCostResponse.
+type EnvironmentCostResponse struct {
+	DailyCosts    *[]map[string]interface{} `json:"daily_costs,omitempty"`
+	EndDate       *string                   `json:"end_date,omitempty"`
+	ProfilesCount *int                      `json:"profiles_count,omitempty"`
+	StartDate     *string                   `json:"start_date,omitempty"`
+	TotalCost     *float32                  `json:"total_cost,omitempty"`
+	Unit          *string                   `json:"unit,omitempty"`
+}
+
+// EnvironmentDriftResponse defines model for EnvironmentDriftResponse.
+type EnvironmentDriftResponse struct {
+	Checks        *[]map[string]interface{} `json:"checks,omitempty"`
+	EnvironmentId *string                   `json:"environment_id,omitempty"`
+}
+
+// EnvironmentLogsResponse defines model for EnvironmentLogsResponse.
+type EnvironmentLogsResponse struct {
+	EnvironmentId *string `json:"environment_id,omitempty"`
+	Logs          *string `json:"logs,omitempty"`
+	RunId         *string `json:"run_id,omitempty"`
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status *string `json:"status,omitempty"`
@@ -45,6 +68,12 @@ type Project struct {
 type User struct {
 	Email *string `json:"email,omitempty"`
 	Id    *string `json:"id,omitempty"`
+}
+
+// GetEnvironmentLogsParams defines parameters for GetEnvironmentLogs.
+type GetEnvironmentLogsParams struct {
+	// Tail Return only the trailing portion of the logs
+	Tail *bool `form:"tail,omitempty" json:"tail,omitempty"`
 }
 
 // PostAuthCLIExchangeJSONRequestBody defines body for PostAuthCLIExchange for application/json ContentType.
@@ -131,6 +160,15 @@ type ClientInterface interface {
 
 	PostAuthCLIExchange(ctx context.Context, body PostAuthCLIExchangeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetEnvironmentCost request
+	GetEnvironmentCost(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvironmentDrift request
+	GetEnvironmentDrift(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEnvironmentLogs request
+	GetEnvironmentLogs(ctx context.Context, environmentId string, params *GetEnvironmentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetMe request
 	GetMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -164,6 +202,42 @@ func (c *Client) PostAuthCLIExchangeWithBody(ctx context.Context, contentType st
 
 func (c *Client) PostAuthCLIExchange(ctx context.Context, body PostAuthCLIExchangeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostAuthCLIExchangeRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEnvironmentCost(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentCostRequest(c.Server, environmentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEnvironmentDrift(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentDriftRequest(c.Server, environmentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEnvironmentLogs(ctx context.Context, environmentId string, params *GetEnvironmentLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEnvironmentLogsRequest(c.Server, environmentId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +335,130 @@ func NewPostAuthCLIExchangeRequestWithBody(server string, contentType string, bo
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetEnvironmentCostRequest generates requests for GetEnvironmentCost
+func NewGetEnvironmentCostRequest(server string, environmentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "environment_id", runtime.ParamLocationPath, environmentId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environments/%s/cost", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEnvironmentDriftRequest generates requests for GetEnvironmentDrift
+func NewGetEnvironmentDriftRequest(server string, environmentId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "environment_id", runtime.ParamLocationPath, environmentId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environments/%s/drift", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEnvironmentLogsRequest generates requests for GetEnvironmentLogs
+func NewGetEnvironmentLogsRequest(server string, environmentId string, params *GetEnvironmentLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "environment_id", runtime.ParamLocationPath, environmentId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/environments/%s/logs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Tail != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "tail", runtime.ParamLocationQuery, *params.Tail); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -377,6 +575,15 @@ type ClientWithResponsesInterface interface {
 
 	PostAuthCLIExchangeWithResponse(ctx context.Context, body PostAuthCLIExchangeJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAuthCLIExchangeResponse, error)
 
+	// GetEnvironmentCostWithResponse request
+	GetEnvironmentCostWithResponse(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*GetEnvironmentCostResponse, error)
+
+	// GetEnvironmentDriftWithResponse request
+	GetEnvironmentDriftWithResponse(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*GetEnvironmentDriftResponse, error)
+
+	// GetEnvironmentLogsWithResponse request
+	GetEnvironmentLogsWithResponse(ctx context.Context, environmentId string, params *GetEnvironmentLogsParams, reqEditors ...RequestEditorFn) (*GetEnvironmentLogsResponse, error)
+
 	// GetMeWithResponse request
 	GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error)
 
@@ -422,6 +629,72 @@ func (r PostAuthCLIExchangeResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r PostAuthCLIExchangeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEnvironmentCostResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvironmentCostResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentCostResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentCostResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEnvironmentDriftResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvironmentDriftResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentDriftResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentDriftResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEnvironmentLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EnvironmentLogsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEnvironmentLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEnvironmentLogsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -498,6 +771,33 @@ func (c *ClientWithResponses) PostAuthCLIExchangeWithResponse(ctx context.Contex
 	return ParsePostAuthCLIExchangeResponse(rsp)
 }
 
+// GetEnvironmentCostWithResponse request returning *GetEnvironmentCostResponse
+func (c *ClientWithResponses) GetEnvironmentCostWithResponse(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*GetEnvironmentCostResponse, error) {
+	rsp, err := c.GetEnvironmentCost(ctx, environmentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentCostResponse(rsp)
+}
+
+// GetEnvironmentDriftWithResponse request returning *GetEnvironmentDriftResponse
+func (c *ClientWithResponses) GetEnvironmentDriftWithResponse(ctx context.Context, environmentId string, reqEditors ...RequestEditorFn) (*GetEnvironmentDriftResponse, error) {
+	rsp, err := c.GetEnvironmentDrift(ctx, environmentId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentDriftResponse(rsp)
+}
+
+// GetEnvironmentLogsWithResponse request returning *GetEnvironmentLogsResponse
+func (c *ClientWithResponses) GetEnvironmentLogsWithResponse(ctx context.Context, environmentId string, params *GetEnvironmentLogsParams, reqEditors ...RequestEditorFn) (*GetEnvironmentLogsResponse, error) {
+	rsp, err := c.GetEnvironmentLogs(ctx, environmentId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEnvironmentLogsResponse(rsp)
+}
+
 // GetMeWithResponse request returning *GetMeResponse
 func (c *ClientWithResponses) GetMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMeResponse, error) {
 	rsp, err := c.GetMe(ctx, reqEditors...)
@@ -558,6 +858,84 @@ func ParsePostAuthCLIExchangeResponse(rsp *http.Response) (*PostAuthCLIExchangeR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CLIExchangeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentCostResponse parses an HTTP response from a GetEnvironmentCostWithResponse call
+func ParseGetEnvironmentCostResponse(rsp *http.Response) (*GetEnvironmentCostResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentCostResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentCostResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentDriftResponse parses an HTTP response from a GetEnvironmentDriftWithResponse call
+func ParseGetEnvironmentDriftResponse(rsp *http.Response) (*GetEnvironmentDriftResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentDriftResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentDriftResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEnvironmentLogsResponse parses an HTTP response from a GetEnvironmentLogsWithResponse call
+func ParseGetEnvironmentLogsResponse(rsp *http.Response) (*GetEnvironmentLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEnvironmentLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EnvironmentLogsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

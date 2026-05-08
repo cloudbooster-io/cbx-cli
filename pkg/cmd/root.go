@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	version     = "dev"
-	commit      = "unknown"
-	date        = "unknown"
+	Version     = "dev"
+	Commit      = "unknown"
+	Date        = "unknown"
 	jsonFlag    bool
 	quietFlag   bool
 	noTUI       bool
@@ -19,13 +19,13 @@ var (
 // executedCommand tracks which subcommand was run (used by background update check).
 var executedCommand string
 
-func newRootCmd() *cobra.Command {
+func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "cbx",
 		Short: "CloudBooster CLI — plan, audit, and manage cloud infrastructure",
 		Long: `cbx is the CloudBooster CLI for planning cloud infrastructure,
 auditing existing deployments, and interacting with the CloudBooster platform.`,
-		Version:       version,
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -53,6 +53,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newPlanCmd(),
 		newAuditCmd(),
 		newUpgradeCmd(),
+		newEnvCmd(),
 	)
 
 	return root

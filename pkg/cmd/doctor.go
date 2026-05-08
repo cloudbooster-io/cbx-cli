@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"context"
@@ -82,8 +82,8 @@ func runChecks(cfg *config.Config) []doctorCheck {
 	// 1. cbx version
 	checks = append(checks, doctorCheck{
 		Name: "cbx version",
-		OK:   version != "dev" && version != "unknown" && version != "",
-		Info: version,
+		OK:   Version != "dev" && Version != "unknown" && Version != "",
+		Info: Version,
 	})
 
 	// 2. OS/Arch
@@ -197,10 +197,10 @@ func checkScannerBinaries() (bool, string) {
 }
 
 func checkVersionCurrent() (bool, string) {
-	if version == "dev" || version == "unknown" || version == "" {
+	if Version == "dev" || Version == "unknown" || Version == "" {
 		return false, "development build (no version info)"
 	}
-	checker := update.NewChecker(version)
+	checker := update.NewChecker(Version)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result, err := checker.Check(ctx)
@@ -208,9 +208,9 @@ func checkVersionCurrent() (bool, string) {
 		return false, fmt.Sprintf("unable to check: %v", err)
 	}
 	if result.HasUpdate {
-		return false, fmt.Sprintf("%s available (current: %s)", result.LatestVersion, version)
+		return false, fmt.Sprintf("%s available (current: %s)", result.LatestVersion, Version)
 	}
-	return true, fmt.Sprintf("up to date (%s)", version)
+	return true, fmt.Sprintf("up to date (%s)", Version)
 }
 
 func checkKeychain() (bool, string) {

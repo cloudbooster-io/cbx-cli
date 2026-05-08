@@ -55,7 +55,7 @@ func AllScanners() []Scanner {
 }
 
 // staticScanner implements FindingProvider with hard-coded rules that mirror
-// the checks originally in cmd/cbx/audit.go.
+// the checks originally in pkg/cmd/audit.go.
 type staticScanner struct{}
 
 func (s *staticScanner) Name() string { return "static" }
