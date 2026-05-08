@@ -53,6 +53,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newPlanCmd(),
 		newAuditCmd(),
 		newUpgradeCmd(),
+		newEnvCmd(),
 	)
 
 	return root
