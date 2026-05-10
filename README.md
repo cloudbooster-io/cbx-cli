@@ -25,9 +25,15 @@ cbx llm login claude
 cbx plan "static site with auth"
 # → writes plan.adr.md and plan.d2 to the current directory
 
-# Audit existing infrastructure
+# Audit existing infrastructure (deployed: state file)
 cbx audit --pulumi-state state.json
 # → outputs JSON findings and writes a markdown report
+
+# Audit declared infrastructure (source: IaC tree)
+cbx audit --source ./infra
+# → auto-detects Terraform / CloudFormation / Kubernetes / Helm and runs the
+#   configured scanners offline (mock by default; --scanners=tfsec,checkov,trivy
+#   for the real binaries)
 ```
 
 ## Commands
@@ -42,8 +48,10 @@ cbx audit --pulumi-state state.json
 | `cbx llm list` | List configured LLM providers |
 | `cbx llm default <provider>` | Set the default LLM provider |
 | `cbx plan "<intent>"` | Generate an architecture plan |
-| `cbx audit --pulumi-state <file>` | Audit Pulumi state |
-| `cbx audit --terraform-state <file>` | Audit Terraform state |
+| `cbx audit --pulumi-state <file>` | Audit a Pulumi state file (deployed infrastructure) |
+| `cbx audit --terraform-state <file>` | Audit a Terraform state file (deployed infrastructure) |
+| `cbx audit --source <dir>` | Audit an IaC source tree (Terraform / CloudFormation / Kubernetes / Helm) |
+| `cbx audit --iac-type <auto\|terraform\|cloudformation\|k8s\|helm>` | Pin the IaC flavor for source-mode auto-detection |
 | `cbx version` | Print version |
 | `cbx doctor` | Check installation health |
 | `cbx completion` | Generate shell completion |
