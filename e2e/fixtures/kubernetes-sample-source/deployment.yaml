@@ -1,0 +1,30 @@
+# Intentionally misconfigured Kubernetes manifest for `cbx audit --source`.
+# Do not copy into real clusters.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cbx-audit-source-demo
+  labels:
+    app: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      # No securityContext, no readOnlyRootFilesystem, no resource limits,
+      # privileged container running as root — at least one of these is flagged
+      # by checkov / trivy.
+      containers:
+        - name: demo
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            allowPrivilegeEscalation: true
