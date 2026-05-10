@@ -1,7 +1,10 @@
 package audit
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"testing"
 )
 
@@ -42,5 +45,42 @@ func TestParseCheckovOutput(t *testing.T) {
 	}
 	if f1.Severity != SeverityHigh {
 		t.Errorf("expected severity high, got %s", f1.Severity)
+	}
+}
+
+func TestCheckovScanSource_SupportsSource(t *testing.T) {
+	a := &checkovAdapter{}
+	if !a.SupportsSource() {
+		t.Fatal("checkov must report SupportsSource() == true once MR 3 lands")
+	}
+}
+
+// TestCheckovScanSource_RunsAgainstDir mirrors the tfsec source-mode
+// adapter test: graceful skip-as-success when checkov isn't on PATH, and a
+// real run when it is.
+func TestCheckovScanSource_RunsAgainstDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/main.tf", []byte(`resource "aws_s3_bucket" "b" { bucket = "demo" }
+`), 0o644); err != nil {
+		t.Fatalf("seed fixture: %v", err)
+	}
+
+	a := &checkovAdapter{}
+	_, err := a.ScanSource(context.Background(), dir)
+
+	if _, lookErr := exec.LookPath("checkov"); lookErr != nil {
+		if err == nil {
+			t.Fatal("expected missing-binary error when checkov is not installed")
+		}
+		if errors.Is(err, ErrSourceModeUnsupported) {
+			t.Fatal("ScanSource must not return ErrSourceModeUnsupported once wired")
+		}
+		return
+	}
+
+	// checkov present locally — the call may or may not return findings
+	// depending on the policy set, but it must NOT fail.
+	if err != nil {
+		t.Fatalf("ScanSource with checkov installed: %v", err)
 	}
 }

@@ -19,8 +19,26 @@ import (
 )
 
 func TestAuditSource_RealTfsec(t *testing.T) {
-	if _, err := exec.LookPath("tfsec"); err != nil {
-		t.Skip("tfsec not installed on PATH")
+	runRealSourceScanner(t, "tfsec")
+}
+
+func TestAuditSource_RealCheckov(t *testing.T) {
+	runRealSourceScanner(t, "checkov")
+}
+
+func TestAuditSource_RealTrivy(t *testing.T) {
+	runRealSourceScanner(t, "trivy")
+}
+
+// runRealSourceScanner executes `cbx audit --source <fixture> --scanners <name>`
+// against a real scanner binary and asserts the JSON envelope is valid and
+// the findings did not fall back to the mock implementation. Skips if the
+// requested binary is not on PATH.
+func runRealSourceScanner(t *testing.T, scanner string) {
+	t.Helper()
+
+	if _, err := exec.LookPath(scanner); err != nil {
+		t.Skipf("%s not installed on PATH", scanner)
 	}
 
 	sourceFixture, err := filepath.Abs("fixtures/terraform-sample-source")
@@ -30,10 +48,13 @@ func TestAuditSource_RealTfsec(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	stdout, stderr, code := runCBXInDir(t, tmpDir, nil,
-		"audit", "--source", sourceFixture, "--scanners", "tfsec", "--output", "json")
+		"audit", "--source", sourceFixture, "--scanners", scanner, "--output", "json")
 
+	// Real scanners against the misconfigured fixture must produce findings,
+	// which surfaces as a non-zero exit. Code is severity-driven — anywhere
+	// in 1..3 is acceptable depending on the scanner's severity mapping.
 	if code == 0 {
-		t.Fatalf("expected non-zero exit code (fixture has misconfigured resources), got %d\nstderr: %s", code, stderr)
+		t.Fatalf("expected non-zero exit (%s findings), got 0\nstderr: %s\nstdout: %s", scanner, stderr, stdout)
 	}
 
 	requireJSONValid(t, stdout)
@@ -45,15 +66,15 @@ func TestAuditSource_RealTfsec(t *testing.T) {
 		t.Fatalf("parsing JSON envelope: %v", err)
 	}
 	if len(envelope.Data) == 0 {
-		t.Fatal("expected real tfsec to produce at least one finding for the fixture")
+		t.Fatalf("expected real %s to produce at least one finding for the fixture", scanner)
 	}
 
-	// Real tfsec rule IDs follow the AVD-AWS-XXXX pattern. If we somehow
-	// got mock findings here the MockScanners gate regressed.
+	// If we got mock findings here, the MockScanners gate (which is keyed on
+	// the absence of --scanners) regressed.
 	for _, f := range envelope.Data {
 		rid, _ := f["rule_id"].(string)
 		if strings.HasPrefix(rid, "MOCK-") {
-			t.Fatalf("got mock finding %q; expected real tfsec output", rid)
+			t.Fatalf("got mock finding %q; expected real %s output", rid, scanner)
 		}
 	}
 }

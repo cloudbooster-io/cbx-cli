@@ -15,14 +15,25 @@ type trivyAdapter struct{}
 
 func (a *trivyAdapter) Name() string { return "trivy" }
 
-// SupportsSource reports whether trivy has a source-mode implementation
-// wired up. Real source-mode wiring lands in MR 3.
-func (a *trivyAdapter) SupportsSource() bool { return false }
+// SupportsSource reports trivy's source-mode capability. `trivy config`
+// scans IaC trees natively (the same surface state mode points at, but
+// without the synthetic .tf.json shim).
+func (a *trivyAdapter) SupportsSource() bool { return true }
 
-// ScanSource is a placeholder until MR 3 wires trivy against the user's
-// source directory directly.
-func (a *trivyAdapter) ScanSource(_ context.Context, _ string) ([]Finding, error) {
-	return nil, ErrSourceModeUnsupported
+// ScanSource invokes `trivy config` against the user's IaC directory
+// directly. parseTrivyOutput is reused unchanged.
+func (a *trivyAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+	meta := scannerRegistry["trivy"]
+	if err := checkVersion(meta); err != nil {
+		return nil, err
+	}
+
+	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL"}, meta.AllowAWS)
+	if err != nil {
+		return nil, fmt.Errorf("running trivy: %w\noutput: %s", err, string(out))
+	}
+
+	return parseTrivyOutput(out)
 }
 
 func (a *trivyAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
