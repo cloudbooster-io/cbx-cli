@@ -6,8 +6,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 )
 
 // RunScanners executes all given scanners against the resources and
@@ -74,14 +77,21 @@ func (s *staticScanner) Scan(_ context.Context, resources []Resource) ([]Finding
 
 func (s *staticScanner) SupportsSource() bool { return true }
 
-// ScanSource emits a small deterministic set of findings keyed off the
-// directory base name. This keeps `cbx audit --source ./anything` working
-// with no external scanner binaries installed, mirroring the no-deps spirit
-// of state-mode mocks.
+// ScanSource produces real CB findings against the source tree when an HCL
+// parser is available for the detected IaC flavor (Terraform today), and
+// falls back to the historical mock-by-directory-name set otherwise. The
+// mock fallback keeps `cbx audit --source ./anything` working with no
+// external dependencies on directories that aren't Terraform yet (CFN,
+// K8s, Helm — Phase 4b/c/d in the design doc).
 func (s *staticScanner) ScanSource(_ context.Context, dir string) ([]Finding, error) {
 	if dir == "" {
 		return nil, nil
 	}
+
+	if findings := scanTerraformSourceIfPossible(dir); findings != nil {
+		return findings, nil
+	}
+
 	base := filepath.Base(dir)
 	if base == "." || base == "/" || base == "" {
 		base = "source"
@@ -133,6 +143,50 @@ func (s *staticScanner) ScanSource(_ context.Context, dir string) ([]Finding, er
 	// Always return at least one finding so the source-mode happy path is
 	// observable, but vary the count between 1 and 3 across directory names.
 	return pool[: n+1], nil
+}
+
+// scanTerraformSourceIfPossible runs the HCL T1 parser over dir and
+// evaluates each parsed resource through the same rule table the state
+// scanner uses. Returns nil (signalling "fall back to mock") when no *.tf
+// file is found under dir; returns a non-nil (possibly empty) slice
+// otherwise to distinguish "terraform parsed, zero findings" from "no
+// terraform here at all."
+func scanTerraformSourceIfPossible(dir string) []Finding {
+	if !hasTerraformFile(dir) {
+		return nil
+	}
+	resources, _ := parsers.ParseTerraformSource(dir) // diagnostics non-fatal
+	findings := []Finding{}
+	for _, r := range resources {
+		findings = append(findings, evaluateResource(r)...)
+	}
+	return findings
+}
+
+// hasTerraformFile is a cheap "is this a Terraform tree?" pre-check so
+// CFN/K8s/Helm directories don't pay the parser cost. Mirrors the parser's
+// own walk filter and .git/.terraform/node_modules skips.
+func hasTerraformFile(dir string) bool {
+	found := false
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, _ error) error {
+		if d == nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if path != dir && (name == ".git" || name == ".terraform" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		lower := strings.ToLower(d.Name())
+		if strings.HasSuffix(lower, ".tf") || strings.HasSuffix(lower, ".tf.json") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func evaluateResource(res DiscoveredResource) []Finding {

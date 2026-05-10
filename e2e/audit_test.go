@@ -429,15 +429,22 @@ func TestAuditEndToEnd(t *testing.T) {
 		t.Fatalf("resolving source fixture path: %v", err)
 	}
 
-	t.Run("audit_source_mode_mock_outputs_json", func(t *testing.T) {
+	t.Run("audit_source_mode_terraform_emits_cb_rules", func(t *testing.T) {
+		// With the HCL T1 parser (MR-C) wired into the static scanner,
+		// a Terraform source dir flips from MOCK-SRC-* placeholder findings
+		// to the native CB rule set (S3-002, EC2-001, …). The mock fallback
+		// is reserved for non-Terraform flavors until their own parsers
+		// ship (CFN / K8s / Helm — see the audit_source_mode_*_mock cases
+		// below).
 		tmpDir := t.TempDir()
 
 		stdout, _, code := runCBXInDir(t, tmpDir, nil,
 			"audit", "--source", sourceFixture, "--output", "json")
 
-		// Source-mode mock includes a HIGH finding by design → exit code 3.
+		// Fixture has an unencrypted S3 bucket and an open security group;
+		// both rules are HIGH severity → exit code 3.
 		if code != 3 {
-			t.Fatalf("expected exit code 3 from source-mode mock, got %d", code)
+			t.Fatalf("expected exit code 3 from source-mode CB rules, got %d", code)
 		}
 
 		requireJSONValid(t, stdout)
@@ -453,13 +460,19 @@ func TestAuditEndToEnd(t *testing.T) {
 			t.Fatal("expected at least one finding in source mode")
 		}
 
-		// Mock source-mode findings are namespaced MOCK-SRC-*. Anything else
-		// here means a real adapter ran by accident (CI default must be mock).
+		// Must emit real CB rules, not the legacy MOCK-SRC-* placeholders.
+		sawS3 := false
 		for _, f := range findings {
 			rid, _ := f["rule_id"].(string)
-			if !strings.HasPrefix(rid, "MOCK-SRC-") {
-				t.Fatalf("expected MOCK-SRC-* rule_id, got %q (mock should be the default)", rid)
+			if strings.HasPrefix(rid, "MOCK-SRC-") {
+				t.Fatalf("got placeholder rule_id %q; HCL parser should have produced real CB rules", rid)
 			}
+			if rid == "S3-002" {
+				sawS3 = true
+			}
+		}
+		if !sawS3 {
+			t.Fatalf("expected S3-002 (bucket encryption) finding from terraform-sample-source; got: %+v", findings)
 		}
 	})
 
