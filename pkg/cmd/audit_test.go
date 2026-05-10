@@ -42,6 +42,16 @@ func TestAuditFlagMutex(t *testing.T) {
 			args:       []string{"audit", "--source", ".", "--iac-type", "bogus"},
 			wantErrSub: "invalid --iac-type",
 		},
+		{
+			name:       "--llm and --scanners together",
+			args:       []string{"audit", "--source", ".", "--llm", "claude", "--scanners", "tfsec"},
+			wantErrSub: "--llm and --scanners are mutually exclusive",
+		},
+		{
+			name:       "--llm without --source",
+			args:       []string{"audit", "--terraform-state", "x.tfstate", "--llm", "claude"},
+			wantErrSub: "--llm requires --source",
+		},
 	}
 
 	for _, tc := range cases {

@@ -53,9 +53,24 @@ func collectFromSource(opts Options) ([]Finding, error) {
 	}
 
 	iacType := resolveIaCType(opts)
-	providers, err := sourceProviders(opts, iacType)
-	if err != nil {
-		return nil, err
+
+	// --llm replaces the scanner list with the LLM analyzer for this run.
+	// We don't merge the two — the plan §5.1 declares them mutually
+	// exclusive at the CLI layer, so by the time we reach here Scanners
+	// is empty.
+	var providers []FindingProvider
+	if opts.LLMProvider != "" {
+		analyzer, err := newLLMAnalyzer(opts, iacType)
+		if err != nil {
+			return nil, err
+		}
+		providers = []FindingProvider{analyzer}
+	} else {
+		var err error
+		providers, err = sourceProviders(opts, iacType)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)

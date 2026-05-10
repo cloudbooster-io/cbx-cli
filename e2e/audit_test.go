@@ -256,8 +256,15 @@ func TestAuditEndToEnd(t *testing.T) {
 	})
 
 	t.Run("audit_no_api_imports", func(t *testing.T) {
-		// Verify that internal/audit does not import network/API packages.
-		// This is a compile-time package boundary guard.
+		// Verify that internal/audit does not pull in the CloudBooster API
+		// client or the plan internals — those would silently violate the
+		// "zero CB API calls" property of `cbx audit`.
+		//
+		// `net/http` is intentionally NOT in this list any more: the
+		// opt-in `--llm <provider>` analyzer (CB-TBD / MR-B) reaches the
+		// configured third-party LLM endpoint, so transitive net/http via
+		// core/plan's LLMCaller is expected. Runtime non-egress is still
+		// guarded by audit_zero_outbound_http above (state-mode default).
 		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "../internal/audit")
 		cmd.Dir = "."
 		out, err := cmd.CombinedOutput()
@@ -266,14 +273,14 @@ func TestAuditEndToEnd(t *testing.T) {
 		}
 
 		forbidden := []string{
-			"net/http",
-			"internal/plan",
+			"gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1",
+			"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan",
 		}
 		lines := strings.Split(string(out), "\n")
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			for _, f := range forbidden {
-				if line == f || strings.HasSuffix(line, "/"+f) {
+				if line == f {
 					t.Fatalf("internal/audit imports forbidden package %q", f)
 				}
 			}
