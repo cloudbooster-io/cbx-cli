@@ -35,9 +35,29 @@ type llmAnalyzer struct {
 // newLLMAnalyzer wires a Stream-based analyzer against the user's logged-in
 // provider. Returns an error when the provider isn't configured — caller
 // should surface that to the user as "run cbx llm login <provider> first".
+//
+// The special provider name ClaudeCodeProvider ("claude-code") sidesteps
+// cbx's own credential handling entirely: it shells out to the `claude`
+// CLI which authenticates as Claude Code itself. No `cbx llm login`
+// required, no token stored by cbx.
 func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	if opts.LLMProvider == "" {
 		return nil, fmt.Errorf("llm analyzer: empty provider")
+	}
+
+	if opts.LLMProvider == ClaudeCodeProvider {
+		streamer, err := newClaudeCLIStreamer()
+		if err != nil {
+			return nil, err
+		}
+		return &llmAnalyzer{
+			provider:          opts.LLMProvider,
+			streamer:          streamer,
+			maxFiles:          opts.LLMMaxFiles,
+			maxBytesPerFile:   opts.LLMMaxBytesPerFile,
+			iacType:           iacType,
+			providerForRuleID: "claudecode",
+		}, nil
 	}
 
 	cfg, err := config.Load()
