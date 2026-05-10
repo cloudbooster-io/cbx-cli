@@ -73,7 +73,11 @@ Use --scanners to enable real scanner binaries.
 Source-mode only: --llm <provider> ships the source files to a configured
 LLM (run 'cbx llm login <provider>' first) and emits structured findings.
 This breaks the "fully offline" default; the analyzer runs only when the
-flag is set. Mutually exclusive with --scanners.`,
+flag is set. Mutually exclusive with --scanners.
+
+The special provider 'claude-code' shells out to the local 'claude' CLI
+(Claude Code) instead of going through an HTTP path — no 'cbx llm login'
+needed; reuses your existing Claude Code authentication.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inputs := 0
 			if pulumiStateFile != "" {
@@ -255,7 +259,7 @@ flag is set. Mutually exclusive with --scanners.`,
 	cmd.Flags().DurationVar(&timeoutPerScanner, "timeout-per-scanner", 5*time.Minute, "Timeout per scanner/provider")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip interactive confirmations")
 	cmd.Flags().StringVar(&scanners, "scanners", "", "Comma-separated list of scanners to run (tfsec,checkov,prowler,trivy)")
-	cmd.Flags().StringVar(&llmProvider, "llm", "", "Source-mode only: send source files to the named LLM provider (claude|codex|ollama) and emit structured findings. Requires 'cbx llm login <provider>' first. Implies network egress.")
+	cmd.Flags().StringVar(&llmProvider, "llm", "", "Source-mode only: send source files to the named LLM provider (claude|codex|ollama|claude-code) and emit structured findings. 'claude-code' shells out to the local 'claude' CLI (no cbx login needed); other providers require 'cbx llm login <provider>' first. Implies network egress.")
 	cmd.Flags().IntVar(&llmMaxFiles, "llm-max-files", 0, "Cap on the number of source files shipped to the LLM analyzer (0 = default 50; only meaningful with --llm)")
 	cmd.Flags().IntVar(&llmMaxBytesPerFile, "llm-max-bytes-per-file", 0, "Per-file byte cap for the LLM analyzer; longer files are truncated (0 = default 64 KB; only meaningful with --llm)")
 
