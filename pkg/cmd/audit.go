@@ -32,6 +32,8 @@ func newAuditCmd() *cobra.Command {
 		yes                bool
 		scanners           string
 		llmProvider        string
+		llmMaxFiles        int
+		llmMaxBytesPerFile int
 	)
 
 	validIaCTypes := map[string]bool{
@@ -162,7 +164,9 @@ flag is set. Mutually exclusive with --scanners.`,
 				Yes:               yes,
 				MockScanners:      mockScanners,
 				Scanners:          scannerNames,
-				LLMProvider:       llmProvider,
+				LLMProvider:        llmProvider,
+				LLMMaxFiles:        llmMaxFiles,
+				LLMMaxBytesPerFile: llmMaxBytesPerFile,
 				Timeout:           timeout,
 				TimeoutPerScanner: timeoutPerScanner,
 			}
@@ -233,6 +237,8 @@ flag is set. Mutually exclusive with --scanners.`,
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip interactive confirmations")
 	cmd.Flags().StringVar(&scanners, "scanners", "", "Comma-separated list of scanners to run (tfsec,checkov,prowler,trivy)")
 	cmd.Flags().StringVar(&llmProvider, "llm", "", "Source-mode only: send source files to the named LLM provider (claude|codex|ollama) and emit structured findings. Requires 'cbx llm login <provider>' first. Implies network egress.")
+	cmd.Flags().IntVar(&llmMaxFiles, "llm-max-files", 0, "Cap on the number of source files shipped to the LLM analyzer (0 = default 50; only meaningful with --llm)")
+	cmd.Flags().IntVar(&llmMaxBytesPerFile, "llm-max-bytes-per-file", 0, "Per-file byte cap for the LLM analyzer; longer files are truncated (0 = default 64 KB; only meaningful with --llm)")
 
 	return cmd
 }
