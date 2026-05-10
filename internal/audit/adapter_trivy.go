@@ -15,6 +15,16 @@ type trivyAdapter struct{}
 
 func (a *trivyAdapter) Name() string { return "trivy" }
 
+// SupportsSource reports whether trivy has a source-mode implementation
+// wired up. Real source-mode wiring lands in MR 3.
+func (a *trivyAdapter) SupportsSource() bool { return false }
+
+// ScanSource is a placeholder until MR 3 wires trivy against the user's
+// source directory directly.
+func (a *trivyAdapter) ScanSource(_ context.Context, _ string) ([]Finding, error) {
+	return nil, ErrSourceModeUnsupported
+}
+
 func (a *trivyAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["trivy"]
 	if err := checkVersion(meta); err != nil {

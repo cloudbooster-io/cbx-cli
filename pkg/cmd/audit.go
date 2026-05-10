@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,6 +20,8 @@ func newAuditCmd() *cobra.Command {
 	var (
 		pulumiStateFile    string
 		terraformStateFile string
+		sourceDir          string
+		iacType            string
 		outputFormat       string
 		reportFile         string
 		noTUI              bool
@@ -30,6 +31,15 @@ func newAuditCmd() *cobra.Command {
 		yes                bool
 		scanners           string
 	)
+
+	validIaCTypes := map[string]bool{
+		"":                            true,
+		audit.IaCTypeAuto:             true,
+		audit.IaCTypeTerraform:        true,
+		audit.IaCTypeCloudFormation:   true,
+		audit.IaCTypeK8s:              true,
+		audit.IaCTypeHelm:             true,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "audit",
@@ -45,13 +55,39 @@ Supported scanners and version ranges:
 By default mock scanners are used (zero network, no external binaries).
 Use --scanners to enable real scanner binaries.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if pulumiStateFile == "" && terraformStateFile == "" {
-				return fmt.Errorf("--pulumi-state or --terraform-state is required")
+			inputs := 0
+			if pulumiStateFile != "" {
+				inputs++
+			}
+			if terraformStateFile != "" {
+				inputs++
+			}
+			if sourceDir != "" {
+				inputs++
+			}
+			switch inputs {
+			case 0:
+				return fmt.Errorf("exactly one of --pulumi-state, --terraform-state, or --source is required")
+			case 1:
+				// ok
+			default:
+				return fmt.Errorf("--pulumi-state, --terraform-state, and --source are mutually exclusive")
+			}
+
+			if !validIaCTypes[iacType] {
+				return fmt.Errorf("invalid --iac-type %q (choose: auto, terraform, cloudformation, k8s, helm)", iacType)
 			}
 
 			stateFile := pulumiStateFile
 			if stateFile == "" {
 				stateFile = terraformStateFile
+			}
+
+			// inputLabel is the user-facing path used as the audit's "header" in
+			// renderers and as the basis for the default report filename.
+			inputLabel := stateFile
+			if sourceDir != "" {
+				inputLabel = sourceDir
 			}
 
 			validOutputs := map[string]bool{
@@ -84,6 +120,8 @@ Use --scanners to enable real scanner binaries.`,
 
 			opts := audit.Options{
 				StateFile:         stateFile,
+				SourceDir:         sourceDir,
+				IaCType:           iacType,
 				OutputFormat:      outputFormat,
 				ReportFile:        reportFile,
 				Interactive:       interactive,
@@ -130,7 +168,7 @@ Use --scanners to enable real scanner binaries.`,
 				out := audit.RenderMarkdown(result.Findings)
 				fmt.Println(out)
 			default:
-				out := audit.RenderPlain(result.Findings, stateFile)
+				out := audit.RenderPlain(result.Findings, inputLabel)
 				fmt.Print(out)
 			}
 
@@ -151,6 +189,8 @@ Use --scanners to enable real scanner binaries.`,
 
 	cmd.Flags().StringVar(&pulumiStateFile, "pulumi-state", "", "Path to Pulumi state file")
 	cmd.Flags().StringVar(&terraformStateFile, "terraform-state", "", "Path to Terraform state file")
+	cmd.Flags().StringVar(&sourceDir, "source", "", "Path to an IaC source directory to audit (mutually exclusive with --pulumi-state / --terraform-state)")
+	cmd.Flags().StringVar(&iacType, "iac-type", audit.IaCTypeAuto, "IaC flavor for source-mode auto-detection (auto|terraform|cloudformation|k8s|helm)")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "Output format (json, markdown, sarif, github-action)")
 	cmd.Flags().StringVar(&reportFile, "report-file", "", "Path for markdown report output")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode (no-op for v1)")
@@ -188,8 +228,7 @@ func runInteractiveAudit(opts audit.Options) error {
 	// Write report on exit
 	reportPath := opts.ReportFile
 	if reportPath == "" {
-		base := strings.TrimSuffix(filepath.Base(opts.StateFile), filepath.Ext(opts.StateFile))
-		reportPath = base + "_audit_report.md"
+		reportPath = audit.DefaultReportPath(opts)
 	}
 	if writeErr := os.WriteFile(reportPath, []byte(audit.RenderMarkdown(findings)), 0o644); writeErr != nil {
 		return fmt.Errorf("writing report: %w", writeErr)

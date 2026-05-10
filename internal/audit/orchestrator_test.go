@@ -10,7 +10,17 @@ import (
 
 // ---- mock providers ----
 
-type slowProvider struct{}
+// noSourceProvider is embedded into each test mock to satisfy the source-mode
+// half of FindingProvider without per-mock boilerplate. State-only mocks all
+// share the same trivial behavior here.
+type noSourceProvider struct{}
+
+func (noSourceProvider) SupportsSource() bool { return false }
+func (noSourceProvider) ScanSource(_ context.Context, _ string) ([]Finding, error) {
+	return nil, ErrSourceModeUnsupported
+}
+
+type slowProvider struct{ noSourceProvider }
 
 func (p *slowProvider) Name() string { return "slow" }
 
@@ -23,7 +33,7 @@ func (p *slowProvider) Scan(ctx context.Context, _ []Resource) ([]Finding, error
 	}
 }
 
-type panicProvider struct{}
+type panicProvider struct{ noSourceProvider }
 
 func (p *panicProvider) Name() string { return "panic" }
 
@@ -31,7 +41,7 @@ func (p *panicProvider) Scan(_ context.Context, _ []Resource) ([]Finding, error)
 	panic("intentional provider panic")
 }
 
-type errorProvider struct{}
+type errorProvider struct{ noSourceProvider }
 
 func (p *errorProvider) Name() string { return "error" }
 
@@ -39,7 +49,7 @@ func (p *errorProvider) Scan(_ context.Context, _ []Resource) ([]Finding, error)
 	return nil, errors.New("provider failed")
 }
 
-type emptyProvider struct{}
+type emptyProvider struct{ noSourceProvider }
 
 func (p *emptyProvider) Name() string { return "empty" }
 
@@ -48,6 +58,7 @@ func (p *emptyProvider) Scan(_ context.Context, _ []Resource) ([]Finding, error)
 }
 
 type customProvider struct {
+	noSourceProvider
 	name     string
 	findings []Finding
 }
@@ -237,6 +248,7 @@ func TestRunProvidersParallelExecution(t *testing.T) {
 }
 
 type blockingProvider struct {
+	noSourceProvider
 	inner   FindingProvider
 	blocker <-chan struct{}
 	counter *atomic.Int32

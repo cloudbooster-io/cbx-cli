@@ -15,6 +15,18 @@ type tfsecAdapter struct{}
 
 func (a *tfsecAdapter) Name() string { return "tfsec" }
 
+// SupportsSource reports whether tfsec has a source-mode implementation
+// wired up. Real source-mode wiring lands in MR 2; until then the runner
+// must filter tfsec out of source-mode dispatch.
+func (a *tfsecAdapter) SupportsSource() bool { return false }
+
+// ScanSource is a placeholder until MR 2 wires tfsec against the user's
+// source directory directly. Returning the sentinel keeps adapter callers
+// honest if they bypass the SupportsSource gate.
+func (a *tfsecAdapter) ScanSource(_ context.Context, _ string) ([]Finding, error) {
+	return nil, ErrSourceModeUnsupported
+}
+
 func (a *tfsecAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["tfsec"]
 	if err := checkVersion(meta); err != nil {

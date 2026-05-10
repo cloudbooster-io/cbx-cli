@@ -113,8 +113,8 @@ func TestAuditEndToEnd(t *testing.T) {
 		if code == 0 {
 			t.Fatal("expected cbx audit to fail without state flag")
 		}
-		if !strings.Contains(stderr, "--pulumi-state or --terraform-state is required") {
-			t.Fatalf("expected state flag error, got: %s", stderr)
+		if !strings.Contains(stderr, "exactly one of --pulumi-state, --terraform-state, or --source") {
+			t.Fatalf("expected input flag error, got: %s", stderr)
 		}
 	})
 
