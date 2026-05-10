@@ -65,15 +65,14 @@ mermaid-validate:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 # ---------------------------------------------------------------------------
-# E2E matrix — linux + macOS runners
+# E2E — runs on the standard untagged group runner.
+# The OS matrix (linux + darwin) was dropped: we have no darwin runner today,
+# and the linux/darwin tags left jobs stuck with `stuck_pending_no_matching_runners`.
+# Restore the matrix when a darwin runner is registered.
 # ---------------------------------------------------------------------------
-e2e-matrix:
+e2e:
   stage: e2e
-  parallel:
-    matrix:
-      - RUNNER_OS: [linux, darwin]
-  tags:
-    - ${RUNNER_OS}
+  image: golang:${GO_VERSION}
   script:
     - go test -v ./e2e/...
   rules:
