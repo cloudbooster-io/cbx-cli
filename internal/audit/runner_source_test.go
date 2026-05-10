@@ -93,18 +93,20 @@ func TestCollectSourceMode_PathIsFile(t *testing.T) {
 }
 
 func TestCollectSourceMode_FiltersUnsupportedProviders(t *testing.T) {
-	// With explicit --scanners=tfsec,static the runner must filter tfsec out
-	// (SupportsSource() == false until MR 2) and run only the static mock.
+	// With explicit --scanners=checkov,static the runner must filter checkov
+	// out (SupportsSource() == false until MR 3) and run only the static
+	// mock. If the filter regressed, checkov's checkVersion would surface a
+	// missing-binary error and fail the test.
 	dir := t.TempDir()
 
 	opts := Options{
 		SourceDir: dir,
-		Scanners:  []string{"static", "tfsec"},
+		Scanners:  []string{"static", "checkov"},
 	}
 
 	findings, err := Collect(opts)
 	if err != nil {
-		t.Fatalf("Collect returned error (tfsec should have been filtered, not invoked): %v", err)
+		t.Fatalf("Collect returned error (checkov should have been filtered, not invoked): %v", err)
 	}
 	if len(findings) == 0 {
 		t.Fatal("expected at least one finding from the static scanner")
@@ -114,13 +116,12 @@ func TestCollectSourceMode_FiltersUnsupportedProviders(t *testing.T) {
 func TestCollectSourceMode_AllProvidersUnsupported(t *testing.T) {
 	// If --scanners selects only providers that don't yet support source mode
 	// the runner must surface a helpful error instead of silently returning 0
-	// findings. The MR-2/3 adapters (tfsec/checkov/trivy) all return
-	// SupportsSource() == false in MR 1.
+	// findings. checkov and trivy don't gain source mode until MR 3.
 	dir := t.TempDir()
 
 	opts := Options{
 		SourceDir: dir,
-		Scanners:  []string{"tfsec", "checkov", "trivy"},
+		Scanners:  []string{"checkov", "trivy"},
 	}
 
 	_, err := Collect(opts)
@@ -144,18 +145,18 @@ func TestProwlerScanSourceUnsupported(t *testing.T) {
 }
 
 func TestSourceModeUnsupportedAdapters(t *testing.T) {
+	// checkov and trivy ScanSource implementations land in MR 3.
 	cases := []struct {
 		name string
 		p    FindingProvider
 	}{
-		{"tfsec", &tfsecAdapter{}},
 		{"checkov", &checkovAdapter{}},
 		{"trivy", &trivyAdapter{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.p.SupportsSource() {
-				t.Fatalf("%s should not report SupportsSource yet (MR 2/3)", tc.name)
+				t.Fatalf("%s should not report SupportsSource yet (MR 3)", tc.name)
 			}
 			if _, err := tc.p.ScanSource(context.Background(), t.TempDir()); !errors.Is(err, ErrSourceModeUnsupported) {
 				t.Fatalf("%s.ScanSource: expected ErrSourceModeUnsupported, got %v", tc.name, err)
