@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,7 +49,7 @@ func newAuditCmd() *cobra.Command {
 
 Supported scanners and version ranges:
   tfsec   >= 1.28.0, < 2.0.0
-  checkov >= 2.4.0, < 3.0.0
+  checkov >= 2.4.0, < 4.0.0
   prowler >= 3.0.0, < 5.0.0
   trivy   >= 0.48.0, < 1.0.0
 
@@ -76,6 +77,19 @@ Use --scanners to enable real scanner binaries.`,
 
 			if !validIaCTypes[iacType] {
 				return fmt.Errorf("invalid --iac-type %q (choose: auto, terraform, cloudformation, k8s, helm)", iacType)
+			}
+
+			// Resolve --source to an absolute path before threading it
+			// downstream. Without this, `cbx audit --source .` derives a
+			// nonsense basename ("." → renderer drops it; default report
+			// becomes `_audit_report.md`; mock findings render as
+			// `source/main.tf`). Same idea for state files for symmetry.
+			if sourceDir != "" {
+				abs, absErr := filepath.Abs(sourceDir)
+				if absErr != nil {
+					return fmt.Errorf("resolving --source path: %w", absErr)
+				}
+				sourceDir = abs
 			}
 
 			stateFile := pulumiStateFile

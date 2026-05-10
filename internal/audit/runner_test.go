@@ -1,12 +1,21 @@
 package audit
 
 import (
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRunPreservesPartialFindingsOnScannerError(t *testing.T) {
+	// This test asserts the failure path when tfsec is missing. Skip when
+	// tfsec is installed locally — it then runs successfully and the
+	// premise no longer holds. CI's golang:1.25 image has no scanners on
+	// PATH so the assertion still runs there.
+	if _, lookErr := exec.LookPath("tfsec"); lookErr == nil {
+		t.Skip("tfsec is installed locally; this test asserts the missing-binary path")
+	}
+
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	writeJSON(t, statePath, map[string]interface{}{

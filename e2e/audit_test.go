@@ -395,6 +395,15 @@ func TestAuditEndToEnd(t *testing.T) {
 	})
 
 	t.Run("audit_all_scanners_fail_exits_nonzero", func(t *testing.T) {
+		// This test asserts the failure path when the requested scanner
+		// binary is missing. Skip when tfsec is installed locally — the
+		// binary then runs successfully and the premise no longer holds.
+		// CI runs in a tfsec-less golang:1.25 image so the assertion still
+		// runs there.
+		if _, lookErr := exec.LookPath("tfsec"); lookErr == nil {
+			t.Skip("tfsec is installed locally; this test asserts the missing-binary path")
+		}
+
 		tmpDir := t.TempDir()
 
 		_, stderr, code := runCBXInDir(t, tmpDir, nil,
