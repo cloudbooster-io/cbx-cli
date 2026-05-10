@@ -38,6 +38,21 @@ func TestAuditSource_RealTrivy_CFN(t *testing.T) {
 	runRealSourceScanner(t, "trivy", "fixtures/cloudformation-sample-source")
 }
 
+func TestAuditSource_RealCheckov_K8s(t *testing.T) {
+	runRealSourceScanner(t, "checkov", "fixtures/kubernetes-sample-source")
+}
+
+func TestAuditSource_RealTrivy_K8s(t *testing.T) {
+	runRealSourceScanner(t, "trivy", "fixtures/kubernetes-sample-source")
+}
+
+// Helm: no real-scanner test. checkov's Helm framework needs the `helm`
+// binary on PATH to render the chart, and `trivy config` skips Go template
+// directives. Both produce zero findings against raw template files, which
+// would fail runRealSourceScanner's len(findings) > 0 assertion. The mock
+// path covers Helm dispatch in audit_test.go; revisit when we want a true
+// Helm pipeline (likely involves rendering with helm template before scan).
+
 // runRealSourceScanner executes `cbx audit --source <fixture> --scanners <name>`
 // against a real scanner binary and asserts the JSON envelope is valid and
 // the findings did not fall back to the mock implementation. Skips if the

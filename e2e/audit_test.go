@@ -554,6 +554,56 @@ func TestAuditEndToEnd(t *testing.T) {
 		}
 		requireJSONValid(t, stdout)
 	})
+
+	k8sFixture, err := filepath.Abs("fixtures/kubernetes-sample-source")
+	if err != nil {
+		t.Fatalf("resolving K8s fixture path: %v", err)
+	}
+	helmFixture, err := filepath.Abs("fixtures/helm-sample-source")
+	if err != nil {
+		t.Fatalf("resolving Helm fixture path: %v", err)
+	}
+
+	t.Run("audit_source_mode_k8s_mock", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		stdout, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", k8sFixture, "--output", "json")
+
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from K8s source-mode mock, got %d", code)
+		}
+		requireJSONValid(t, stdout)
+	})
+
+	t.Run("audit_source_mode_helm_mock", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		stdout, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", helmFixture, "--output", "json")
+
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from Helm source-mode mock, got %d", code)
+		}
+		requireJSONValid(t, stdout)
+	})
+
+	t.Run("audit_source_mode_k8s_filters_tfsec", func(t *testing.T) {
+		// Same dispatch invariant as the CFN case: tfsec must be filtered
+		// out for non-terraform inputs and surface the helpful error when
+		// it's the only --scanners selection.
+		tmpDir := t.TempDir()
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", k8sFixture, "--scanners", "tfsec")
+
+		if code == 0 {
+			t.Fatal("expected non-zero exit when only tfsec is selected on a K8s source")
+		}
+		if !strings.Contains(stderr, "no source-mode scanners selected") {
+			t.Fatalf("expected helpful 'no source-mode scanners selected' error, got: %s", stderr)
+		}
+	})
 }
 
 func createLargeStateFile(t *testing.T, path string) {

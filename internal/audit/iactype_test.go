@@ -63,6 +63,16 @@ func TestDetectIaCType(t *testing.T) {
 			want: IaCTypeHelm,
 		},
 		{
+			// Chart.yaml itself has apiVersion + kind:-shaped fields, so we
+			// must make sure detection doesn't accidentally classify the
+			// chart root as plain k8s when no other YAML is present.
+			name: "helm_chart_only",
+			files: map[string]string{
+				"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
+			},
+			want: IaCTypeHelm,
+		},
+		{
 			name: "first_match_wins_terraform_over_cfn",
 			files: map[string]string{
 				"main.tf":       `resource "x" "y" {}`,

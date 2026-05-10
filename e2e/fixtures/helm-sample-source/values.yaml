@@ -1,0 +1,7 @@
+image:
+  repository: nginx
+  tag: latest
+
+securityContext:
+  privileged: true
+  runAsUser: 0
