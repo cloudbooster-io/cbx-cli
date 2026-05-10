@@ -2,8 +2,12 @@ package audit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 )
 
 // RunScanners executes all given scanners against the resources and
@@ -66,6 +70,69 @@ func (s *staticScanner) Scan(_ context.Context, resources []Resource) ([]Finding
 		findings = append(findings, evaluateResource(res)...)
 	}
 	return findings, nil
+}
+
+func (s *staticScanner) SupportsSource() bool { return true }
+
+// ScanSource emits a small deterministic set of findings keyed off the
+// directory base name. This keeps `cbx audit --source ./anything` working
+// with no external scanner binaries installed, mirroring the no-deps spirit
+// of state-mode mocks.
+func (s *staticScanner) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	base := filepath.Base(dir)
+	if base == "." || base == "/" || base == "" {
+		base = "source"
+	}
+
+	// A 0..2 derived deterministically from the directory base name picks
+	// which of the canonical mock findings get emitted, so test fixtures
+	// can rely on a stable shape without coupling to a single hard-coded set.
+	sum := sha256.Sum256([]byte(base))
+	n := int(binary.BigEndian.Uint16(sum[:2]) % 3)
+
+	resource := strings.ToLower(base) + "/main.tf"
+	pool := []Finding{
+		{
+			RuleID:      "MOCK-SRC-001",
+			Title:       "S3 bucket declared without server-side encryption",
+			Description: "A bucket resource in the source tree does not configure SSE.",
+			Severity:    SeverityHigh,
+			Resource:    resource,
+			Service:     "S3",
+			Remediation: "Add an aws_s3_bucket_server_side_encryption_configuration resource.",
+			File:        resource,
+			Line:        1,
+		},
+		{
+			RuleID:      "MOCK-SRC-002",
+			Title:       "Security group permits 0.0.0.0/0 ingress",
+			Description: "A security group rule in the source tree allows ingress from anywhere.",
+			Severity:    SeverityWarning,
+			Resource:    resource,
+			Service:     "EC2",
+			Remediation: "Restrict cidr_blocks to specific networks.",
+			File:        resource,
+			Line:        2,
+		},
+		{
+			RuleID:      "MOCK-SRC-003",
+			Title:       "IAM role trust policy is overly permissive",
+			Description: "A trust policy in the source tree allows broad principal access.",
+			Severity:    SeverityInfo,
+			Resource:    resource,
+			Service:     "IAM",
+			Remediation: "Scope the principal to specific roles or services.",
+			File:        resource,
+			Line:        3,
+		},
+	}
+
+	// Always return at least one finding so the source-mode happy path is
+	// observable, but vary the count between 1 and 3 across directory names.
+	return pool[: n+1], nil
 }
 
 func evaluateResource(res DiscoveredResource) []Finding {

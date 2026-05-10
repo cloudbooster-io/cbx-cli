@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 )
 
 // Result holds the outcome of an audit run.
@@ -18,31 +21,77 @@ type Result struct {
 // Collect executes the audit pipeline and returns findings without writing a
 // report. It is used by the interactive TUI path.
 func Collect(opts Options) ([]Finding, error) {
+	if opts.SourceDir != "" {
+		return collectFromSource(opts)
+	}
+	return collectFromState(opts)
+}
+
+func collectFromState(opts Options) ([]Finding, error) {
 	resources, err := ParseState(opts)
 	if err != nil {
 		return nil, err
 	}
 
+	providers := selectProviders(opts)
+
+	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+
+	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
+}
+
+func collectFromSource(opts Options) ([]Finding, error) {
+	if err := validateSourceDir(opts.SourceDir); err != nil {
+		return nil, err
+	}
+
+	all := selectProviders(opts)
 	var providers []FindingProvider
-	if opts.MockScanners {
-		providers = MockScanners()
-	} else {
-		for _, s := range loadScanners(opts.Scanners) {
-			providers = append(providers, s)
+	for _, p := range all {
+		if p.SupportsSource() {
+			providers = append(providers, p)
 		}
 	}
 
-	ctx := context.Background()
-	if opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
+	// Guard against a silent zero-findings result when --scanners selects only
+	// providers that don't support source mode yet (tfsec/checkov/trivy/prowler
+	// in MR 1). Without this, the channel closes immediately and the user sees
+	// "exit 0, no findings" which reads as a clean scan.
+	if len(providers) == 0 {
+		return nil, parsers.ThreeLineError(
+			"no source-mode scanners selected",
+			"all selected providers report SupportsSource() == false",
+			"omit --scanners to use the built-in source-mode mock, or drop the flag entirely",
+		)
 	}
 
+	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+
+	return collectFindings(RunProvidersSourceWithProgress(ctx, providers, opts.SourceDir, opts.TimeoutPerScanner))
+}
+
+// selectProviders resolves the FindingProvider list for an audit run,
+// respecting MockScanners and the --scanners filter.
+func selectProviders(opts Options) []FindingProvider {
+	if opts.MockScanners {
+		return MockScanners()
+	}
+	scanners := loadScanners(opts.Scanners)
+	providers := make([]FindingProvider, 0, len(scanners))
+	providers = append(providers, scanners...)
+	return providers
+}
+
+// collectFindings drains a ProviderResult stream into a deduplicated
+// findings slice plus a joined error. The dedupe key matches the legacy
+// logic: rule_id|resource.
+func collectFindings(stream <-chan ProviderResult) ([]Finding, error) {
 	var findings []Finding
 	var scanErrs []error
 	seen := make(map[string]struct{})
-	for r := range RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner) {
+	for r := range stream {
 		if r.Err != nil {
 			scanErrs = append(scanErrs, fmt.Errorf("%s: %w", r.ProviderName, r.Err))
 		}
@@ -61,6 +110,36 @@ func Collect(opts Options) ([]Finding, error) {
 	return findings, nil
 }
 
+func contextWithOptionalTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d > 0 {
+		return context.WithTimeout(parent, d)
+	}
+	return parent, func() {}
+}
+
+// validateSourceDir ensures the source-mode input path is a readable
+// directory before any scanner is dispatched. The 100 MB state-file guard
+// is intentionally not applied here — source repos routinely exceed it and
+// scanner binaries enforce their own limits (plan §4.7).
+func validateSourceDir(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return parsers.ThreeLineError(
+			"failed to read source directory",
+			fmt.Sprintf("%v", err),
+			"verify the path exists and is readable",
+		)
+	}
+	if !info.IsDir() {
+		return parsers.ThreeLineError(
+			"source path is not a directory",
+			fmt.Sprintf("%s is a regular file", dir),
+			"pass a directory containing IaC source files",
+		)
+	}
+	return nil
+}
+
 // Run executes the full audit pipeline for the given state file.
 func Run(opts Options) (*Result, error) {
 	findings, err := Collect(opts)
@@ -70,8 +149,7 @@ func Run(opts Options) (*Result, error) {
 
 	reportPath := opts.ReportFile
 	if reportPath == "" {
-		base := strings.TrimSuffix(filepath.Base(opts.StateFile), filepath.Ext(opts.StateFile))
-		reportPath = base + "_audit_report.md"
+		reportPath = defaultReportPath(opts)
 	}
 
 	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); writeErr != nil {
@@ -87,6 +165,23 @@ func Run(opts Options) (*Result, error) {
 		return result, fmt.Errorf("running scanners: %w", err)
 	}
 	return result, nil
+}
+
+// DefaultReportPath returns the report path that Run uses when
+// Options.ReportFile is empty. Exported so the interactive (TUI) path can
+// share the same naming convention.
+func DefaultReportPath(opts Options) string { return defaultReportPath(opts) }
+
+func defaultReportPath(opts Options) string {
+	if opts.SourceDir != "" {
+		base := filepath.Base(opts.SourceDir)
+		if base == "." || base == "/" || base == "" {
+			base = "source"
+		}
+		return base + "_audit_report.md"
+	}
+	base := strings.TrimSuffix(filepath.Base(opts.StateFile), filepath.Ext(opts.StateFile))
+	return base + "_audit_report.md"
 }
 
 // loadScanners returns the scanners requested by name. If names is empty

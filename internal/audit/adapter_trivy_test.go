@@ -1,7 +1,10 @@
 package audit
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"testing"
 )
 
@@ -42,5 +45,42 @@ func TestParseTrivyOutput(t *testing.T) {
 	}
 	if f1.Severity != SeverityHigh {
 		t.Errorf("expected severity high, got %s", f1.Severity)
+	}
+}
+
+func TestTrivyScanSource_SupportsSource(t *testing.T) {
+	a := &trivyAdapter{}
+	if !a.SupportsSource() {
+		t.Fatal("trivy must report SupportsSource() == true once MR 3 lands")
+	}
+}
+
+// TestTrivyScanSource_RunsAgainstDir mirrors the tfsec source-mode adapter
+// test: graceful skip-as-success when trivy isn't on PATH, real run when
+// it is.
+func TestTrivyScanSource_RunsAgainstDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/main.tf", []byte(`resource "aws_s3_bucket" "b" { bucket = "demo" }
+`), 0o644); err != nil {
+		t.Fatalf("seed fixture: %v", err)
+	}
+
+	a := &trivyAdapter{}
+	_, err := a.ScanSource(context.Background(), dir)
+
+	if _, lookErr := exec.LookPath("trivy"); lookErr != nil {
+		if err == nil {
+			t.Fatal("expected missing-binary error when trivy is not installed")
+		}
+		if errors.Is(err, ErrSourceModeUnsupported) {
+			t.Fatal("ScanSource must not return ErrSourceModeUnsupported once wired")
+		}
+		return
+	}
+
+	// trivy present locally — must succeed; finding count depends on
+	// the bundled policy DB so we don't assert it.
+	if err != nil {
+		t.Fatalf("ScanSource with trivy installed: %v", err)
 	}
 }

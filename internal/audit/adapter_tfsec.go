@@ -15,6 +15,28 @@ type tfsecAdapter struct{}
 
 func (a *tfsecAdapter) Name() string { return "tfsec" }
 
+// SupportsSource reports tfsec's source-mode capability. tfsec is a static
+// analyzer over Terraform HCL, so source mode is its native input — we wire
+// it on directly.
+func (a *tfsecAdapter) SupportsSource() bool { return true }
+
+// ScanSource invokes tfsec against the user's IaC directory directly,
+// skipping the synthetic-temp-dir step that state mode needs. Output schema
+// is identical, so parseTfsecOutput is reused verbatim.
+func (a *tfsecAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+	meta := scannerRegistry["tfsec"]
+	if err := checkVersion(meta); err != nil {
+		return nil, err
+	}
+
+	out, err := runScanner(meta.Name, []string{dir, "--format", "json", "--no-colour", "--soft-fail"}, meta.AllowAWS)
+	if err != nil {
+		return nil, fmt.Errorf("running tfsec: %w\noutput: %s", err, string(out))
+	}
+
+	return parseTfsecOutput(out)
+}
+
 func (a *tfsecAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["tfsec"]
 	if err := checkVersion(meta); err != nil {

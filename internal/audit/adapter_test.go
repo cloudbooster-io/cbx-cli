@@ -258,3 +258,8 @@ func (s *failingScanner) Name() string { return "failing-scanner" }
 func (s *failingScanner) Scan(_ context.Context, _ []Resource) ([]Finding, error) {
 	return nil, errors.New("intentional failure")
 }
+
+func (s *failingScanner) SupportsSource() bool { return false }
+func (s *failingScanner) ScanSource(_ context.Context, _ string) ([]Finding, error) {
+	return nil, ErrSourceModeUnsupported
+}

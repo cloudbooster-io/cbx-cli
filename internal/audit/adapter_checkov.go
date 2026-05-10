@@ -17,6 +17,27 @@ type checkovAdapter struct{}
 
 func (a *checkovAdapter) Name() string { return "checkov" }
 
+// SupportsSource reports checkov's source-mode capability. checkov scans
+// IaC source trees natively, so source mode is its primary input shape.
+func (a *checkovAdapter) SupportsSource() bool { return true }
+
+// ScanSource invokes checkov against the user's IaC directory directly,
+// using its native -d (directory) input mode rather than the synthesized
+// state file used in state mode. parseCheckovOutput is reused unchanged.
+func (a *checkovAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+	meta := scannerRegistry["checkov"]
+	if err := checkVersion(meta); err != nil {
+		return nil, err
+	}
+
+	out, err := runScanner(meta.Name, []string{"-d", dir, "--output", "json", "--compact", "--quiet"}, meta.AllowAWS)
+	if err != nil {
+		return nil, fmt.Errorf("running checkov: %w\noutput: %s", err, string(out))
+	}
+
+	return parseCheckovOutput(out)
+}
+
 func (a *checkovAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["checkov"]
 	if err := checkVersion(meta); err != nil {

@@ -113,8 +113,8 @@ func TestAuditEndToEnd(t *testing.T) {
 		if code == 0 {
 			t.Fatal("expected cbx audit to fail without state flag")
 		}
-		if !strings.Contains(stderr, "--pulumi-state or --terraform-state is required") {
-			t.Fatalf("expected state flag error, got: %s", stderr)
+		if !strings.Contains(stderr, "exactly one of --pulumi-state, --terraform-state, or --source") {
+			t.Fatalf("expected input flag error, got: %s", stderr)
 		}
 	})
 
@@ -405,6 +405,91 @@ func TestAuditEndToEnd(t *testing.T) {
 		}
 		if !strings.Contains(stderr, "tfsec") {
 			t.Fatalf("expected stderr to mention tfsec failure, got: %s", stderr)
+		}
+	})
+
+	sourceFixture, err := filepath.Abs("fixtures/terraform-sample-source")
+	if err != nil {
+		t.Fatalf("resolving source fixture path: %v", err)
+	}
+
+	t.Run("audit_source_mode_mock_outputs_json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		stdout, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", sourceFixture, "--output", "json")
+
+		// Source-mode mock includes a HIGH finding by design → exit code 3.
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from source-mode mock, got %d", code)
+		}
+
+		requireJSONValid(t, stdout)
+
+		var envelope struct {
+			Data []map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("parsing JSON envelope: %v", err)
+		}
+		findings := envelope.Data
+		if len(findings) == 0 {
+			t.Fatal("expected at least one finding in source mode")
+		}
+
+		// Mock source-mode findings are namespaced MOCK-SRC-*. Anything else
+		// here means a real adapter ran by accident (CI default must be mock).
+		for _, f := range findings {
+			rid, _ := f["rule_id"].(string)
+			if !strings.HasPrefix(rid, "MOCK-SRC-") {
+				t.Fatalf("expected MOCK-SRC-* rule_id, got %q (mock should be the default)", rid)
+			}
+		}
+	})
+
+	t.Run("audit_source_mode_default_report_path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		_, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", sourceFixture)
+
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from source-mode mock, got %d", code)
+		}
+
+		// The runner derives the default report name from the source dir
+		// basename: <basename>_audit_report.md.
+		reportPath := filepath.Join(tmpDir, "terraform-sample-source_audit_report.md")
+		requireFileExists(t, reportPath)
+		requireFileContains(t, reportPath, "CloudBooster Audit Report")
+	})
+
+	t.Run("audit_source_mode_missing_dir_fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		missing := filepath.Join(tmpDir, "does-not-exist")
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", missing)
+
+		if code == 0 {
+			t.Fatal("expected non-zero exit when --source path is missing")
+		}
+		if !strings.Contains(stderr, "failed to read source directory") {
+			t.Fatalf("expected three-line source-dir error, got: %s", stderr)
+		}
+	})
+
+	t.Run("audit_source_and_state_mutually_exclusive", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", sourceFixture, "--terraform-state", terraformFixture)
+
+		if code == 0 {
+			t.Fatal("expected non-zero exit when --source and --terraform-state combined")
+		}
+		if !strings.Contains(stderr, "mutually exclusive") {
+			t.Fatalf("expected mutex error, got: %s", stderr)
 		}
 	})
 }

@@ -17,6 +17,16 @@ type prowlerAdapter struct{}
 
 func (a *prowlerAdapter) Name() string { return "prowler" }
 
+// SupportsSource is permanently false for prowler: it scans live AWS, not
+// IaC source files.
+func (a *prowlerAdapter) SupportsSource() bool { return false }
+
+// ScanSource is unsupported by design — prowler audits running cloud
+// resources, not declared IaC. See plan §4.5.
+func (a *prowlerAdapter) ScanSource(_ context.Context, _ string) ([]Finding, error) {
+	return nil, ErrSourceModeUnsupported
+}
+
 func (a *prowlerAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["prowler"]
 	if err := checkVersion(meta); err != nil {
