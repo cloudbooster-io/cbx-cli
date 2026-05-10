@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,16 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
+
+// printMockSourceBanner emits the source-mode mock-only notice. Kept as a
+// named function so the audit_test.go banner assertions can call it directly
+// with a buffer without booting the whole cobra command.
+func printMockSourceBanner(w io.Writer) {
+	fmt.Fprintln(w, "NOTE: built-in mock scanner used — findings do not reflect your actual code.")
+	fmt.Fprintln(w, "      For real analysis: install tfsec/checkov/trivy and pass --scanners=…,")
+	fmt.Fprintln(w, "      configure an LLM provider and pass --llm, or wait for native source")
+	fmt.Fprintln(w, "      analysis (planned).")
+}
 
 func newAuditCmd() *cobra.Command {
 	var (
@@ -161,6 +172,14 @@ Use --scanners to enable real scanner binaries.`,
 					return err
 				}
 				fmt.Fprintln(os.Stderr, err)
+			}
+
+			// Mock-mode banner — surface that source-mode produced placeholder
+			// findings so a first-time user doesn't misread MOCK-SRC-* as a
+			// real audit. Suppressed for machine-readable output and --quiet,
+			// matching the update-banner suppression rules in execute.go.
+			if result != nil && result.MockOnly && !quietFlag && !jsonFlag && outputFormat == "" {
+				printMockSourceBanner(os.Stderr)
 			}
 
 			// Output rendering

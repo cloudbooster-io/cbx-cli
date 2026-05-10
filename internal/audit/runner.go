@@ -16,6 +16,12 @@ import (
 type Result struct {
 	Findings   []Finding
 	ReportPath string
+
+	// MockOnly is true when a source-mode run produced findings only from the
+	// built-in static (mock) scanner — i.e. no real scanner binary was
+	// configured. The CLI renders a banner in that case so users don't mistake
+	// MOCK-SRC-* findings for a real audit. Always false for state-mode runs.
+	MockOnly bool
 }
 
 // Collect executes the audit pipeline and returns findings without writing a
@@ -47,7 +53,23 @@ func collectFromSource(opts Options) ([]Finding, error) {
 	}
 
 	iacType := resolveIaCType(opts)
+	providers, err := sourceProviders(opts, iacType)
+	if err != nil {
+		return nil, err
+	}
 
+	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+
+	return collectFindings(RunProvidersSourceWithProgress(ctx, providers, opts.SourceDir, opts.TimeoutPerScanner))
+}
+
+// sourceProviders resolves the FindingProvider list that will actually run in
+// a source-mode audit, applying both the source-support filter and the
+// iac-type filter. Returns a three-line error when --scanners + --iac-type
+// combine to select nothing (otherwise the runner would close its channel
+// immediately and the user would see a misleading "exit 0, no findings").
+func sourceProviders(opts Options, iacType string) ([]FindingProvider, error) {
 	all := selectProviders(opts)
 	var providers []FindingProvider
 	for _, p := range all {
@@ -60,9 +82,6 @@ func collectFromSource(opts Options) ([]Finding, error) {
 		providers = append(providers, p)
 	}
 
-	// Guard against a silent zero-findings result when --scanners + --iac-type
-	// combine to select nothing. Without this the channel closes immediately
-	// and the user sees "exit 0, no findings" which reads as a clean scan.
 	if len(providers) == 0 {
 		return nil, parsers.ThreeLineError(
 			"no source-mode scanners selected",
@@ -71,10 +90,29 @@ func collectFromSource(opts Options) ([]Finding, error) {
 		)
 	}
 
-	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
-	defer cancel()
+	return providers, nil
+}
 
-	return collectFindings(RunProvidersSourceWithProgress(ctx, providers, opts.SourceDir, opts.TimeoutPerScanner))
+// UsedMockOnlyForSource reports whether a source-mode audit invoked with the
+// given Options would produce findings only from the built-in static (mock)
+// scanner. Returns false for state-mode runs and for source-mode runs where
+// at least one real scanner is in the effective provider list. Mirrors
+// collectFromSource's filter so the CLI banner stays consistent with the
+// actual runner behaviour.
+func UsedMockOnlyForSource(opts Options) bool {
+	if opts.SourceDir == "" {
+		return false
+	}
+	providers, err := sourceProviders(opts, resolveIaCType(opts))
+	if err != nil || len(providers) == 0 {
+		return false
+	}
+	for _, p := range providers {
+		if p.Name() != "static" {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveIaCType returns the effective IaC type for a source-mode run:
@@ -201,6 +239,7 @@ func Run(opts Options) (*Result, error) {
 	result := &Result{
 		Findings:   findings,
 		ReportPath: reportPath,
+		MockOnly:   UsedMockOnlyForSource(opts),
 	}
 
 	if err != nil {

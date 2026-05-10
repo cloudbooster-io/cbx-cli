@@ -145,6 +145,69 @@ func TestProwlerScanSourceUnsupported(t *testing.T) {
 	}
 }
 
+func TestUsedMockOnlyForSource(t *testing.T) {
+	dir := t.TempDir()
+
+	cases := []struct {
+		name string
+		opts Options
+		want bool
+	}{
+		{
+			name: "state mode never reports mock-only",
+			opts: Options{StateFile: "x.tfstate", MockScanners: true},
+			want: false,
+		},
+		{
+			name: "source mode + MockScanners",
+			opts: Options{SourceDir: dir, MockScanners: true},
+			want: true,
+		},
+		{
+			name: "source mode + explicit static",
+			opts: Options{SourceDir: dir, Scanners: []string{"static"}},
+			want: true,
+		},
+		{
+			name: "source mode + explicit tfsec is not mock-only",
+			opts: Options{SourceDir: dir, Scanners: []string{"tfsec"}},
+			want: false,
+		},
+		{
+			name: "source mode + static,tfsec mix is not mock-only",
+			opts: Options{SourceDir: dir, Scanners: []string{"static", "tfsec"}},
+			want: false,
+		},
+		{
+			name: "source mode + prowler only returns false (filter rejects, no real scanner)",
+			opts: Options{SourceDir: dir, Scanners: []string{"prowler"}},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := UsedMockOnlyForSource(tc.opts); got != tc.want {
+				t.Fatalf("UsedMockOnlyForSource = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunReportsMockOnlyInResult(t *testing.T) {
+	dir := t.TempDir()
+	// Run() writes a report file; redirect the working dir so we don't
+	// pollute the repo.
+	t.Chdir(t.TempDir())
+
+	res, err := Run(Options{SourceDir: dir, MockScanners: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.MockOnly {
+		t.Fatalf("expected Result.MockOnly = true for source-mode mock run, got false")
+	}
+}
+
 func TestStaticScannerScanSourceEmptyDir(t *testing.T) {
 	s := &staticScanner{}
 	if !s.SupportsSource() {

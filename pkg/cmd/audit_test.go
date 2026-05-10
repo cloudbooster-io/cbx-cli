@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,6 +58,84 @@ func TestAuditFlagMutex(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErrSub) {
 				t.Fatalf("expected error to contain %q, got %v", tc.wantErrSub, err)
+			}
+		})
+	}
+}
+
+// TestAuditMockBanner verifies the source-mode mock banner fires on a plain
+// `audit --source` invocation and stays suppressed when the user asks for
+// machine-readable output (--json or --output=...) or --quiet.
+func TestAuditMockBanner(t *testing.T) {
+	cases := []struct {
+		name       string
+		extraArgs  []string
+		wantBanner bool
+	}{
+		{
+			name:       "plain run prints banner",
+			extraArgs:  nil,
+			wantBanner: true,
+		},
+		{
+			name:       "--quiet suppresses banner",
+			extraArgs:  []string{"--quiet"},
+			wantBanner: false,
+		},
+		{
+			name:       "--json suppresses banner",
+			extraArgs:  []string{"--json"},
+			wantBanner: false,
+		},
+		{
+			name:       "--output markdown suppresses banner",
+			extraArgs:  []string{"--output", "markdown"},
+			wantBanner: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Run() writes a report file to CWD; redirect to a tempdir so
+			// the test doesn't pollute the repo or fight other tests.
+			t.Chdir(t.TempDir())
+			source := t.TempDir()
+			if err := os.WriteFile(filepath.Join(source, "main.tf"), []byte("resource \"null_resource\" \"x\" {}"), 0o644); err != nil {
+				t.Fatalf("seed fixture: %v", err)
+			}
+
+			// stderr can't be captured through cmd.SetErr because audit.go
+			// writes the banner directly to os.Stderr (matching how the
+			// update-banner / report-written line already work). Redirect
+			// the real fd for the duration of the call.
+			origStderr := os.Stderr
+			r, w, pipeErr := os.Pipe()
+			if pipeErr != nil {
+				t.Fatalf("pipe: %v", pipeErr)
+			}
+			os.Stderr = w
+
+			cmd := NewRootCmd()
+			args := append([]string{"audit", "--source", source}, tc.extraArgs...)
+			cmd.SetArgs(args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+
+			runErr := cmd.Execute()
+
+			// Severity-driven exit code propagates through cobra as an error.
+			// We don't care about exit code here, only the banner.
+			_ = runErr
+
+			_ = w.Close()
+			os.Stderr = origStderr
+
+			var stderr bytes.Buffer
+			_, _ = stderr.ReadFrom(r)
+
+			hasBanner := strings.Contains(stderr.String(), "built-in mock scanner used")
+			if hasBanner != tc.wantBanner {
+				t.Fatalf("banner present = %v, want %v\nstderr:\n%s", hasBanner, tc.wantBanner, stderr.String())
 			}
 		})
 	}
