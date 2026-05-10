@@ -31,6 +31,7 @@ func newAuditCmd() *cobra.Command {
 		timeoutPerScanner  time.Duration
 		yes                bool
 		scanners           string
+		llmProvider        string
 	)
 
 	validIaCTypes := map[string]bool{
@@ -54,7 +55,12 @@ Supported scanners and version ranges:
   trivy   >= 0.48.0, < 1.0.0
 
 By default mock scanners are used (zero network, no external binaries).
-Use --scanners to enable real scanner binaries.`,
+Use --scanners to enable real scanner binaries.
+
+Source-mode only: --llm <provider> ships the source files to a configured
+LLM (run 'cbx llm login <provider>' first) and emits structured findings.
+This breaks the "fully offline" default; the analyzer runs only when the
+flag is set. Mutually exclusive with --scanners.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inputs := 0
 			if pulumiStateFile != "" {
@@ -132,6 +138,18 @@ Use --scanners to enable real scanner binaries.`,
 				}
 			}
 
+			if llmProvider != "" {
+				if scanners != "" {
+					return fmt.Errorf("--llm and --scanners are mutually exclusive")
+				}
+				if sourceDir == "" {
+					return fmt.Errorf("--llm requires --source (state-mode audits use rule-based scanners)")
+				}
+				// Suppress the static mock when --llm is selected — the
+				// analyzer fully replaces the scanner list.
+				mockScanners = false
+			}
+
 			opts := audit.Options{
 				StateFile:         stateFile,
 				SourceDir:         sourceDir,
@@ -144,6 +162,7 @@ Use --scanners to enable real scanner binaries.`,
 				Yes:               yes,
 				MockScanners:      mockScanners,
 				Scanners:          scannerNames,
+				LLMProvider:       llmProvider,
 				Timeout:           timeout,
 				TimeoutPerScanner: timeoutPerScanner,
 			}
@@ -213,6 +232,7 @@ Use --scanners to enable real scanner binaries.`,
 	cmd.Flags().DurationVar(&timeoutPerScanner, "timeout-per-scanner", 5*time.Minute, "Timeout per scanner/provider")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip interactive confirmations")
 	cmd.Flags().StringVar(&scanners, "scanners", "", "Comma-separated list of scanners to run (tfsec,checkov,prowler,trivy)")
+	cmd.Flags().StringVar(&llmProvider, "llm", "", "Source-mode only: send source files to the named LLM provider (claude|codex|ollama) and emit structured findings. Requires 'cbx llm login <provider>' first. Implies network egress.")
 
 	return cmd
 }

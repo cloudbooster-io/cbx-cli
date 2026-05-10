@@ -48,27 +48,40 @@ func collectFromSource(opts Options) ([]Finding, error) {
 
 	iacType := resolveIaCType(opts)
 
-	all := selectProviders(opts)
+	// --llm replaces the scanner list with the LLM analyzer for this run.
+	// We don't merge the two — the plan §5.1 declares them mutually
+	// exclusive at the CLI layer, so by the time we reach here Scanners
+	// is empty.
 	var providers []FindingProvider
-	for _, p := range all {
-		if !p.SupportsSource() {
-			continue
+	if opts.LLMProvider != "" {
+		analyzer, err := newLLMAnalyzer(opts, iacType)
+		if err != nil {
+			return nil, err
 		}
-		if !providerSupportsIaCType(p, iacType) {
-			continue
+		providers = []FindingProvider{analyzer}
+	} else {
+		all := selectProviders(opts)
+		for _, p := range all {
+			if !p.SupportsSource() {
+				continue
+			}
+			if !providerSupportsIaCType(p, iacType) {
+				continue
+			}
+			providers = append(providers, p)
 		}
-		providers = append(providers, p)
-	}
 
-	// Guard against a silent zero-findings result when --scanners + --iac-type
-	// combine to select nothing. Without this the channel closes immediately
-	// and the user sees "exit 0, no findings" which reads as a clean scan.
-	if len(providers) == 0 {
-		return nil, parsers.ThreeLineError(
-			"no source-mode scanners selected",
-			fmt.Sprintf("no provider supports both source mode and iac-type=%q", iacTypeForMessage(iacType)),
-			"omit --scanners to use the built-in source-mode mock, or pick a different --iac-type",
-		)
+		// Guard against a silent zero-findings result when --scanners +
+		// --iac-type combine to select nothing. Without this the channel
+		// closes immediately and the user sees "exit 0, no findings"
+		// which reads as a clean scan.
+		if len(providers) == 0 {
+			return nil, parsers.ThreeLineError(
+				"no source-mode scanners selected",
+				fmt.Sprintf("no provider supports both source mode and iac-type=%q", iacTypeForMessage(iacType)),
+				"omit --scanners to use the built-in source-mode mock, or pick a different --iac-type",
+			)
+		}
 	}
 
 	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)

@@ -92,4 +92,20 @@ type Options struct {
 	// Empty or "auto" lets scanners decide. Used in Phase 2; shipped in
 	// Phase 1 so the flag is stable from the start.
 	IaCType string
+
+	// LLMProvider, when non-empty, switches a source-mode audit to the LLM
+	// analyzer using the configured provider (claude / codex / ollama —
+	// whatever the user has logged in via `cbx llm login`). Mutually
+	// exclusive with Scanners at the CLI layer. Implies network egress —
+	// document accordingly.
+	LLMProvider string
+
+	// LLMMaxFiles caps the number of source files sent to the LLM. Zero
+	// means "use the default" (defaultLLMMaxFiles).
+	LLMMaxFiles int
+
+	// LLMMaxBytesPerFile caps the per-file bytes shipped to the LLM. Files
+	// exceeding this are truncated and flagged. Zero means "use the
+	// default" (defaultLLMMaxBytesPerFile).
+	LLMMaxBytesPerFile int
 }
