@@ -28,7 +28,7 @@ func (a *trivyAdapter) ScanSource(_ context.Context, dir string) ([]Finding, err
 		return nil, err
 	}
 
-	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL"}, meta.AllowAWS)
+	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running trivy: %w\noutput: %s", err, string(out))
 	}
@@ -48,7 +48,7 @@ func (a *trivyAdapter) Scan(_ context.Context, resources []Resource) ([]Finding,
 	}
 	defer os.RemoveAll(dir)
 
-	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL"}, meta.AllowAWS)
+	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running trivy: %w\noutput: %s", err, string(out))
 	}

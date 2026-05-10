@@ -30,7 +30,12 @@ func (a *checkovAdapter) ScanSource(_ context.Context, dir string) ([]Finding, e
 		return nil, err
 	}
 
-	out, err := runScanner(meta.Name, []string{"-d", dir, "--output", "json", "--compact", "--quiet"}, meta.AllowAWS)
+	// --soft-fail keeps checkov's exit code at 0 when it discovers
+	// violations. Without it, runScanner sees the non-zero exit, treats
+	// it as an exec failure, and the JSON envelope never reaches the
+	// parser — even though the run was successful from our perspective.
+	// tfsec uses the same flag for the same reason.
+	out, err := runScanner(meta.Name, []string{"-d", dir, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running checkov: %w\noutput: %s", err, string(out))
 	}
@@ -50,7 +55,7 @@ func (a *checkovAdapter) Scan(_ context.Context, resources []Resource) ([]Findin
 	}
 	defer os.RemoveAll(filepath.Dir(statePath))
 
-	out, err := runScanner(meta.Name, []string{"-f", statePath, "--output", "json", "--compact", "--quiet"}, meta.AllowAWS)
+	out, err := runScanner(meta.Name, []string{"-f", statePath, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running checkov: %w\noutput: %s", err, string(out))
 	}
