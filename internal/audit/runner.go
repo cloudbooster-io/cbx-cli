@@ -46,23 +46,28 @@ func collectFromSource(opts Options) ([]Finding, error) {
 		return nil, err
 	}
 
+	iacType := resolveIaCType(opts)
+
 	all := selectProviders(opts)
 	var providers []FindingProvider
 	for _, p := range all {
-		if p.SupportsSource() {
-			providers = append(providers, p)
+		if !p.SupportsSource() {
+			continue
 		}
+		if !providerSupportsIaCType(p, iacType) {
+			continue
+		}
+		providers = append(providers, p)
 	}
 
-	// Guard against a silent zero-findings result when --scanners selects only
-	// providers that don't support source mode yet (tfsec/checkov/trivy/prowler
-	// in MR 1). Without this, the channel closes immediately and the user sees
-	// "exit 0, no findings" which reads as a clean scan.
+	// Guard against a silent zero-findings result when --scanners + --iac-type
+	// combine to select nothing. Without this the channel closes immediately
+	// and the user sees "exit 0, no findings" which reads as a clean scan.
 	if len(providers) == 0 {
 		return nil, parsers.ThreeLineError(
 			"no source-mode scanners selected",
-			"all selected providers report SupportsSource() == false",
-			"omit --scanners to use the built-in source-mode mock, or drop the flag entirely",
+			fmt.Sprintf("no provider supports both source mode and iac-type=%q", iacTypeForMessage(iacType)),
+			"omit --scanners to use the built-in source-mode mock, or pick a different --iac-type",
 		)
 	}
 
@@ -70,6 +75,43 @@ func collectFromSource(opts Options) ([]Finding, error) {
 	defer cancel()
 
 	return collectFindings(RunProvidersSourceWithProgress(ctx, providers, opts.SourceDir, opts.TimeoutPerScanner))
+}
+
+// resolveIaCType returns the effective IaC type for a source-mode run:
+// the user's explicit --iac-type when set to anything other than "auto",
+// otherwise the result of detectIaCType. May return "" for an empty or
+// unrecognised tree — in that case providerSupportsIaCType errs on the
+// permissive side (treats "" as "any").
+func resolveIaCType(opts Options) string {
+	if opts.IaCType != "" && opts.IaCType != IaCTypeAuto {
+		return opts.IaCType
+	}
+	return detectIaCType(opts.SourceDir)
+}
+
+// providerSupportsIaCType encodes the per-adapter capability table:
+//   - tfsec scans Terraform only.
+//   - checkov + trivy + the static mock handle every IaC type the CLI knows
+//     about (the real binaries self-detect; the mock is type-agnostic).
+//
+// The empty string ("" — no detection / unknown type) is treated as "any" so
+// that exotic / unclassified trees still get scanned by the universal
+// providers instead of being silently filtered out.
+func providerSupportsIaCType(p FindingProvider, iacType string) bool {
+	if iacType == "" {
+		return true
+	}
+	if p.Name() == "tfsec" {
+		return iacType == IaCTypeTerraform
+	}
+	return true
+}
+
+func iacTypeForMessage(t string) string {
+	if t == "" {
+		return IaCTypeAuto
+	}
+	return t
 }
 
 // selectProviders resolves the FindingProvider list for an audit run,

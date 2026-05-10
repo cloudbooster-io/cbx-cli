@@ -492,6 +492,68 @@ func TestAuditEndToEnd(t *testing.T) {
 			t.Fatalf("expected mutex error, got: %s", stderr)
 		}
 	})
+
+	cfnFixture, err := filepath.Abs("fixtures/cloudformation-sample-source")
+	if err != nil {
+		t.Fatalf("resolving CFN fixture path: %v", err)
+	}
+
+	t.Run("audit_source_mode_cloudformation_mock", func(t *testing.T) {
+		tmpDir := t.TempDir()
+
+		stdout, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", cfnFixture, "--output", "json")
+
+		// The mock scanner is IaC-type-agnostic and emits a HIGH finding,
+		// so exit code is 3 here just like the Terraform fixture.
+		if code != 3 {
+			t.Fatalf("expected exit code 3 from CFN source-mode mock, got %d", code)
+		}
+
+		requireJSONValid(t, stdout)
+		var envelope struct {
+			Data []map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+			t.Fatalf("parsing JSON envelope: %v", err)
+		}
+		if len(envelope.Data) == 0 {
+			t.Fatal("expected at least one mock finding in CFN source mode")
+		}
+	})
+
+	t.Run("audit_source_mode_iac_type_filters_tfsec", func(t *testing.T) {
+		// Pointing tfsec at a CFN dir should error with the helpful
+		// "no source-mode scanners selected" message — tfsec is filtered
+		// because the resolved IaC type is cloudformation.
+		tmpDir := t.TempDir()
+
+		_, stderr, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", cfnFixture, "--scanners", "tfsec")
+
+		if code == 0 {
+			t.Fatal("expected non-zero exit when only tfsec is selected on a non-TF source")
+		}
+		if !strings.Contains(stderr, "no source-mode scanners selected") {
+			t.Fatalf("expected helpful 'no source-mode scanners selected' error, got: %s", stderr)
+		}
+	})
+
+	t.Run("audit_source_mode_iac_type_explicit_terraform_honored", func(t *testing.T) {
+		// Even when the directory contains CFN files, an explicit
+		// --iac-type=terraform must be honored (don't second-guess the user)
+		// and tfsec is allowed to run. With the CFN fixture and mock
+		// scanners the static mock still produces findings.
+		tmpDir := t.TempDir()
+
+		stdout, _, code := runCBXInDir(t, tmpDir, nil,
+			"audit", "--source", cfnFixture, "--iac-type", "terraform", "--output", "json")
+
+		if code != 3 {
+			t.Fatalf("expected exit code 3, got %d", code)
+		}
+		requireJSONValid(t, stdout)
+	})
 }
 
 func createLargeStateFile(t *testing.T, path string) {

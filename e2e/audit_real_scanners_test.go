@@ -19,29 +19,37 @@ import (
 )
 
 func TestAuditSource_RealTfsec(t *testing.T) {
-	runRealSourceScanner(t, "tfsec")
+	runRealSourceScanner(t, "tfsec", "fixtures/terraform-sample-source")
 }
 
 func TestAuditSource_RealCheckov(t *testing.T) {
-	runRealSourceScanner(t, "checkov")
+	runRealSourceScanner(t, "checkov", "fixtures/terraform-sample-source")
 }
 
 func TestAuditSource_RealTrivy(t *testing.T) {
-	runRealSourceScanner(t, "trivy")
+	runRealSourceScanner(t, "trivy", "fixtures/terraform-sample-source")
+}
+
+func TestAuditSource_RealCheckov_CFN(t *testing.T) {
+	runRealSourceScanner(t, "checkov", "fixtures/cloudformation-sample-source")
+}
+
+func TestAuditSource_RealTrivy_CFN(t *testing.T) {
+	runRealSourceScanner(t, "trivy", "fixtures/cloudformation-sample-source")
 }
 
 // runRealSourceScanner executes `cbx audit --source <fixture> --scanners <name>`
 // against a real scanner binary and asserts the JSON envelope is valid and
 // the findings did not fall back to the mock implementation. Skips if the
 // requested binary is not on PATH.
-func runRealSourceScanner(t *testing.T, scanner string) {
+func runRealSourceScanner(t *testing.T, scanner, fixtureRel string) {
 	t.Helper()
 
 	if _, err := exec.LookPath(scanner); err != nil {
 		t.Skipf("%s not installed on PATH", scanner)
 	}
 
-	sourceFixture, err := filepath.Abs("fixtures/terraform-sample-source")
+	sourceFixture, err := filepath.Abs(fixtureRel)
 	if err != nil {
 		t.Fatalf("resolving fixture path: %v", err)
 	}
