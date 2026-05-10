@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,7 +35,9 @@ var scannerRegistry = map[string]scannerMeta{
 	"checkov": {
 		Name:       "checkov",
 		MinVersion: "2.4.0",
-		MaxVersion: "3.0.0",
+		// Bumped to 4.0.0 — checkov 3.2.x is the current stable; the
+		// previous 3.0.0 cap rejected every real install.
+		MaxVersion: "4.0.0",
 		AllowAWS:   false,
 		InstallCmd: map[string]string{
 			"darwin": "brew install checkov",
@@ -82,12 +85,24 @@ func scrubEnv(allowAWS bool) []string {
 	return out
 }
 
-// runScanner executes a scanner binary with the given arguments and
-// returns its combined stdout+stderr output.
+// runScanner executes a scanner binary with the given arguments and returns
+// its stdout. Stderr is intentionally segregated: scanners (notably tfsec)
+// write deprecation banners and progress chatter to stderr that would
+// otherwise corrupt the JSON parsers downstream. On error stderr is folded
+// into the returned error message so the user still sees it.
 func runScanner(name string, args []string, allowAWS bool) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Env = scrubEnv(allowAWS)
-	return cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return stdout, fmt.Errorf("%w: %s", err, msg)
+		}
+		return stdout, err
+	}
+	return stdout, nil
 }
 
 // missingBinaryError returns a formatted multi-line error for a missing
