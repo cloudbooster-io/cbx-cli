@@ -1,4 +1,9 @@
-.PHONY: all build test test-e2e test-e2e-staging test-smoke-brew lint vet codegen codegen-check clean
+.PHONY: all build test test-e2e test-e2e-staging test-smoke-brew lint vet codegen codegen-check codegen-primitives codegen-primitives-check clean
+
+# Path to platform-app primitive docs — override when the sibling checkout
+# lives somewhere other than ../platform-app (e.g. CI runners with a
+# different layout): `make codegen-primitives PRIMITIVES_SRC=/path/to/primitives`.
+PRIMITIVES_SRC ?= ../platform-app/be/app/knowledge/resources/aws/primitives
 
 BINARY := cbx
 CMD := ./cmd/cbx
@@ -38,6 +43,13 @@ codegen:
 codegen-check: codegen
 	@echo "Checking for generated code drift..."
 	git diff --exit-code core/api/v1/client.gen.go
+
+codegen-primitives:
+	go run ./tools/genprimitives -src $(PRIMITIVES_SRC) -out internal/audit/primitives_aws.go
+
+codegen-primitives-check: codegen-primitives
+	@echo "Checking for primitive-map drift..."
+	git diff --exit-code internal/audit/primitives_aws.go
 
 clean:
 	rm -rf bin/
