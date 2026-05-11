@@ -45,6 +45,8 @@ func newAuditCmd() *cobra.Command {
 		llmProvider        string
 		llmMaxFiles        int
 		llmMaxBytesPerFile int
+		cbKnowledge        bool
+		llmMaxCost         float64
 	)
 
 	validIaCTypes := map[string]bool{
@@ -167,6 +169,18 @@ needed; reuses your existing Claude Code authentication.`,
 				mockScanners = false
 			}
 
+			if cbKnowledge {
+				if llmProvider == "" {
+					return fmt.Errorf("--cb-knowledge requires --llm claude-code")
+				}
+				if llmProvider != audit.ClaudeCodeProvider {
+					return fmt.Errorf("--cb-knowledge requires --llm claude-code (other providers don't have an MCP tool-call loop)")
+				}
+			}
+			if llmMaxCost != 0 && !cbKnowledge {
+				return fmt.Errorf("--llm-max-cost is only meaningful with --cb-knowledge")
+			}
+
 			opts := audit.Options{
 				StateFile:         stateFile,
 				SourceDir:         sourceDir,
@@ -182,6 +196,8 @@ needed; reuses your existing Claude Code authentication.`,
 				LLMProvider:        llmProvider,
 				LLMMaxFiles:        llmMaxFiles,
 				LLMMaxBytesPerFile: llmMaxBytesPerFile,
+				CBKnowledge:        cbKnowledge,
+				LLMMaxCost:         llmMaxCost,
 				Timeout:           timeout,
 				TimeoutPerScanner: timeoutPerScanner,
 			}
@@ -262,6 +278,8 @@ needed; reuses your existing Claude Code authentication.`,
 	cmd.Flags().StringVar(&llmProvider, "llm", "", "Source-mode only: send source files to the named LLM provider (claude|codex|ollama|claude-code) and emit structured findings. 'claude-code' shells out to the local 'claude' CLI (no cbx login needed); other providers require 'cbx llm login <provider>' first. Implies network egress.")
 	cmd.Flags().IntVar(&llmMaxFiles, "llm-max-files", 0, "Cap on the number of source files shipped to the LLM analyzer (0 = default 50; only meaningful with --llm)")
 	cmd.Flags().IntVar(&llmMaxBytesPerFile, "llm-max-bytes-per-file", 0, "Per-file byte cap for the LLM analyzer; longer files are truncated (0 = default 64 KB; only meaningful with --llm)")
+	cmd.Flags().BoolVar(&cbKnowledge, "cb-knowledge", false, "Phase F: ground each finding in CloudBooster's curated AWS knowledge via cbx-mcp tool calls. Requires --llm claude-code. Opt-in for v1.")
+	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 0, "USD ceiling for a single grounded audit; the run is not aborted but a warning finding is emitted when claude's reported total_cost_usd exceeds the cap (0 = default $2.00; only meaningful with --cb-knowledge)")
 
 	return cmd
 }
