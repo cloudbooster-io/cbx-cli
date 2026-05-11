@@ -36,7 +36,10 @@ const cbxMCPUseBackendEnv = "CBX_MCP_USE_BACKEND"
 
 // cbxMCPKBStubEnv is the cbx-mcp side env flag this wrapper sets when stub
 // mode is in force. Keep in sync with cbx-mcp/src/cbx_mcp/kb_stub.py:_ENV_FLAG.
-const cbxMCPKBStubEnv = "CBX_MCP_KB_STUB"
+const (
+	cbxMCPKBStubEnv     = "CBX_MCP_KB_STUB"
+	cbxMCPKBStubPathEnv = "CBX_MCP_KB_STUB_PATH"
+)
 
 // cbxMCPServerName is the key under "mcpServers" in the generated .mcp.json
 // AND the prefix claude uses in its tool namespace (`mcp__cbx__*`). Both
@@ -403,6 +406,18 @@ func writeMCPConfig(dir, cbxMCPPath string, useStub bool) (string, error) {
 	env := map[string]string{}
 	if useStub {
 		env[cbxMCPKBStubEnv] = "1"
+		// uvx installs cbx-mcp into a transient cache dir, so the stub's
+		// __file__-relative default KB-root computation walks into the
+		// uvx cache instead of platform-app/. Anchor the path explicitly
+		// against the cbx-mcp checkout so the default works regardless
+		// of how the Python process gets launched. Honour an outer
+		// override if the user already set one.
+		if existing := os.Getenv(cbxMCPKBStubPathEnv); existing != "" {
+			env[cbxMCPKBStubPathEnv] = existing
+		} else {
+			kbRoot := filepath.Join(cbxMCPPath, "..", "platform-app", "be", "app", "knowledge", "resources", "aws")
+			env[cbxMCPKBStubPathEnv] = filepath.Clean(kbRoot)
+		}
 	}
 	cfg := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
