@@ -220,11 +220,19 @@ func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onTo
 	// --verbose is required by claude when combining -p with --output-format
 	// stream-json; without it claude rejects the flag combination. Verified
 	// 2026-05-11 against claude 2.1.138 by the grounded-streamer test fixture.
+	//
+	// --bare was intentionally dropped 2026-05-11: it strips Claude Code's
+	// keychain along with auto-memory/plugins/CLAUDE.md discovery, so the
+	// subprocess could connect MCP but couldn't authenticate to Anthropic.
+	// --strict-mcp-config alone already enforces the controlled tool
+	// surface (no `~/.claude.json` or project `.mcp.json` leakage). The
+	// remaining --bare side-effects (auto-memory, plugins, CLAUDE.md
+	// discovery) are noise for an audit run and don't affect finding
+	// correctness; accept the trade-off for the v1 ship.
 	args := []string{
 		"-p",
 		"--mcp-config", cfgPath,
 		"--strict-mcp-config",
-		"--bare",
 		"--allowedTools", "mcp__" + cbxMCPServerName + "__*",
 		"--permission-mode", "auto",
 		"--output-format", "stream-json",
