@@ -33,15 +33,26 @@ const (
 
 // Finding represents a single audit finding.
 type Finding struct {
-	RuleID      string `json:"rule_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Severity    string `json:"severity"`
-	Resource    string `json:"resource"`
-	Service     string `json:"service"`
-	Remediation string `json:"remediation"`
-	File        string `json:"file,omitempty"`
-	Line        int    `json:"line,omitempty"`
+	RuleID      string    `json:"rule_id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Severity    string    `json:"severity"`
+	Resource    string    `json:"resource"`
+	Service     string    `json:"service"`
+	Remediation string    `json:"remediation"`
+	File        string    `json:"file,omitempty"`
+	Line        int       `json:"line,omitempty"`
+	CBSource    *CBSource `json:"cb_source,omitempty"`
+}
+
+// CBSource records which CB-knowledge MCP call the LLM cited when grounding
+// a finding. Only set by the grounded analyzer (--cb-knowledge); absent for
+// every other code path. Optional even on the grounded path — the model is
+// allowed to emit findings without a citation, which the analyzer soft-warns.
+type CBSource struct {
+	Tool    string `json:"tool"`
+	Key     string `json:"key,omitempty"`
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // DiscoveredResource is an alias for the shared shape defined in the parsers
@@ -108,4 +119,17 @@ type Options struct {
 	// exceeding this are truncated and flagged. Zero means "use the
 	// default" (defaultLLMMaxBytesPerFile).
 	LLMMaxBytesPerFile int
+
+	// CBKnowledge selects the Phase F grounded path: the LLM analyzer
+	// spawns a `claude -p` subprocess wired to cbx-mcp via --mcp-config and
+	// is instructed to cite a CB-knowledge tool call on every finding.
+	// Only valid when LLMProvider == ClaudeCodeProvider.
+	CBKnowledge bool
+
+	// LLMMaxCost is the USD ceiling for a single grounded audit. When the
+	// terminating `result.total_cost_usd` from claude's stream-json exceeds
+	// this value the analyzer emits a warning finding; partial findings
+	// already returned are preserved. Zero means "use the default"
+	// (defaultLLMMaxCostUSD).
+	LLMMaxCost float64
 }
