@@ -132,4 +132,35 @@ type Options struct {
 	// already returned are preserved. Zero means "use the default"
 	// (defaultLLMMaxCostUSD).
 	LLMMaxCost float64
+
+	// AWS, when true, switches the runner into live-AWS mode. Set by the
+	// `cbx audit aws` subcommand. Mutually exclusive with StateFile /
+	// SourceDir at the CLI layer.
+	AWS bool
+
+	// AWSProfile names the AWS SDK profile to use for live-AWS audit.
+	// Resolution precedence: AWSConfigFile > AWSProfile > AWS_PROFILE env
+	// > "default". Only meaningful when AWS is true.
+	AWSProfile string
+
+	// AWSConfigFile is the optional path to an AWS credentials file. When
+	// set, it overrides profile resolution (equivalent to setting
+	// AWS_SHARED_CREDENTIALS_FILE for this run). Only meaningful when AWS
+	// is true.
+	AWSConfigFile string
+
+	// Regions is the resolved AWS region list for live-AWS audit. Empty
+	// means "use the profile default; prompt if none." A single literal
+	// "all" expands to every enabled region in the account during runtime
+	// resolution. Only meaningful when AWS is true.
+	Regions []string
+
+	// AWSConcurrency caps concurrent AWS API calls per service. Zero means
+	// the default (4). Only meaningful when AWS is true.
+	AWSConcurrency int
+
+	// Diagnose, when true, emits per-call IAM permission errors and a
+	// recommended IAM policy patch at the end of a live-AWS audit. Only
+	// meaningful when AWS is true.
+	Diagnose bool
 }
