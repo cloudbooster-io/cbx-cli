@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
@@ -28,12 +28,10 @@ func newUpgradeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Version == "dev" || Version == "unknown" || Version == "" {
 				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        "cannot upgrade development build",
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				fmt.Println("Cannot upgrade development build. Install a release build from:")
 				fmt.Println("  https://github.com/cloudbooster/cbx-cli/releases")
@@ -47,28 +45,24 @@ func newUpgradeCmd() *cobra.Command {
 			result, err := checker.Check(ctx)
 			if err != nil {
 				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        fmt.Sprintf("failed to check for updates: %v", err),
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				return fmt.Errorf("checking for updates: %w", err)
 			}
 
 			if !result.HasUpdate {
 				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      false,
 						InstallMethod:  string(result.InstallMethod),
 						Upgraded:       false,
 						Message:        "Already up to date",
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				fmt.Printf("Already up to date (%s).\n", Version)
 				return nil
@@ -76,16 +70,14 @@ func newUpgradeCmd() *cobra.Command {
 
 			if dryRun {
 				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      true,
 						InstallMethod:  string(result.InstallMethod),
 						Upgraded:       false,
 						Message:        fmt.Sprintf("would run: %s", update.UpgradeCommand(result)),
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				fmt.Printf("Update available: %s → %s\n", Version, result.LatestVersion)
 				fmt.Printf("Install method: %s\n", result.InstallMethod)
@@ -95,16 +87,14 @@ func newUpgradeCmd() *cobra.Command {
 
 			if jsonFlag {
 				// JSON mode: report what would happen but don't actually run package manager
-				out, _ := json.MarshalIndent(upgradeResult{
+				return output.PrintJSON(upgradeResult{
 					CurrentVersion: Version,
 					LatestVersion:  result.LatestVersion,
 					HasUpdate:      true,
 					InstallMethod:  string(result.InstallMethod),
 					Upgraded:       false,
 					Message:        fmt.Sprintf("run `%s` to upgrade", update.UpgradeCommand(result)),
-				}, "", "  ")
-				fmt.Println(string(out))
-				return nil
+				}, nil)
 			}
 
 			fmt.Printf("Upgrading cbx %s → %s (%s)\n", Version, result.LatestVersion, result.InstallMethod)

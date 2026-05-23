@@ -38,6 +38,27 @@ func TestWriteJSONError(t *testing.T) {
 	}
 }
 
+func TestWriteJSONDataAndError(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteJSON(&buf, map[string]any{"checks": []string{"a", "b"}}, &ErrDetail{Code: "PARTIAL", Message: "some checks failed"})
+	if err != nil {
+		t.Fatalf("WriteJSON error: %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, `"data"`) {
+		t.Fatalf("expected data field present when data is non-nil, got: %s", got)
+	}
+	if !strings.Contains(got, `"error"`) {
+		t.Fatalf("expected error field present when err is non-nil, got: %s", got)
+	}
+	if !strings.Contains(got, `"some checks failed"`) {
+		t.Fatalf("expected error message in output, got: %s", got)
+	}
+	if !strings.Contains(got, `"checks"`) {
+		t.Fatalf("expected nested data preserved, got: %s", got)
+	}
+}
+
 func TestJSONErrorHelpers(t *testing.T) {
 	if JSONError(nil) != nil {
 		t.Fatal("JSONError(nil) should return nil")

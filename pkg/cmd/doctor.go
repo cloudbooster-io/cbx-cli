@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
@@ -48,15 +48,13 @@ func newDoctorCmd() *cobra.Command {
 
 			if jsonFlag {
 				report := doctorReport{Healthy: allOK, Checks: checks}
-				b, err := json.MarshalIndent(report, "", "  ")
-				if err != nil {
-					return fmt.Errorf("marshalling JSON: %w", err)
-				}
-				fmt.Println(string(b))
 				if !allOK {
+					if err := output.PrintJSON(report, output.JSONErrorf("some health checks failed")); err != nil {
+						return err
+					}
 					return fmt.Errorf("some health checks failed")
 				}
-				return nil
+				return output.PrintJSON(report, nil)
 			}
 
 			for _, c := range checks {

@@ -33,6 +33,9 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			output.Configure(noColorFlag, quietFlag)
+			if jsonFlag {
+				output.SetFormat("json")
+			}
 			executedCommand = cmd.Name()
 
 			// First-run telemetry prompt, then Sentry init. Skip for
