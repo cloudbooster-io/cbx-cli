@@ -218,9 +218,100 @@ var pulumiTypeToCBPrimitive = map[string]string{
 	"aws:wafv2/webAcl:WebAcl":                             "aws:security/waf@v1",
 }
 
-// rdsPrimitiveFor resolves an aws_db_instance / aws_rds_cluster `engine`
-// attribute to its CB primitive id. Returns "" when the engine is unknown
-// or unparseable (e.g. when the HCL value is a variable reference).
+// cfnTypeToCBPrimitive maps a CloudFormation type name (e.g.
+// `AWS::S3::Bucket`) to the CB primitive id. Used by the live-AWS
+// audit path, which queries the CloudControl API and gets back
+// CFN-style type names. Engine-split databases (AWS::RDS::DBInstance)
+// are not in this map — use rdsPrimitiveFor(engine) instead.
+var cfnTypeToCBPrimitive = map[string]string{
+	"AWS::ApiGateway::Deployment":               "aws:api/rest-gateway@v1",
+	"AWS::ApiGateway::Method":                   "aws:api/rest-gateway@v1",
+	"AWS::ApiGateway::Resource":                 "aws:api/rest-gateway@v1",
+	"AWS::ApiGateway::RestApi":                  "aws:api/rest-gateway@v1",
+	"AWS::ApiGateway::Stage":                    "aws:api/rest-gateway@v1",
+	"AWS::ApiGatewayV2::Api":                    "aws:api/gateway@v1",
+	"AWS::ApiGatewayV2::Integration":            "aws:api/gateway@v1",
+	"AWS::ApiGatewayV2::Route":                  "aws:api/gateway@v1",
+	"AWS::ApiGatewayV2::Stage":                  "aws:api/gateway@v1",
+	"AWS::AppRunner::Service":                   "aws:compute/app-runner@v1",
+	"AWS::Athena::DataCatalog":                  "aws:analytics/athena@v1",
+	"AWS::Athena::WorkGroup":                    "aws:analytics/athena@v1",
+	"AWS::AutoScaling::AutoScalingGroup":        "aws:compute/asg@v1",
+	"AWS::Batch::ComputeEnvironment":            "aws:compute/batch@v1",
+	"AWS::Batch::JobDefinition":                 "aws:compute/batch@v1",
+	"AWS::Batch::JobQueue":                      "aws:compute/batch@v1",
+	"AWS::CertificateManager::Certificate":      "aws:security/certificate@v1",
+	"AWS::CloudFront::Distribution":             "aws:cdn/distribution@v1",
+	"AWS::CloudTrail::Trail":                    "aws:observability/trail@v1",
+	"AWS::CloudWatch::Alarm":                    "aws:observability/alarm@v1",
+	"AWS::Cognito::UserPool":                    "aws:auth/user-pool@v1",
+	"AWS::DocDB::DBCluster":                     "aws:db/documentdb@v1",
+	"AWS::DocDB::DBInstance":                    "aws:db/documentdb@v1",
+	"AWS::DynamoDB::Table":                      "aws:db/dynamodb@v1",
+	"AWS::EC2::Instance":                        "aws:compute/ec2@v1",
+	"AWS::EC2::InternetGateway":                 "aws:network/base@v1",
+	"AWS::EC2::NatGateway":                      "aws:network/base@v1",
+	"AWS::EC2::Route":                           "aws:network/base@v1",
+	"AWS::EC2::RouteTable":                      "aws:network/base@v1",
+	"AWS::EC2::SecurityGroup":                   "aws:network/security-group@v1",
+	"AWS::EC2::SecurityGroupEgress":             "aws:network/security-group@v1",
+	"AWS::EC2::SecurityGroupIngress":            "aws:network/security-group@v1",
+	"AWS::EC2::Subnet":                          "aws:network/base@v1",
+	"AWS::EC2::SubnetRouteTableAssociation":     "aws:network/base@v1",
+	"AWS::EC2::TransitGateway":                  "aws:network/transit-gateway@v1",
+	"AWS::EC2::VPC":                             "aws:network/base@v1",
+	"AWS::EC2::VPCEndpoint":                     "aws:network/vpc-endpoint@v1",
+	"AWS::EC2::Volume":                          "aws:storage/ebs@v1",
+	"AWS::ECR::Repository":                      "aws:container/registry@v1",
+	"AWS::ECR::RepositoryPolicy":                "aws:container/registry@v1",
+	"AWS::ECS::Cluster":                         "aws:compute/ecs-fargate-service@v1",
+	"AWS::ECS::Service":                         "aws:compute/ecs-fargate-service@v1",
+	"AWS::ECS::TaskDefinition":                  "aws:compute/ecs-fargate-service@v1",
+	"AWS::EFS::FileSystem":                      "aws:storage/efs@v1",
+	"AWS::EKS::Cluster":                         "aws:compute/eks@v1",
+	"AWS::EKS::Nodegroup":                       "aws:compute/eks@v1",
+	"AWS::ElastiCache::CacheCluster":            "aws:cache/memcached@v1",
+	"AWS::ElastiCache::ReplicationGroup":        "aws:cache/redis@v1",
+	"AWS::ElasticBeanstalk::Application":        "aws:compute/beanstalk@v1",
+	"AWS::ElasticBeanstalk::Environment":        "aws:compute/beanstalk@v1",
+	"AWS::ElasticLoadBalancingV2::Listener":     "aws:network/alb@v1",
+	"AWS::ElasticLoadBalancingV2::LoadBalancer": "aws:network/alb@v1",
+	"AWS::ElasticLoadBalancingV2::TargetGroup":  "aws:network/alb@v1",
+	"AWS::Elasticsearch::Domain":                "aws:analytics/opensearch@v1",
+	"AWS::Events::EventBus":                     "aws:messaging/event-bus@v1",
+	"AWS::Events::Rule":                         "aws:messaging/event-bus@v1",
+	"AWS::IAM::ManagedPolicy":                   "aws:iam/policy@v1",
+	"AWS::IAM::Policy":                          "aws:iam/policy@v1",
+	"AWS::IAM::Role":                            "aws:iam/role@v1",
+	"AWS::IAM::RolePolicy":                      "aws:iam/policy@v1",
+	"AWS::KMS::Alias":                           "aws:security/kms-key@v1",
+	"AWS::KMS::Key":                             "aws:security/kms-key@v1",
+	"AWS::Lambda::Function":                     "aws:compute/lambda@v1",
+	"AWS::Lambda::Permission":                   "aws:compute/lambda@v1",
+	"AWS::Logs::LogGroup":                       "aws:observability/log-group@v1",
+	"AWS::MSK::Cluster":                         "aws:messaging/msk@v1",
+	"AWS::OpenSearchService::Domain":            "aws:analytics/opensearch@v1",
+	"AWS::RDS::DBCluster":                       "aws:db/aurora-postgres@v1",
+	"AWS::Route53::HostedZone":                  "aws:dns/zone@v1",
+	"AWS::Route53::RecordSet":                   "aws:dns/record@v1",
+	"AWS::S3::Bucket":                           "aws:s3/bucket@v1",
+	"AWS::SES::ConfigurationSet":                "aws:messaging/ses@v1",
+	"AWS::SES::EmailIdentity":                   "aws:messaging/ses@v1",
+	"AWS::SNS::Subscription":                    "aws:messaging/topic@v1",
+	"AWS::SNS::Topic":                           "aws:messaging/topic@v1",
+	"AWS::SQS::Queue":                           "aws:messaging/queue@v1",
+	"AWS::SSM::Parameter":                       "aws:config/ssm-parameter@v1",
+	"AWS::Scheduler::Schedule":                  "aws:messaging/scheduler@v1",
+	"AWS::SecretsManager::Secret":               "aws:secrets/bundle@v1",
+	"AWS::StepFunctions::StateMachine":          "aws:compute/state-machine@v1",
+	"AWS::WAF::WebACL":                          "aws:security/waf@v1",
+	"AWS::WAFv2::WebACL":                        "aws:security/waf@v1",
+}
+
+// rdsPrimitiveFor resolves an aws_db_instance / aws_rds_cluster /
+// AWS::RDS::DBInstance / AWS::RDS::DBCluster `engine` attribute to its
+// CB primitive id. Returns "" when the engine is unknown or unparseable
+// (e.g. when the HCL value is a variable reference).
 func rdsPrimitiveFor(engine string) string {
 	switch engine {
 	case "aurora-mysql":
