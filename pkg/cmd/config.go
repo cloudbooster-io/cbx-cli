@@ -52,6 +52,13 @@ func sortedKeyNames() []string {
 }
 
 func unknownKeyError(key string) error {
+	if output.JSON() {
+		_ = output.PrintJSON(nil, &output.ErrDetail{
+			Code:    "E_UNKNOWN_CONFIG_KEY",
+			Message: fmt.Sprintf("unknown config key: %q; pick one of: %s", key, strings.Join(sortedKeyNames(), ", ")),
+		})
+		return fmt.Errorf("unknown config key: %q", key)
+	}
 	return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
 		What: fmt.Sprintf("unknown config key: %q", key),
 		Why:  "the requested key is not a recognized cbx configuration key",
