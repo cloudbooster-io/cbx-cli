@@ -285,7 +285,13 @@ func validateSourceDir(dir string) error {
 // shaped resources, so the static lookup plus the per-resource
 // describer override (read by group.groupByCBPrimitive itself) cover
 // every case.
-func RunFromResources(opts Options, resources []DiscoveredResource) (*Result, error) {
+//
+// When awsCtx is non-nil the report is rendered via RenderAWSMarkdown
+// (Audited-Account header + Components section + Account-wide
+// findings, plan §7.7 + §7.12). A nil awsCtx falls back to
+// RenderMarkdown so testing callers without account metadata still
+// get a sensible report.
+func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSAuditContext) (*Result, error) {
 	findings, scanErr := CollectFromResources(opts, resources)
 	if scanErr != nil && findings == nil {
 		return nil, scanErr
@@ -299,15 +305,23 @@ func RunFromResources(opts Options, resources []DiscoveredResource) (*Result, er
 	if reportPath == "" {
 		reportPath = defaultReportPath(opts)
 	}
-	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); writeErr != nil {
-		return nil, fmt.Errorf("writing report: %w", writeErr)
-	}
 
 	result := &Result{
 		Findings:   findings,
 		ReportPath: reportPath,
 		Components: components,
 	}
+
+	var report string
+	if awsCtx != nil {
+		report = RenderAWSMarkdown(result, *awsCtx)
+	} else {
+		report = RenderMarkdown(findings)
+	}
+	if writeErr := os.WriteFile(reportPath, []byte(report), 0o644); writeErr != nil {
+		return nil, fmt.Errorf("writing report: %w", writeErr)
+	}
+
 	if scanErr != nil {
 		return result, fmt.Errorf("running scanners: %w", scanErr)
 	}

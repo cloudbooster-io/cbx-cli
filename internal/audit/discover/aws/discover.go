@@ -37,6 +37,15 @@ type DiscoverResult struct {
 	Resources     []DiscoveredResource
 	PermissionErr []*PermissionError
 	OtherErrs     []error
+
+	// EventCount is an approximation of the CloudTrail Read events this
+	// audit emitted into the audited account. The number is a structural
+	// estimate (list calls × types × regions, plus get + describer calls
+	// per resource) — not an exact counter — because the dominant cost
+	// is the API call sites, not the discovery pipeline's branching, and
+	// users typically want order-of-magnitude rather than ±1 fidelity.
+	// Plan §7.7.
+	EventCount int
 }
 
 // Discover runs the live-AWS discovery pipeline:
@@ -92,14 +101,81 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	}
 
 	resources, permErrs, otherErrs := fanOutDiscovery(ctx, cfg, regions, types, concurrency)
+	deduped := dedupeByURN(resources)
 
 	return &DiscoverResult{
 		Identity:      identity,
 		Regions:       regions,
-		Resources:     dedupeByURN(resources),
+		Resources:     deduped,
 		PermissionErr: permErrs,
 		OtherErrs:     otherErrs,
+		EventCount:    estimateEventCount(types, regions, deduped),
 	}, nil
+}
+
+// estimateEventCount approximates the number of CloudTrail Read events
+// this audit emitted into the audited account. The number is a function
+// of the API call sites discovery + describers traverse, not an atomic
+// counter — instrumenting every SDK call would add cross-package
+// plumbing for a value the user wants at order-of-magnitude precision
+// ("~120 events"), not ±1.
+//
+// Cost model:
+//   - 1 sts:GetCallerIdentity preflight call.
+//   - 1 cloudformation:ListResources per (region × type) pair; Global
+//     types collapse to a single region. Per-region pagination is
+//     ignored (most accounts list a single page per type).
+//   - 1 cloudformation:GetResource per discovered resource.
+//   - Per-describer fixed cost × number of resources of that CFN type.
+//     The S3 ListBuckets is shared by the once-cached fetch and so is
+//     counted exactly once when any S3 buckets were discovered.
+//   - ec2:DescribeRegions is omitted; it runs only when --regions wasn't
+//     explicit and is bounded at 1 per audit anyway.
+func estimateEventCount(types []cfnTypeSpec, regions []string, resources []DiscoveredResource) int {
+	count := 1 // sts:GetCallerIdentity
+
+	for _, t := range types {
+		if t.Global {
+			count++
+			continue
+		}
+		count += len(regions)
+	}
+
+	count += len(resources)
+
+	hasS3 := false
+	for _, r := range resources {
+		count += perResourceDescriberCost(r.Type)
+		if r.Type == "AWS::S3::Bucket" {
+			hasS3 = true
+		}
+	}
+	if hasS3 {
+		count++ // shared s3:ListBuckets (cached for the bucket-creation-date hydration)
+	}
+
+	return count
+}
+
+// perResourceDescriberCost returns the number of AWS SDK calls a single
+// describer makes per resource. Kept colocated with the estimator so
+// adding a new describer in the same MR forces the author to update
+// the cost table.
+func perResourceDescriberCost(cfnType string) int {
+	switch cfnType {
+	case "AWS::S3::Bucket":
+		// GetPublicAccessBlock + GetBucketVersioning + GetBucketEncryption
+		// + GetBucketPolicy + ListObjectsV2. (ListBuckets is global-once,
+		// added separately.)
+		return 5
+	case "AWS::IAM::Role":
+		// GetRole + ListAttachedRolePolicies.
+		return 2
+	}
+	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
+	// make no SDK calls.
+	return 0
 }
 
 // fanOutDiscovery runs (region, type) pairs through a worker pool of

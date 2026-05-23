@@ -133,22 +133,33 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 			// RunFromResources collapses the previous bespoke flow
 			// (CollectFromResources + group.Group + WriteFile) into one
 			// entry point that cb-cli can call to get the same envelope
-			// shape. The AWS-specific stderr decorations (preflight
-			// header, diagnose summary) remain here in the subcommand
-			// since they're CLI-only.
-			result, runErr := audit.RunFromResources(opts, discResult.Resources)
+			// shape. The AWSAuditContext drives RenderAWSMarkdown so the
+			// on-disk report carries the §7.7 + §7.12 audit header and
+			// per-component finding sections. The AWS-specific stderr
+			// decorations (preflight header, diagnose summary) remain
+			// here in the subcommand since they're CLI-only.
+			awsCtx := &audit.AWSAuditContext{
+				AccountID:  discResult.Identity.AccountID,
+				Identity:   discResult.Identity.ARN,
+				Regions:    discResult.Regions,
+				EventCount: discResult.EventCount,
+			}
+			result, runErr := audit.RunFromResources(opts, discResult.Resources, awsCtx)
 			if runErr != nil && result == nil {
 				return runErr
 			}
 
 			// Header. Goes to stderr so machine-readable output on stdout
-			// stays unpolluted.
+			// stays unpolluted. The CloudTrail line is the v1 nod to
+			// security-conscious users (plan §7.7) — they always ask
+			// "how noisy is this in CloudTrail?" before running.
 			if !quietFlag && outputFormat == "" {
 				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" AWS preflight ok"))
 				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
 				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
 				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
 				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
+				fmt.Fprintln(os.Stderr, fmt.Sprintf("  note:             this run generated ~%d CloudTrail Read events", discResult.EventCount))
 				renderComponentsSummary(os.Stderr, result.Components)
 				if len(discResult.PermissionErr) > 0 {
 					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
@@ -160,10 +171,11 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 
 			if outputFormat == "json" {
 				payload := map[string]any{
-					"identity":          discResult.Identity,
-					"regions":           discResult.Regions,
-					"resources_count":   len(discResult.Resources),
-					"findings":          result.Findings,
+					"identity":                  discResult.Identity,
+					"regions":                   discResult.Regions,
+					"resources_count":           len(discResult.Resources),
+					"cloudtrail_events_estimate": discResult.EventCount,
+					"findings":                  result.Findings,
 					"components":        result.Components,
 					"permission_errors": permErrsToJSON(discResult.PermissionErr),
 				}

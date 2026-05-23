@@ -40,7 +40,7 @@ func TestRunFromResources_PopulatesResultAndWritesReport(t *testing.T) {
 		ReportFile:   reportPath,
 	}
 
-	result, err := RunFromResources(opts, resources)
+	result, err := RunFromResources(opts, resources, nil)
 	if err != nil {
 		t.Fatalf("RunFromResources: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestRunFromResources_EmptyResourceSetReturnsEmptyResult(t *testing.T) {
 		MockScanners: true,
 		ReportFile:   filepath.Join(dir, "empty.md"),
 	}
-	result, err := RunFromResources(opts, nil)
+	result, err := RunFromResources(opts, nil, nil)
 	if err != nil {
 		t.Fatalf("RunFromResources: %v", err)
 	}

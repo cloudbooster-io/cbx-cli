@@ -97,7 +97,21 @@ var CollectFromResources = audit.CollectFromResources
 // resources, writes the markdown report, and returns a populated
 // Result. cb-cli uses this to consume the same envelope the CLI
 // produces — Findings + Components attached, ReportPath populated.
+// A non-nil AWSAuditContext drives the audit-flavoured markdown
+// renderer (header + Components section + Account-wide findings);
+// pass nil to fall back to the generic RenderMarkdown.
 var RunFromResources = audit.RunFromResources
+
+// AWSAuditContext carries the live-AWS metadata the audit-mode
+// markdown renderer reads at the top of the report: account, identity,
+// regions, and the estimated CloudTrail event count.
+type AWSAuditContext = audit.AWSAuditContext
+
+// RenderAWSMarkdown formats a Result as the audit-mode markdown report
+// (Audited Account header, Components section with findings rendered
+// under their primary component, and an Account-wide Findings section
+// for everything else). Plan §7.7 + §7.12.
+var RenderAWSMarkdown = audit.RenderAWSMarkdown
 
 // --- rendering / exit helpers ---
 
