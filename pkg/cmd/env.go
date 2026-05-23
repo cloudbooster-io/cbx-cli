@@ -15,9 +15,13 @@ import (
 
 func newEnvCmd() *cobra.Command {
 	env := &cobra.Command{
-		Use:   "env",
-		Short: "Manage and inspect environments",
-		Long:  `List environments, view status, cost, drift, and logs.`,
+		Use:     "env",
+		Aliases: []string{"envs"},
+		Short:   "Manage and inspect environments",
+		Long:    `List environments, view status, cost, drift, and logs.`,
+		// Hidden until the API surface ships; the RunE stubs return
+		// "not implemented" and pollute --help for first-time users.
+		Hidden: true,
 	}
 	env.AddCommand(
 		newEnvListCmd(),
@@ -28,8 +32,10 @@ func newEnvCmd() *cobra.Command {
 
 func newEnvListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List environments for the current project",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List environments for the current project",
+		Hidden:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errors.New("not implemented")
 		},
@@ -38,9 +44,10 @@ func newEnvListCmd() *cobra.Command {
 
 func newEnvStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <env-id>",
-		Short: "Show high-level status for an environment",
-		Args:  cobra.ExactArgs(1),
+		Use:    "status <env-id>",
+		Short:  "Show high-level status for an environment",
+		Hidden: true,
+		Args:   RequireExactlyOneArg("env-id", "cbx env status <env-id>"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errors.New("not implemented")
 		},
@@ -70,7 +77,12 @@ func envAuthCheck() error {
 		return fmt.Errorf("keyring: %w", err)
 	}
 	if _, err := auth.LoadToken(kr); err != nil {
-		return fmt.Errorf("not authenticated: run `cbx login` first")
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: "not authenticated",
+			Why:  "no CloudBooster token found in the OS keychain",
+			Fix:  "run `cbx login` to sign in",
+			Code: "E_AUTH_REQUIRED",
+		}))
 	}
 	return nil
 }
@@ -82,13 +94,28 @@ func envHandleAPIError(err error, statusCode int) error {
 	}
 	switch statusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("authentication expired: run `cbx login` to re-authenticate")
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: "authentication expired",
+			Why:  "the server returned HTTP 401 Unauthorized",
+			Fix:  "run `cbx login` to re-authenticate",
+			Code: "E_AUTH_EXPIRED",
+		}))
 	case http.StatusForbidden:
-		return fmt.Errorf("access denied: a paid CloudBooster account is required for this command")
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: "access denied",
+			Why:  "a paid CloudBooster account is required for this command",
+			Fix:  "upgrade your plan at https://cloudbooster.io/pricing or contact your workspace admin",
+			Code: "E_PLAN_REQUIRED",
+		}))
 	case http.StatusNotFound:
 		return fmt.Errorf("environment not found")
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("rate limit exceeded: please wait before retrying")
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: "rate limit exceeded",
+			Why:  "the server returned HTTP 429 Too Many Requests",
+			Fix:  "wait a moment before retrying; if this persists, reduce request frequency",
+			Code: "E_RATE_LIMITED",
+		}))
 	}
 	if statusCode >= 500 {
 		return fmt.Errorf("server error (%d): please retry later", statusCode)
@@ -102,7 +129,7 @@ func envHandleAPIError(err error, statusCode int) error {
 // envPrintJSONOrText outputs data as JSON when --json is set, otherwise
 // delegates to the provided text printer.
 func envPrintJSONOrText(data any, textFn func()) error {
-	if jsonFlag {
+	if output.JSON() {
 		return output.PrintJSON(data, nil)
 	}
 	if !quietFlag {

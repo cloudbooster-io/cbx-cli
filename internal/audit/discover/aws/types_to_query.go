@@ -2,6 +2,11 @@ package aws
 
 import "strings"
 
+// DiscoverableTypeCount returns the number of curated CFN types the
+// discovery loop will probe. Exposed for `cbx audit aws --dry-run` so
+// the CLI can show the plan without reaching into package internals.
+func DiscoverableTypeCount() int { return len(discoverableCFNTypes) }
+
 // discoverableCFNTypes is the curated list of CloudFormation type names
 // that the v1 live-AWS discovery loop will list+get via the CloudControl
 // API. Picked for coverage of the most common workload patterns — every

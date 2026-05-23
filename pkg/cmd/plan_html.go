@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pkg/browser"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
 // heading represents a single TOC entry extracted from markdown.
@@ -386,8 +388,8 @@ func startPreviewServer(dir string, htmlContent []byte, requestedPort int, noOpe
 	url := fmt.Sprintf("http://127.0.0.1:%d/%s/", port, prefix)
 
 	if !quietFlag {
-		fmt.Printf("✓ Preview server running at %s\n", url)
-		fmt.Println("  Press Ctrl+C to stop")
+		output.Successf("Preview server running at %s", url)
+		output.Infof("  Press Ctrl+C to stop")
 	}
 
 	if !noOpen {

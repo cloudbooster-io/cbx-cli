@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
@@ -25,86 +25,85 @@ func newUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade cbx to the latest version",
+		Example: `  # Upgrade in place via the detected install method
+  cbx upgrade
+
+  # Show what would be done without changing anything
+  cbx upgrade --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Version == "dev" || Version == "unknown" || Version == "" {
-				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+				if output.JSON() {
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        "cannot upgrade development build",
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				fmt.Println("Cannot upgrade development build. Install a release build from:")
-				fmt.Println("  https://github.com/cloudbooster/cbx-cli/releases")
+				fmt.Println("  https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases")
 				return nil
 			}
 
 			checker := update.NewChecker(Version)
+			// `cbx upgrade` is the explicit "tell me what's out there
+			// right now" path; the daily cache is for the cheap
+			// background banner on every other command.
+			checker.IgnoreCache = true
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
 			result, err := checker.Check(ctx)
 			if err != nil {
-				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+				if output.JSON() {
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        fmt.Sprintf("failed to check for updates: %v", err),
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
 				return fmt.Errorf("checking for updates: %w", err)
 			}
 
 			if !result.HasUpdate {
-				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+				if output.JSON() {
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      false,
 						InstallMethod:  string(result.InstallMethod),
 						Upgraded:       false,
 						Message:        "Already up to date",
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
-				fmt.Printf("Already up to date (%s).\n", Version)
+				output.Infof("Already up to date (%s).", Version)
 				return nil
 			}
 
 			if dryRun {
-				if jsonFlag {
-					out, _ := json.MarshalIndent(upgradeResult{
+				if output.JSON() {
+					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
 						HasUpdate:      true,
 						InstallMethod:  string(result.InstallMethod),
 						Upgraded:       false,
 						Message:        fmt.Sprintf("would run: %s", update.UpgradeCommand(result)),
-					}, "", "  ")
-					fmt.Println(string(out))
-					return nil
+					}, nil)
 				}
-				fmt.Printf("Update available: %s → %s\n", Version, result.LatestVersion)
-				fmt.Printf("Install method: %s\n", result.InstallMethod)
-				fmt.Printf("Would run: %s\n", update.UpgradeCommand(result))
+				output.Infof("Update available: %s -> %s", Version, result.LatestVersion)
+				output.Infof("Install method: %s", result.InstallMethod)
+				output.Infof("Would run: %s", update.UpgradeCommand(result))
 				return nil
 			}
 
-			if jsonFlag {
+			if output.JSON() {
 				// JSON mode: report what would happen but don't actually run package manager
-				out, _ := json.MarshalIndent(upgradeResult{
+				return output.PrintJSON(upgradeResult{
 					CurrentVersion: Version,
 					LatestVersion:  result.LatestVersion,
 					HasUpdate:      true,
 					InstallMethod:  string(result.InstallMethod),
 					Upgraded:       false,
 					Message:        fmt.Sprintf("run `%s` to upgrade", update.UpgradeCommand(result)),
-				}, "", "  ")
-				fmt.Println(string(out))
-				return nil
+				}, nil)
 			}
 
 			fmt.Printf("Upgrading cbx %s → %s (%s)\n", Version, result.LatestVersion, result.InstallMethod)
@@ -117,7 +116,7 @@ func newUpgradeCmd() *cobra.Command {
 			if err := update.Upgrade(ctx, result); err != nil {
 				return fmt.Errorf("upgrade failed: %w", err)
 			}
-			fmt.Printf("✓ Upgraded to %s\n", result.LatestVersion)
+			output.Successf("Upgraded to %s", result.LatestVersion)
 			return nil
 		},
 	}

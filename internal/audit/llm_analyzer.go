@@ -60,10 +60,12 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			if err != nil {
 				return nil, err
 			}
-			maxCost := opts.LLMMaxCost
-			if maxCost <= 0 {
-				maxCost = defaultLLMMaxCostUSD
-			}
+			// LLMMaxCost semantics: 0 means "no cap" (no warning ever
+			// emitted). The CLI default is 2.00 (set in audit_aws.go).
+			// Library callers wiring Options directly take the field as
+			// the literal cap; if they want the historical "use the
+			// default" behavior they can pass defaultLLMMaxCostUSD
+			// explicitly.
 			return &llmAnalyzer{
 				provider:          opts.LLMProvider,
 				streamer:          streamer,
@@ -72,7 +74,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 				iacType:           iacType,
 				providerForRuleID: "claudecode",
 				cbKnowledge:       true,
-				maxCostUSD:        maxCost,
+				maxCostUSD:        opts.LLMMaxCost,
 			}, nil
 		}
 		streamer, err := newClaudeCLIStreamer()

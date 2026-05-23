@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +11,7 @@ import (
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -50,22 +50,6 @@ func findExecutor(name string) (cliExecutor, bool) {
 	return cliExecutor{}, false
 }
 
-// requireOneArg returns a positional-args validator that swaps cobra's
-// default "accepts 1 arg(s), received 0" for an actionable error
-// including a one-line usage hint. label names the argument (e.g.
-// "provider", "executor"); usage is a short copy-paste-ready example.
-func requireOneArg(label, usage string) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return fmt.Errorf("missing %s argument\n\nUsage: %s", label, usage)
-		}
-		if len(args) > 1 {
-			return fmt.Errorf("too many arguments; expected exactly one %s\n\nUsage: %s", label, usage)
-		}
-		return nil
-	}
-}
-
 func newLLMCmd() *cobra.Command {
 	llmCmd := &cobra.Command{
 		Use:   "llm",
@@ -76,14 +60,10 @@ Two flavours of provider:
 
   api  — direct HTTP to an API endpoint (Anthropic / OpenAI / …) using
          your own API key. Token is stored in the OS keychain.
-           cbx llm api login claude --token sk-ant-...
-           cbx llm api test claude
 
   cli  — shell out to a local CLI binary that already owns its own
          authentication (Claude Code, Codex CLI, …). No token is stored
          by cbx; the CLI handles auth.
-           cbx llm cli list
-           cbx llm cli test claude-code
 
 Use 'cbx llm list' for a combined view and 'cbx llm default <name>' to
 pick which provider plan/audit use by default.`,
@@ -135,6 +115,11 @@ Providers:
 The token can be passed via --token, the CBX_LLM_TOKEN env var, or an
 interactive prompt. To use a local CLI binary (Claude Code, Codex CLI)
 instead of an API key, see 'cbx llm cli'.`,
+		Example: `  # Interactive prompt for the key
+  cbx llm api login claude
+
+  # Pass the key inline (non-interactive)
+  cbx llm api login codex --token sk-...`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("missing provider argument\n\nUsage: cbx llm api login <provider>\nProviders: claude, codex\n\nTo use a local CLI binary instead, see: cbx llm cli")
@@ -148,7 +133,12 @@ instead of an API key, see 'cbx llm cli'.`,
 			provider := args[0]
 			p, ok := llm.Providers[provider]
 			if !ok {
-				return fmt.Errorf("unknown api provider: %s (supported: claude, codex)\n\nFor local CLI executors (claude-code, codex), see: cbx llm cli", provider)
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("unknown api provider: %s", provider),
+					Why:  "only `claude` and `codex` are supported as HTTP API providers",
+					Fix:  "use `cbx llm api login claude` or `cbx llm api login codex`; for local CLI executors see `cbx llm cli list`",
+					Code: "E_UNKNOWN_PROVIDER",
+				}))
 			}
 
 			token := tokenFlag
@@ -195,15 +185,15 @@ instead of an API key, see 'cbx llm cli'.`,
 				return err
 			}
 
-			if jsonFlag {
-				return writeJSON(map[string]any{
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{
 					"provider":  provider,
 					"status":    "logged_in",
 					"auth_mode": config.AuthModeAPIKey,
 					"default":   cfg.LLM.Default == provider,
-				})
+				}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged in to api/%s (key stored in OS keychain)\n", provider)
+			output.Successf("Logged in to api/%s (key stored in OS keychain)", provider)
 			return nil
 		},
 	}
@@ -215,7 +205,7 @@ func newLLMAPILogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout <provider>",
 		Short: "Forget the stored API key for a provider",
-		Args:  requireOneArg("provider", "cbx llm api logout <provider>   (e.g. claude, codex)"),
+		Args:  RequireExactlyOneArg("provider", "cbx llm api logout <provider>   (e.g. claude, codex)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider := args[0]
 			cfg, err := config.Load()
@@ -230,10 +220,10 @@ func newLLMAPILogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			if jsonFlag {
-				return writeJSON(map[string]any{"provider": provider, "status": "logged_out"})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"provider": provider, "status": "logged_out"}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged out of api/%s\n", provider)
+			output.Successf("Logged out of api/%s", provider)
 			return nil
 		},
 	}
@@ -241,8 +231,9 @@ func newLLMAPILogoutCmd() *cobra.Command {
 
 func newLLMAPIListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List configured HTTP API providers",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List configured HTTP API providers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -269,8 +260,8 @@ func newLLMAPIListCmd() *cobra.Command {
 			}
 			sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
-			if jsonFlag {
-				return writeJSON(map[string]any{"providers": rows})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"providers": rows}, nil)
 			}
 			if len(rows) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No api providers configured. Use: cbx llm api login <provider>")
@@ -292,23 +283,28 @@ func newLLMAPITestCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "test <provider>",
 		Short: "Verify a configured api provider's key is still valid (calls /models)",
-		Args:  requireOneArg("provider", "cbx llm api test <provider>   (e.g. claude, codex)"),
+		Args:  RequireExactlyOneArg("provider", "cbx llm api test <provider>   (e.g. claude, codex)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			provider := args[0]
 			token, err := llm.GetToken(provider)
 			if err != nil || token == "" {
-				return fmt.Errorf("no stored key for api/%s; run 'cbx llm api login %s' first", provider, provider)
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("no stored key for api/%s", provider),
+					Why:  "cbx has not seen an API key for this provider in the OS keychain",
+					Fix:  fmt.Sprintf("run `cbx llm api login %s` to store one", provider),
+					Code: "E_NO_TOKEN",
+				}))
 			}
 			if err := llm.ValidateToken(provider, token); err != nil {
-				if jsonFlag {
-					return writeJSON(map[string]any{"provider": provider, "ok": false, "error": err.Error()})
+				if output.JSON() {
+					return output.PrintJSON(map[string]any{"provider": provider, "ok": false, "error": err.Error()}, nil)
 				}
 				return fmt.Errorf("api/%s test failed: %w", provider, err)
 			}
-			if jsonFlag {
-				return writeJSON(map[string]any{"provider": provider, "ok": true})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"provider": provider, "ok": true}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ api/%s OK\n", provider)
+			output.Successf("api/%s OK", provider)
 			return nil
 		},
 	}
@@ -340,8 +336,9 @@ the binary responds.`,
 
 func newLLMCLIListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List known CLI executors and whether they're detected on PATH",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List known CLI executors and whether they're detected on PATH",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			type row struct {
 				Name     string `json:"name"`
@@ -360,8 +357,8 @@ func newLLMCLIListCmd() *cobra.Command {
 				rows = append(rows, r)
 			}
 
-			if jsonFlag {
-				return writeJSON(map[string]any{"executors": rows})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"executors": rows}, nil)
 			}
 			for _, r := range rows {
 				status := "not installed"
@@ -379,7 +376,9 @@ func newLLMCLITestCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "test <name>",
 		Short: "Run <binary> --version to confirm the executor is callable",
-		Args:  requireOneArg("executor name", "cbx llm cli test <name>   (e.g. claude-code, codex; see: cbx llm cli list)"),
+		Example: `  # Verify Claude Code is installed and responding
+  cbx llm cli test claude-code`,
+		Args: RequireExactlyOneArg("executor name", "cbx llm cli test <name>   (e.g. claude-code, codex; see: cbx llm cli list)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			e, ok := findExecutor(name)
@@ -388,11 +387,21 @@ func newLLMCLITestCmd() *cobra.Command {
 				for _, x := range cliExecutors {
 					known = append(known, x.Name)
 				}
-				return fmt.Errorf("unknown executor: %s (known: %s)", name, strings.Join(known, ", "))
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("unknown executor: %s", name),
+					Why:  fmt.Sprintf("cbx knows about: %s", strings.Join(known, ", ")),
+					Fix:  "pick a known executor name, or run `cbx llm cli list` to see what's available",
+					Code: "E_UNKNOWN_EXECUTOR",
+				}))
 			}
 			bin, err := exec.LookPath(e.Binary)
 			if err != nil {
-				return fmt.Errorf("executor %s not found on PATH (looked for %q)", name, e.Binary)
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("executor %s not found on PATH", name),
+					Why:  fmt.Sprintf("looked for binary %q but it's not on PATH", e.Binary),
+					Fix:  fmt.Sprintf("install the %s CLI and ensure %q is on PATH; check with `which %s`", e.Vendor, e.Binary, e.Binary),
+					Code: "E_NOT_ON_PATH",
+				}))
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -400,15 +409,15 @@ func newLLMCLITestCmd() *cobra.Command {
 			out, runErr := exec.CommandContext(ctx, bin, e.VersionArgs...).CombinedOutput()
 			versionLine := strings.TrimSpace(string(out))
 			if runErr != nil {
-				if jsonFlag {
-					return writeJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine})
+				if output.JSON() {
+					return output.PrintJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine}, nil)
 				}
 				return fmt.Errorf("executor %s at %s failed --version: %v\n%s", name, bin, runErr, versionLine)
 			}
-			if jsonFlag {
-				return writeJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ cli/%s OK (%s)\n  %s\n", name, bin, versionLine)
+			output.Successf("cli/%s OK (%s)\n  %s", name, bin, versionLine)
 			return nil
 		},
 	}
@@ -418,8 +427,9 @@ func newLLMCLITestCmd() *cobra.Command {
 
 func newLLMListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "Unified view of all api providers and cli executors",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Unified view of all api providers and cli executors",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -462,8 +472,8 @@ func newLLMListCmd() *cobra.Command {
 				return entries[i].Name < entries[j].Name
 			})
 
-			if jsonFlag {
-				return writeJSON(map[string]any{"providers": entries, "default": cfg.LLM.Default})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"providers": entries, "default": cfg.LLM.Default}, nil)
 			}
 			if len(entries) == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "No LLM providers configured.")
@@ -485,7 +495,12 @@ func newLLMDefaultCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "default <name>",
 		Short: "Set the default LLM provider (api or cli) for plan/audit",
-		Args:  requireOneArg("provider name", "cbx llm default <name>   (api provider or cli executor; see: cbx llm list)"),
+		Example: `  # Use the Anthropic API provider (after cbx llm api login claude)
+  cbx llm default claude
+
+  # Use the local Claude Code CLI executor
+  cbx llm default claude-code`,
+		Args: RequireExactlyOneArg("provider name", "cbx llm default <name>   (api provider or cli executor; see: cbx llm list)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			cfg, err := config.Load()
@@ -498,10 +513,20 @@ func newLLMDefaultCmd() *cobra.Command {
 			if _, ok := cfg.LLM.Providers[name]; !ok {
 				e, known := findExecutor(name)
 				if !known {
-					return fmt.Errorf("%s is not a configured api provider or known cli executor; configure with 'cbx llm api login %s' or check 'cbx llm cli list'", name, name)
+					return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+						What: fmt.Sprintf("%s is not logged in", name),
+						Why:  "no api provider with that name is configured and no cli executor with that name is known",
+						Fix:  fmt.Sprintf("run `cbx llm api login %s` to add it as an api provider, or `cbx llm cli list` to see known cli executors", name),
+						Code: "E_NO_LLM",
+					}))
 				}
 				if _, err := exec.LookPath(e.Binary); err != nil {
-					return fmt.Errorf("cli executor %s is known but not detected on PATH (looked for %q)", name, e.Binary)
+					return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+						What: fmt.Sprintf("cli executor %s is known but not on PATH", name),
+						Why:  fmt.Sprintf("looked for binary %q but it's not detectable on PATH", e.Binary),
+						Fix:  fmt.Sprintf("install the %s CLI and ensure %q is on PATH; verify with `cbx llm cli test %s`", e.Vendor, e.Binary, name),
+						Code: "E_NOT_ON_PATH",
+					}))
 				}
 			}
 
@@ -509,22 +534,11 @@ func newLLMDefaultCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			if jsonFlag {
-				return writeJSON(map[string]any{"default": name})
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"default": name}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Default LLM set to %s\n", name)
+			output.Successf("Default LLM set to %s", name)
 			return nil
 		},
 	}
-}
-
-// writeJSON renders a payload to stdout as a single JSON object. Keeps
-// jsonFlag branches in this file tidy.
-func writeJSON(payload any) error {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(b))
-	return nil
 }

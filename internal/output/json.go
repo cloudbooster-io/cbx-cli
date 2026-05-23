@@ -20,14 +20,14 @@ type ErrDetail struct {
 }
 
 // WriteJSON writes data wrapped in a standard Envelope to w.
-// If errDetail is non-nil it is included in the envelope and Data is omitted.
+// Both Data and Error are encoded; omitempty tags on Envelope keep nil
+// fields out of the output. Callers can pass both when an operation
+// produces a partial payload alongside a failure marker (e.g. doctor
+// reporting checks plus an overall-failed signal).
 func WriteJSON(w io.Writer, data any, errDetail *ErrDetail) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	if errDetail != nil {
-		return enc.Encode(Envelope{Error: errDetail})
-	}
-	return enc.Encode(Envelope{Data: data})
+	return enc.Encode(Envelope{Data: data, Error: errDetail})
 }
 
 // PrintJSON is a convenience wrapper that writes to stdout followed by a newline.

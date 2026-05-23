@@ -1,4 +1,4 @@
-// Package update checks for newer versions of cbx on GitHub Releases,
+// Package update checks for newer versions of cbx on GitLab Releases,
 // caches the result, and detects the current install method.
 package update
 
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,14 +16,23 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 )
 
 const (
-	githubOwner = "cloudbooster"
-	githubRepo  = "cbx-cli"
-	cacheFile   = "version-check"
-	cacheDir    = "cb"
-	cacheTTL    = 24 * time.Hour
+	// gitlabProjectPath is the URL-encoded namespace/path of the cbx-cli
+	// project on gitlab.com. Used as <id> in /api/v4/projects/<id>/releases.
+	gitlabProjectPath = "cloudbooster.io/platform/cbx-cli"
+	// defaultReleasesAPI is the public GitLab releases endpoint. Override
+	// via $CBX_RELEASES_URL (no /releases suffix) for self-hosted instances.
+	defaultReleasesAPI = "https://gitlab.com/api/v4/projects"
+	// fallbackHTMLURL is shown when we don't have a release-specific URL
+	// (e.g. in upgrade hints).
+	fallbackHTMLURL = "https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases"
+	cacheFile       = "update-check.json"
+	cacheDir        = "cbx"
+	cacheTTL        = 24 * time.Hour
 )
 
 // InstallMethod describes how cbx was installed.
@@ -48,6 +58,10 @@ type Result struct {
 type Checker struct {
 	CurrentVersion string
 	HTTPClient     *http.Client
+	// IgnoreCache forces a fresh network check; the result is still
+	// written back so subsequent reads pick it up. Used by `cbx upgrade`
+	// where the user explicitly asked for current state.
+	IgnoreCache bool
 }
 
 // NewChecker creates a Checker for the given current version.
@@ -61,8 +75,10 @@ func NewChecker(currentVersion string) *Checker {
 // Check returns the latest release information, using the on-disk cache when
 // it is still fresh.
 func (c *Checker) Check(ctx context.Context) (*Result, error) {
-	if entry, ok := readCache(); ok {
-		return c.resultFromCache(entry), nil
+	if !c.IgnoreCache {
+		if entry, ok := readCache(); ok {
+			return c.resultFromCache(entry), nil
+		}
 	}
 
 	release, err := c.fetchLatest(ctx)
@@ -85,7 +101,7 @@ func IsDisabled() bool {
 	if os.Getenv("CI") == "true" {
 		return true
 	}
-	if os.Getenv("CB_NO_UPDATE_CHECK") == "1" {
+	if config.Env("NO_UPDATE_CHECK") == "1" {
 		return true
 	}
 	return false
@@ -149,14 +165,25 @@ func UpgradeCommand(result *Result) string {
 	}
 }
 
+// releasesAPIBase returns the GitLab API base for releases, respecting the
+// CBX_RELEASES_URL override (used by self-hosted GitLab installs).
+func releasesAPIBase() string {
+	if v := config.Env("RELEASES_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultReleasesAPI
+}
+
 func (c *Checker) fetchLatest(ctx context.Context) (*release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOwner, githubRepo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := fmt.Sprintf("%s/%s/releases/permalink/latest",
+		releasesAPIBase(),
+		url.PathEscape(gitlabProjectPath),
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -166,12 +193,19 @@ func (c *Checker) fetchLatest(ctx context.Context) (*release, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GitLab API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var rel release
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, fmt.Errorf("decoding release: %w", err)
+	}
+	// GitLab returns the human-facing release URL under _links.self.
+	if rel.HTMLURL == "" {
+		rel.HTMLURL = rel.Links.Self
+	}
+	if rel.HTMLURL == "" {
+		rel.HTMLURL = fallbackHTMLURL
 	}
 	return &rel, nil
 }
@@ -201,11 +235,18 @@ type cacheEntry struct {
 }
 
 func cachePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
+	// XDG-compliant: $XDG_CACHE_HOME wins, falling back to
+	// $HOME/.cache. Same shape as `cbx-cli`'s config-dir lookup so
+	// the directory layout stays predictable.
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		base = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(home, ".cache", cacheDir, cacheFile)
+	return filepath.Join(base, cacheDir, cacheFile)
 }
 
 func readCache() (*cacheEntry, bool) {
@@ -239,9 +280,15 @@ func writeCache(entry *cacheEntry) error {
 // GitHub types
 // ---------------------------------------------------------------------------
 
+// release matches both the GitHub and GitLab releases JSON shapes — both
+// expose tag_name; GitHub uses html_url, GitLab nests the equivalent under
+// _links.self.
 type release struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
+	Links   struct {
+		Self string `json:"self"`
+	} `json:"_links"`
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +348,9 @@ func upgradeDirect(ctx context.Context, result *Result) error {
 }
 
 func directAssetURL(result *Result) string {
-	// Best-effort asset URL construction.
+	// Best-effort asset URL construction matching the GoReleaser archive
+	// naming convention. GitLab release-asset URL pattern is:
+	//   https://gitlab.com/<group>/<project>/-/releases/<tag>/downloads/<filename>
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 	if goos == "darwin" {
@@ -316,10 +365,9 @@ func directAssetURL(result *Result) string {
 	} else if goarch == "arm64" {
 		goarch = "arm64"
 	}
-	return fmt.Sprintf("%s/download/%s/cbx-cli_%s_%s.tar.gz",
-		strings.Replace(result.ReleaseURL, "/releases/tag/", "/releases/", 1),
-		result.LatestVersion,
-		goos,
-		goarch,
-	)
+	base := result.ReleaseURL
+	if base == "" {
+		base = fmt.Sprintf("%s/%s", fallbackHTMLURL, result.LatestVersion)
+	}
+	return fmt.Sprintf("%s/downloads/cbx-cli_%s_%s.tar.gz", base, goos, goarch)
 }

@@ -30,17 +30,18 @@ func TestPlanEndToEnd(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
 
-		// Step 1: cbx llm login claude
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		// Step 1: cbx llm login claude — success message is decoration,
+		// routed to stderr in B6 so stdout stays clean for data.
+		_, stderr, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("cbx llm login claude exited %d", code)
 		}
-		if !strings.Contains(stdout, "Logged in to claude") {
-			t.Fatalf("expected login confirmation, got: %s", stdout)
+		if !strings.Contains(stderr, "Logged in to api/claude") {
+			t.Fatalf("expected login confirmation on stderr, got: %s", stderr)
 		}
 
 		// Step 2: cbx plan "static site with auth" --no-tui
-		stdout, _, code = runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "static site with auth")
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -67,7 +68,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		homeDir := filepath.Join(tmpDir, "home")
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
@@ -91,7 +92,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		homeDir := filepath.Join(tmpDir, "home")
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
@@ -120,7 +121,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		homeDir := filepath.Join(tmpDir, "home")
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
@@ -130,8 +131,8 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("creating output dir: %v", err)
 		}
 
-		// Plan with --output flag --no-tui
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "-o", outDir, "static site with auth")
+		// Plan with --output-dir flag (-d) --no-tui
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "-d", outDir, "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}
@@ -147,7 +148,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		homeDir := filepath.Join(tmpDir, "home")
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}
@@ -173,7 +174,7 @@ func TestPlanEndToEnd(t *testing.T) {
 		homeDir := filepath.Join(tmpDir, "home")
 
 		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
+		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
 			t.Fatalf("login failed with code %d", code)
 		}

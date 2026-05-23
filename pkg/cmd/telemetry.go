@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
 func newTelemetryCmd() *cobra.Command {
@@ -54,12 +55,12 @@ func newTelemetryStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonFlag {
-				return writeJSON(map[string]any{
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{
 					"enabled":     cfg.Telemetry.Enabled,
 					"prompted":    cfg.Telemetry.Prompted,
 					"prompted_at": cfg.Telemetry.PromptedAt,
-				})
+				}, nil)
 			}
 			state := "disabled"
 			if cfg.Telemetry.Enabled {
@@ -108,10 +109,10 @@ func setTelemetry(v bool) func(*cobra.Command, []string) error {
 		if v {
 			state = "enabled"
 		}
-		if jsonFlag {
-			return writeJSON(map[string]any{"enabled": v, "status": state})
+		if output.JSON() {
+			return output.PrintJSON(map[string]any{"enabled": v, "status": state}, nil)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "✓ Telemetry %s\n", state)
+		output.Successf("Telemetry %s", state)
 		return nil
 	}
 }

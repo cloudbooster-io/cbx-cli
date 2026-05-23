@@ -458,3 +458,13 @@ type groundingTrailer interface {
 	GroundingTrail() []GroundingEvent
 	TotalCostUSD() float64
 }
+
+// HasCBXMCPCheckout reports whether resolveCBXMCPPath can locate a
+// usable cbx-mcp checkout in the current environment. Used by
+// `cbx audit aws --dry-run` to surface a precondition check without
+// actually running the analyzer. Errors collapse to false — the caller
+// only cares "would the grounded path succeed?", not "why not?".
+func HasCBXMCPCheckout() bool {
+	_, err := resolveCBXMCPPath()
+	return err == nil
+}
