@@ -101,6 +101,53 @@ func TestGroupByCBPrimitive_NilLookupReturnsNil(t *testing.T) {
 	}
 }
 
+func TestGroupByCBPrimitive_ResolvedOverrideWinsOverStaticLookup(t *testing.T) {
+	// AWS::RDS::DBInstance has no static CFN → primitive mapping (engine-split).
+	// The RDS describer writes the resolved id into Inputs; grouping must
+	// pick that up so the cb-primitive lens names the right primitive even
+	// when the static lookup returns "".
+	resources := []parsers.DiscoveredResource{
+		{
+			URN:  "aws://us-east-1/AWS::RDS::DBInstance/db-prod",
+			Type: "AWS::RDS::DBInstance",
+			Inputs: map[string]any{
+				"cb_describer_primitive_resolved": "aws:db/postgres@v1",
+			},
+		},
+	}
+	lookup := func(string) string { return "" } // static map empty for DBInstance
+	got := groupByCBPrimitive(resources, lookup)
+	if len(got) != 1 {
+		t.Fatalf("want 1 component, got %d", len(got))
+	}
+	if got[0].Name != "cb:aws:db/postgres@v1:aws://us-east-1/AWS::RDS::DBInstance/db-prod" {
+		t.Errorf("component name = %q", got[0].Name)
+	}
+	if got[0].Source["primitive"] != "aws:db/postgres@v1" {
+		t.Errorf("Source.primitive = %q", got[0].Source["primitive"])
+	}
+}
+
+func TestGroupByCBPrimitive_OverrideTrumpsStaticEvenWhenBothSet(t *testing.T) {
+	// Belt + suspenders: if a describer ever resolves a primitive for a
+	// CFN type that ALSO has a static mapping, the resolved override
+	// must win. This is the contract the RDS describer depends on.
+	resources := []parsers.DiscoveredResource{
+		{
+			URN:  "aws://us-east-1/foo",
+			Type: "AWS::S3::Bucket",
+			Inputs: map[string]any{
+				"cb_describer_primitive_resolved": "aws:override/test@v1",
+			},
+		},
+	}
+	lookup := func(string) string { return "aws:s3/bucket@v1" }
+	got := groupByCBPrimitive(resources, lookup)
+	if len(got) != 1 || got[0].Source["primitive"] != "aws:override/test@v1" {
+		t.Fatalf("override did not win: %+v", got)
+	}
+}
+
 func TestGroup_CombinesLensesAndStableOrdering(t *testing.T) {
 	resources := []parsers.DiscoveredResource{
 		makeRes("a", "AWS::S3::Bucket", map[string]string{"Application": "frontend"}),

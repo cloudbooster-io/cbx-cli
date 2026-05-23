@@ -17,6 +17,13 @@ import (
 // Resources whose CFN type doesn't map to an authored primitive are
 // silently skipped. The caller already knows it ran the lens; no need
 // to emit a "<no-primitive>" bucket that would dilute the signal.
+//
+// A per-resource override at r.Inputs["cb_describer_primitive_resolved"]
+// wins over the static CFN→primitive lookup. This is the path for
+// engine-split databases (AWS::RDS::DBInstance can resolve to any of
+// aws:db/postgres@v1, aws:db/mysql@v1, aws:db/mariadb@v1 — the static
+// map can't distinguish them since they share a CFN type); the RDS
+// describer writes the resolved id into Inputs before this lens runs.
 func groupByCBPrimitive(resources []parsers.DiscoveredResource, lookup PrimitiveLookup) []Component {
 	type entry struct {
 		urn       string
@@ -24,7 +31,10 @@ func groupByCBPrimitive(resources []parsers.DiscoveredResource, lookup Primitive
 	}
 	var entries []entry
 	for _, r := range resources {
-		pid := lookup(r.Type)
+		pid := resolvedPrimitiveID(r.Inputs)
+		if pid == "" {
+			pid = lookup(r.Type)
+		}
 		if pid == "" {
 			continue
 		}
@@ -52,4 +62,17 @@ func groupByCBPrimitive(resources []parsers.DiscoveredResource, lookup Primitive
 		})
 	}
 	return out
+}
+
+// resolvedPrimitiveID returns the per-resource primitive override
+// (currently set only by the RDS describers for engine-split DBs), or
+// "" when none is present. The key constant lives in the parsers
+// package — see parsers.CBDescriberPrimitiveResolved for why that's
+// the cycle-free home shared with discover/aws and audit.
+func resolvedPrimitiveID(inputs map[string]any) string {
+	if inputs == nil {
+		return ""
+	}
+	s, _ := inputs[parsers.CBDescriberPrimitiveResolved].(string)
+	return s
 }

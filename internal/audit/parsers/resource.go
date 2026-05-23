@@ -11,3 +11,16 @@ type DiscoveredResource struct {
 	Tags   map[string]string      `json:"tags,omitempty"`
 	Inputs map[string]interface{} `json:"inputs,omitempty"`
 }
+
+// CBDescriberPrimitiveResolved is the Inputs key under which a
+// per-service describer publishes the engine-resolved CB primitive id
+// (the only place that does this today is the RDS describer, which
+// translates AWS::RDS::DBInstance + Engine attribute into one of the
+// engine-split primitives like aws:db/postgres@v1).
+//
+// Lives here rather than in the audit or discover package because both
+// the grouping pass (internal/audit/group) and the grounded prompt
+// builder (internal/audit) read it; the parsers package is the one
+// place every consumer already imports for DiscoveredResource, so the
+// shared key constant rides along without forcing a new import edge.
+const CBDescriberPrimitiveResolved = "cb_describer_primitive_resolved"

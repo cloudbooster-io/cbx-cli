@@ -7,14 +7,21 @@ import (
 )
 
 func TestDescriberFor(t *testing.T) {
-	if d := describerFor("AWS::S3::Bucket"); d == nil {
-		t.Error("expected an S3 describer to be registered")
+	registered := []string{
+		"AWS::S3::Bucket",
+		"AWS::IAM::Role",
+		"AWS::RDS::DBInstance",
+		"AWS::RDS::DBCluster",
+		"AWS::Lambda::Function",
+		"AWS::EC2::Instance",
 	}
-	if d := describerFor("AWS::IAM::Role"); d == nil {
-		t.Error("expected an IAM role describer to be registered")
+	for _, cfnType := range registered {
+		if d := describerFor(cfnType); d == nil {
+			t.Errorf("expected a describer for %q", cfnType)
+		}
 	}
-	if d := describerFor("AWS::Lambda::Function"); d != nil {
-		t.Error("expected no describer for an unregistered type")
+	if d := describerFor("AWS::Foo::Bar"); d != nil {
+		t.Error("expected no describer for an unregistered fake type")
 	}
 }
 

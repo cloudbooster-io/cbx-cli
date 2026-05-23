@@ -424,19 +424,44 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 	return sb.String()
 }
 
-// primitiveIDFor resolves a DiscoveredResource's Terraform type (and, for
-// engine-split RDS, its engine input) to the CB primitive id the audit
-// should query. Returns "" when the type isn't authored (the analyzer
-// won't emit a tool-call hint and the model can still fall back to
-// pretraining for that resource — but it'll show up as ungrounded in the
-// final report, which is the signal the platform-app team needs).
+// primitiveIDFor resolves a DiscoveredResource to the CB primitive id
+// the grounded analyzer should query. Returns "" when nothing maps
+// (the analyzer won't emit a tool-call hint for that resource; the
+// final report will mark it ungrounded, which is the signal the
+// platform-app team needs).
+//
+// Resolution order — first hit wins:
+//
+//  1. r.Inputs[parsers.CBDescriberPrimitiveResolved] — a describer-set
+//     override, currently only the RDS describer for engine-split DBs.
+//     Read first so live-AWS-discovered RDS instances point at the
+//     right engine-specific primitive (postgres / mysql / mariadb /
+//     aurora-postgres / aurora-mysql).
+//  2. Terraform-side engine split for aws_db_instance / aws_rds_cluster
+//     using the lowercase "engine" input that the TF parser populates.
+//     The CFN-side equivalent is already handled by step 1 because the
+//     RDS describer wrote the resolved id there.
+//  3. Static CFN→primitive map for AWS-discovered resources (CFN-shaped
+//     Type values like AWS::S3::Bucket).
+//  4. Static Terraform→primitive map for source/state-mode resources.
+//
+// The grouping pass uses the same logical order via its own helper
+// (group.resolvedPrimitiveID + the PrimitiveLookup closure), so a
+// resource's primitive name in the report and in the grounded prompt
+// always agree.
 func primitiveIDFor(r DiscoveredResource) string {
+	if pid, ok := r.Inputs[parsers.CBDescriberPrimitiveResolved].(string); ok && pid != "" {
+		return pid
+	}
 	if r.Type == "aws_db_instance" || r.Type == "aws_rds_cluster" {
 		if engine, _ := r.Inputs["engine"].(string); engine != "" {
 			if pid := rdsPrimitiveFor(engine); pid != "" {
 				return pid
 			}
 		}
+	}
+	if pid := cfnTypeToCBPrimitive[r.Type]; pid != "" {
+		return pid
 	}
 	return tfTypeToCBPrimitive[r.Type]
 }
