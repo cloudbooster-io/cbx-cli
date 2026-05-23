@@ -25,6 +25,9 @@ func newAuditAWSCmd() *cobra.Command {
 		regions        string
 		awsConcurrency int
 		diagnose       bool
+		llmProvider    string
+		cbKnowledge    bool
+		llmMaxCost     float64
 	)
 
 	cmd := &cobra.Command{
@@ -48,9 +51,27 @@ Use --regions all to fan out across every enabled region in the account.
 Discovery uses the CloudControl API across a curated set of CFN types
 (see internal/audit/discover/aws/types_to_query.go). Per-resource
 permission errors are aggregated and surfaced cleanly; pass --diagnose
-to print every denied API call plus a recommended IAM policy patch.`,
+to print every denied API call plus a recommended IAM policy patch.
+
+LLM-grounded mode: pass --llm claude-code --cb-knowledge to ground each
+finding in CloudBooster's curated AWS knowledge via cbx-mcp tool calls.
+The discovered resources (and any cb_describer_* enrichment from the
+per-service describers) are shipped to the model as context; no source
+files are sent. The same --llm-max-cost cap applies as in source mode.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cbKnowledge {
+				if llmProvider == "" {
+					return fmt.Errorf("--cb-knowledge requires --llm claude-code")
+				}
+				if llmProvider != audit.ClaudeCodeProvider {
+					return fmt.Errorf("--cb-knowledge requires --llm claude-code (other providers don't have an MCP tool-call loop)")
+				}
+			}
+			if llmMaxCost != 0 && !cbKnowledge {
+				return fmt.Errorf("--llm-max-cost is only meaningful with --cb-knowledge")
+			}
+
 			profile := os.Getenv("AWS_PROFILE")
 			if len(args) == 1 {
 				profile = args[0]
@@ -119,12 +140,20 @@ to print every denied API call plus a recommended IAM policy patch.`,
 			}
 
 			// Run the scanner pipeline against the discovered resources.
+			// MockScanners (native CB rules) stays the default when no LLM
+			// is requested — keeps `cbx audit aws` zero-config per plan
+			// §7.10. With --llm the LLM analyzer replaces the rule scanners
+			// entirely; native rules and grounded findings would otherwise
+			// fight over the same rule_id namespace and double-count.
 			opts := audit.Options{
-				AWS:           true,
-				AWSAccountID:  discResult.Identity.AccountID,
-				MockScanners:  true, // native CB rules; no external CLIs (plan §7.10)
-				Quiet:         quietFlag,
-				OutputFormat:  outputFormat,
+				AWS:          true,
+				AWSAccountID: discResult.Identity.AccountID,
+				MockScanners: llmProvider == "",
+				LLMProvider:  llmProvider,
+				CBKnowledge:  cbKnowledge,
+				LLMMaxCost:   llmMaxCost,
+				Quiet:        quietFlag,
+				OutputFormat: outputFormat,
 			}
 			findings, scanErr := audit.CollectFromResources(opts, discResult.Resources)
 			if scanErr != nil && findings == nil {
@@ -176,6 +205,9 @@ to print every denied API call plus a recommended IAM policy patch.`,
 	cmd.Flags().StringVar(&regions, "regions", "", "Comma-separated AWS regions (default: profile default region; 'all' for every enabled region)")
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
+	cmd.Flags().StringVar(&llmProvider, "llm", "", "Ship discovered resources to an LLM analyzer instead of native rules (currently only 'claude-code' is supported)")
+	cmd.Flags().BoolVar(&cbKnowledge, "cb-knowledge", false, "Phase F: ground each finding in CloudBooster's curated AWS knowledge via cbx-mcp tool calls. Requires --llm claude-code.")
+	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 0, "USD ceiling for a single grounded audit; the run is not aborted but a warning finding is emitted when claude's reported total_cost_usd exceeds the cap (0 = default $2.00; only meaningful with --cb-knowledge)")
 
 	return cmd
 }

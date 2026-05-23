@@ -39,10 +39,27 @@ func Collect(opts Options) ([]Finding, error) {
 // pre-discovered resource set and returns the aggregated findings.
 // Used by code paths that own their own discovery (currently only the
 // `cbx audit aws` subcommand). Bypasses Collect's input-mode dispatch.
+//
+// When opts.LLMProvider is set the LLM analyzer fully replaces the
+// rule-based provider list — we don't run native rules in parallel with
+// the LLM, mirroring the source-mode behaviour and avoiding double-
+// counted findings against the same rule_id namespace. The analyzer
+// takes the discovered resources directly via ScanResources (the
+// source-mode entry point ScanSource is irrelevant here since AWS
+// audits have no IaC tree).
 func CollectFromResources(opts Options, resources []DiscoveredResource) ([]Finding, error) {
-	providers := selectProviders(opts)
 	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
 	defer cancel()
+
+	if opts.LLMProvider != "" {
+		analyzer, err := newLLMAnalyzer(opts, IaCTypeCloudFormation)
+		if err != nil {
+			return nil, err
+		}
+		return analyzer.ScanResources(ctx, resources)
+	}
+
+	providers := selectProviders(opts)
 	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
 }
 

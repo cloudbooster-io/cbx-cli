@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
@@ -121,6 +122,50 @@ func (l *llmAnalyzer) Scan(_ context.Context, _ []Resource) ([]Finding, error) {
 }
 
 func (l *llmAnalyzer) SupportsSource() bool { return true }
+
+// ScanResources is the live-AWS entry point. It mirrors ScanSource but
+// takes a pre-discovered []DiscoveredResource instead of a source
+// directory — there are no IaC files to walk in AWS mode. The prompt
+// builder treats files=nil as the AWS-mode signal and switches its
+// trailing instructions to "file=\"\", line=0" so the model doesn't
+// invent paths. Post-processing (grounding trail backfill, ungrounded
+// soft-warn, cost cap finding) is reused verbatim.
+//
+// Workload classification is best-effort: ClassifyWorkloads is currently
+// Terraform-typed and will yield zero slugs on AWS-discovered CFN-shaped
+// resources. The prompt builder already handles "no workloads detected"
+// by falling back to per-primitive grounding only, so the AWS path
+// degrades gracefully until a CFN-aware classifier lands (PR 8.5).
+func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredResource) ([]Finding, error) {
+	if len(resources) == 0 {
+		return nil, nil
+	}
+
+	var workloads []string
+	if l.cbKnowledge {
+		workloads = ClassifyWorkloads(resources)
+	}
+
+	prompt := l.buildPrompt(nil, resources, workloads)
+
+	var sb strings.Builder
+	streamErr := l.streamer.Stream(ctx, prompt, func(tok string) {
+		sb.WriteString(tok)
+	})
+	if streamErr != nil {
+		return []Finding{l.errorFinding(fmt.Sprintf("llm stream: %v", streamErr))}, nil
+	}
+
+	findings, parseErr := parseLLMFindings(sb.String(), l.providerForRuleID)
+	if parseErr != nil {
+		return []Finding{l.errorFinding(fmt.Sprintf("parsing llm output: %v", parseErr))}, nil
+	}
+
+	if l.cbKnowledge {
+		findings = l.postProcessGrounded(findings)
+	}
+	return findings, nil
+}
 
 func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, error) {
 	files, err := collectSourceFiles(dir, l.iacType, l.maxFiles, l.maxBytesPerFile)
@@ -390,7 +435,7 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 			sb.WriteString(pid)
 			sb.WriteString("\n")
 		}
-		sb.WriteString("\nResource-level detail (type / name / region / inputs):\n")
+		sb.WriteString("\nResource-level detail (type / urn / region / primitive / describer enrichment):\n")
 		for _, r := range resources {
 			sb.WriteString("  ")
 			sb.WriteString(r.Type)
@@ -399,29 +444,74 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 				sb.WriteString(r.URN)
 				sb.WriteString(")")
 			}
+			if r.Region != "" {
+				sb.WriteString(" [")
+				sb.WriteString(r.Region)
+				sb.WriteString("]")
+			}
 			pid := primitiveIDFor(r)
 			if pid != "" {
 				sb.WriteString(" → ")
 				sb.WriteString(pid)
+			}
+			if enrich := formatDescriberEnrichment(r.Inputs); enrich != "" {
+				sb.WriteString("\n    ")
+				sb.WriteString(enrich)
 			}
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Source files follow. Use the paths exactly as given.\n\n")
-	for _, f := range files {
-		sb.WriteString("==== FILE: ")
-		sb.WriteString(f.Path)
-		if f.Truncated {
-			sb.WriteString(" (truncated)")
+	if len(files) > 0 {
+		sb.WriteString("Source files follow. Use the paths exactly as given.\n\n")
+		for _, f := range files {
+			sb.WriteString("==== FILE: ")
+			sb.WriteString(f.Path)
+			if f.Truncated {
+				sb.WriteString(" (truncated)")
+			}
+			sb.WriteString(" ====\n")
+			sb.Write(f.Content)
+			sb.WriteString("\n\n")
 		}
-		sb.WriteString(" ====\n")
-		sb.Write(f.Content)
-		sb.WriteString("\n\n")
+	} else {
+		// AWS / live-discovery mode: no source files. Tell the model
+		// explicitly that it is grounding against deployed state read
+		// from AWS APIs (CloudControl + per-service describers) rather
+		// than declared IaC, so it doesn't ask for file references that
+		// don't exist and so its `file`/`line` fields stay empty.
+		sb.WriteString("Audit context: this audit operates against LIVE AWS resources discovered via CloudControl + per-service describers. No source files are available. Emit findings with file=\"\" and line=0; reference resources by the URN shown above.\n\n")
 	}
 	_ = iacType // currently unused in grounded variant; primitives carry the type info
 	return sb.String()
+}
+
+// formatDescriberEnrichment serializes only the cb_describer_* keys
+// from a resource's Inputs as a compact one-liner for the prompt. We
+// deliberately omit raw CFN Properties — those are large per resource
+// and the describer-emitted keys already capture the load-bearing
+// signals (IMDSv2, encryption posture, last-used dates, etc.). Empty
+// when no describer ran or none of its keys landed on this resource.
+func formatDescriberEnrichment(inputs map[string]any) string {
+	if len(inputs) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(inputs))
+	for k := range inputs {
+		if strings.HasPrefix(k, "cb_describer_") {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, fmt.Sprintf("%s=%v", k, inputs[k]))
+	}
+	return strings.Join(pairs, ", ")
 }
 
 // primitiveIDFor resolves a DiscoveredResource to the CB primitive id
