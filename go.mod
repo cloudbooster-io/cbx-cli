@@ -16,6 +16,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/getsentry/sentry-go v0.46.2
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/oapi-codegen/runtime v1.4.0

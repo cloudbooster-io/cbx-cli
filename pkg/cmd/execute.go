@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 )
 
@@ -32,6 +33,18 @@ func Execute() error {
 	}()
 
 	err := root.Execute()
+
+	// Report the error to Sentry (no-op when telemetry is disabled).
+	// Exit-code carriers (--llm cost warning, severity-based exits)
+	// are not real failures — skip those to keep the dashboard clean.
+	if err != nil {
+		if _, isExitCode := err.(*audit.ExitCodeError); !isExitCode {
+			telemetry.CaptureError(err)
+		}
+	}
+	// Flush before returning so the OS exit doesn't drop in-flight
+	// events. 2s is the same ceiling sentry-go uses in its examples.
+	telemetry.Flush(2 * time.Second)
 
 	// Show update banner at command end if applicable.
 	select {

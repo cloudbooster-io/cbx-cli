@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"os"
+
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
 
 	"github.com/spf13/cobra"
 )
@@ -31,6 +34,17 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			output.Configure(noColorFlag, quietFlag)
 			executedCommand = cmd.Name()
+
+			// First-run telemetry prompt, then Sentry init. Skip for
+			// commands that manage telemetry themselves (no recursive
+			// prompting), the help/version exits (low-cost, low-signal),
+			// and machine-output modes (JSON/quiet — prompt would
+			// corrupt the stream).
+			if !skipTelemetryPrompt(cmd) {
+				telemetry.MaybePromptFirstRun(os.Stdin, os.Stderr, jsonFlag || quietFlag)
+			}
+			telemetry.Init(Version, Commit)
+			telemetry.SetTag("command", cmd.CommandPath())
 			return nil
 		},
 	}
@@ -54,7 +68,21 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newAuditCmd(),
 		newUpgradeCmd(),
 		newEnvCmd(),
+		newTelemetryCmd(),
 	)
 
 	return root
+}
+
+// skipTelemetryPrompt is true for commands where showing the first-run
+// prompt would be disruptive or recursive (telemetry subcommands manage
+// the prompt themselves; version/help are zero-friction quick exits).
+func skipTelemetryPrompt(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "telemetry", "version", "help", "completion":
+			return true
+		}
+	}
+	return false
 }
