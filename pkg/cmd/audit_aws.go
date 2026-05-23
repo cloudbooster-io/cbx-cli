@@ -60,7 +60,7 @@ still win.
 Region resolution: if --region is omitted, the profile's configured
 region is used. If the profile has no region and you're on a TTY, an
 interactive picker shows enabled regions. In non-interactive mode
-(--output json, --quiet, --yes, or no TTY) you must pass --region.
+(--output json, --quiet, or no TTY) you must pass --region.
 
 Use --region all to fan out across every enabled region in the account.
 

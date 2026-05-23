@@ -54,7 +54,7 @@ func newLLMCmd() *cobra.Command {
 	llmCmd := &cobra.Command{
 		Use:   "llm",
 		Short: "Manage LLM providers (HTTP API keys) and local CLI executors",
-		Long: `Manage how cbx talks to LLMs for 'cbx plan' and 'cbx audit aws --llm'.
+		Long: `Manage how cbx talks to LLMs for 'cbx plan'. ('cbx audit aws' always uses the local Claude Code CLI for grounded analysis; see 'cbx llm cli'.)
 
 Two flavours of provider:
 
