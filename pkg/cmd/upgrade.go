@@ -39,7 +39,7 @@ func newUpgradeCmd() *cobra.Command {
 					}, nil)
 				}
 				fmt.Println("Cannot upgrade development build. Install a release build from:")
-				fmt.Println("  https://github.com/cloudbooster/cbx-cli/releases")
+				fmt.Println("  https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases")
 				return nil
 			}
 

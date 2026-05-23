@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/99designs/keyring"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 )
 
 // Keyring abstracts OS-native credential storage.
@@ -20,10 +21,12 @@ type osKeyring struct {
 }
 
 // NewKeyring opens the best available keyring backend.
-// Set CB_KEYRING_BACKEND=file (and optionally CB_KEYRING_FILE_DIR) to force
-// the file-based backend — useful in CI or headless environments.
+// Set CBX_KEYRING_BACKEND=file (and optionally CBX_KEYRING_FILE_DIR) to
+// force the file-based backend — useful in CI or headless environments.
+// Legacy CB_KEYRING_BACKEND / CB_KEYRING_FILE_DIR are still honored with
+// a one-time deprecation warning.
 func NewKeyring() (Keyring, error) {
-	if backendEnv := os.Getenv("CB_KEYRING_BACKEND"); backendEnv != "" {
+	if backendEnv := config.Env("KEYRING_BACKEND"); backendEnv != "" {
 		return openBackend(backendEnv)
 	}
 
@@ -48,7 +51,7 @@ func NewKeyring() (Keyring, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no supported OS keyring backend available; set CB_KEYRING_BACKEND=file to use a file-based fallback")
+	return nil, fmt.Errorf("no supported OS keyring backend available; set CBX_KEYRING_BACKEND=file to use a file-based fallback")
 }
 
 func openBackend(name string) (Keyring, error) {
@@ -66,7 +69,7 @@ func openBackend(name string) (Keyring, error) {
 		return nil, fmt.Errorf("unknown keyring backend %q", name)
 	}
 
-	dir := os.Getenv("CB_KEYRING_FILE_DIR")
+	dir := config.Env("KEYRING_FILE_DIR")
 	if dir == "" && bt == keyring.FileBackend {
 		dir = os.TempDir()
 	}

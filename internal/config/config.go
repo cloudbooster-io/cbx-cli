@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 )
 
 // Config holds the CLI configuration.
@@ -58,13 +60,70 @@ const (
 	AuthModeClaudeCodeCLI = "claude-code-cli"
 )
 
+// legacyNudgeOnce ensures we only emit the "move ~/.cbx to ~/.config/cbx"
+// nudge a single time per process.
+var legacyNudgeOnce sync.Once
+
+// LegacyConfigNudge is the sink for the one-time migration suggestion when
+// only the legacy ~/.cbx directory exists. Override in tests or to route
+// through output.*. Default writes to stderr.
+var LegacyConfigNudge = func(legacy, modern string) {
+	fmt.Fprintf(os.Stderr,
+		"notice: using legacy config dir %s; consider moving it to %s (XDG-compliant)\n",
+		legacy, modern)
+}
+
+func nudgeLegacyConfigOnce(legacy, modern string) {
+	legacyNudgeOnce.Do(func() {
+		if LegacyConfigNudge != nil {
+			LegacyConfigNudge(legacy, modern)
+		}
+	})
+}
+
 // Dir returns the configuration directory for cbx.
+//
+// Resolution order:
+//  1. $CBX_CONFIG_DIR (explicit override; used by tests + power users)
+//  2. Windows: %APPDATA%\cbx (via os.UserConfigDir)
+//  3. $XDG_CONFIG_HOME/cbx
+//  4. Legacy ~/.cbx when it exists and ~/.config/cbx does not (with a
+//     one-time stderr nudge to migrate)
+//  5. ~/.config/cbx (default)
 func Dir() string {
+	if d := os.Getenv("CBX_CONFIG_DIR"); d != "" {
+		return d
+	}
+	if runtime.GOOS == "windows" {
+		if d, err := os.UserConfigDir(); err == nil {
+			return filepath.Join(d, "cbx")
+		}
+	}
+	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+		return filepath.Join(d, "cbx")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
-	return filepath.Join(home, ".cbx")
+	newDir := filepath.Join(home, ".config", "cbx")
+	legacyDir := filepath.Join(home, ".cbx")
+
+	// Back-compat: prefer the legacy dir when it exists and the new one
+	// doesn't, but emit a one-time nudge so the user migrates eventually.
+	// We don't auto-copy to avoid partial-migration risk.
+	if _, err := os.Stat(legacyDir); err == nil {
+		if _, err2 := os.Stat(newDir); os.IsNotExist(err2) {
+			nudgeLegacyConfigOnce(legacyDir, newDir)
+			return legacyDir
+		}
+	}
+	return newDir
+}
+
+// resetLegacyNudgeForTest clears the one-shot guard. Test-only.
+func resetLegacyNudgeForTest() {
+	legacyNudgeOnce = sync.Once{}
 }
 
 // CacheDir returns the cache directory for cbx.
@@ -94,7 +153,7 @@ func Load() (*Config, error) {
 				LLM:    LLMConfig{Providers: make(map[string]LLMProvider)},
 				APIURL: defaultAPIURL,
 			}
-			if envURL := os.Getenv("CB_API_URL"); envURL != "" {
+			if envURL := Env("API_URL"); envURL != "" {
 				cfg.APIURL = envURL
 			}
 			return cfg, nil
@@ -111,7 +170,7 @@ func Load() (*Config, error) {
 	if cfg.APIURL == "" {
 		cfg.APIURL = defaultAPIURL
 	}
-	if envURL := os.Getenv("CB_API_URL"); envURL != "" {
+	if envURL := Env("API_URL"); envURL != "" {
 		cfg.APIURL = envURL
 	}
 	return &cfg, nil

@@ -69,27 +69,24 @@ func TestCheckerCheck_CacheMiss(t *testing.T) {
 	defer os.Unsetenv("HOME")
 
 	mockAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/cloudbooster/cbx-cli/releases/latest" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
+		// GitLab releases endpoint, path-escaped project id.
+		const wantPath = "/cloudbooster.io%2Fplatform%2Fcbx-cli/releases/permalink/latest"
+		if r.URL.EscapedPath() != wantPath {
+			t.Fatalf("unexpected path: %s", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tag_name": "v1.5.0",
-			"html_url": "https://github.com/cloudbooster/cbx-cli/releases/tag/v1.5.0",
+			"_links": map[string]string{
+				"self": "https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases/v1.5.0",
+			},
 		})
 	}))
 	defer mockAPI.Close()
+	t.Setenv("CBX_RELEASES_URL", mockAPI.URL)
 
 	checker := NewChecker("v1.0.0")
-	// Override the HTTP transport to point at the mock server.
 	checker.HTTPClient = mockAPI.Client()
-	// We need to intercept the request URL. Since Checker builds the URL internally,
-	// we test the full path via a small helper that rewrites the request host.
-	originalTransport := checker.HTTPClient.Transport
-	checker.HTTPClient.Transport = &rewriteHostTransport{
-		base: originalTransport,
-		host: mockAPI.URL,
-	}
 
 	result, err := checker.Check(context.Background())
 	if err != nil {
@@ -105,19 +102,23 @@ func TestCheckerCheck_CacheMiss(t *testing.T) {
 
 func TestIsDisabled(t *testing.T) {
 	tests := []struct {
-		ci      string
-		noCheck string
-		want    bool
+		name       string
+		ci         string
+		cbxNoCheck string
+		cbNoCheck  string
+		want       bool
 	}{
-		{"", "", false},
-		{"true", "", true},
-		{"", "1", true},
-		{"true", "1", true},
+		{"none", "", "", "", false},
+		{"ci_only", "true", "", "", true},
+		{"cbx_no_check", "", "1", "", true},
+		{"legacy_cb_no_check", "", "", "1", true},
+		{"both", "true", "1", "", true},
 	}
 	for _, tc := range tests {
-		t.Run(fmt.Sprintf("ci_%s_no_%s", tc.ci, tc.noCheck), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("CI", tc.ci)
-			t.Setenv("CB_NO_UPDATE_CHECK", tc.noCheck)
+			t.Setenv("CBX_NO_UPDATE_CHECK", tc.cbxNoCheck)
+			t.Setenv("CB_NO_UPDATE_CHECK", tc.cbNoCheck)
 			if got := IsDisabled(); got != tc.want {
 				t.Fatalf("IsDisabled() = %v, want %v", got, tc.want)
 			}
@@ -176,13 +177,3 @@ func TestCachePath(t *testing.T) {
 	}
 }
 
-type rewriteHostTransport struct {
-	base http.RoundTripper
-	host string
-}
-
-func (t *rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	req.URL.Scheme = "http"
-	req.URL.Host = t.host[len("http://"):]
-	return t.base.RoundTrip(req)
-}
