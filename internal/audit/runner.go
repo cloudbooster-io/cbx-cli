@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 )
 
@@ -22,6 +23,14 @@ type Result struct {
 	// configured. The CLI renders a banner in that case so users don't mistake
 	// MOCK-SRC-* findings for a real audit. Always false for state-mode runs.
 	MockOnly bool
+
+	// Components is the post-discovery grouping output. Populated by the
+	// `cbx audit aws` subcommand from the tag-based + CB-primitive lenses
+	// (see internal/audit/group); empty for state / source mode where no
+	// grouping pass runs. Read by cb-cli through pkg/audit so the
+	// proprietary edition can render the same component sections without
+	// re-importing internal/audit/group.
+	Components []group.Component `json:"components,omitempty"`
 }
 
 // Collect executes the audit pipeline and returns findings without writing a
@@ -263,6 +272,46 @@ func validateSourceDir(dir string) error {
 		)
 	}
 	return nil
+}
+
+// RunFromResources mirrors Run for the live-AWS path: it takes a
+// pre-discovered []DiscoveredResource (assembled by the AWS
+// subcommand's CloudControl walk + per-service describers), runs the
+// scanner pipeline, groups the resources, writes the markdown report,
+// and returns a populated Result. cb-cli calls this through pkg/audit
+// to consume the same envelope the CLI produces.
+//
+// Grouping uses CFNTypeToCBPrimitive — AWS audits always emit CFN-
+// shaped resources, so the static lookup plus the per-resource
+// describer override (read by group.groupByCBPrimitive itself) cover
+// every case.
+func RunFromResources(opts Options, resources []DiscoveredResource) (*Result, error) {
+	findings, scanErr := CollectFromResources(opts, resources)
+	if scanErr != nil && findings == nil {
+		return nil, scanErr
+	}
+
+	components := group.Group(resources, group.Options{
+		LookupPrimitive: CFNTypeToCBPrimitive,
+	})
+
+	reportPath := opts.ReportFile
+	if reportPath == "" {
+		reportPath = defaultReportPath(opts)
+	}
+	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); writeErr != nil {
+		return nil, fmt.Errorf("writing report: %w", writeErr)
+	}
+
+	result := &Result{
+		Findings:   findings,
+		ReportPath: reportPath,
+		Components: components,
+	}
+	if scanErr != nil {
+		return result, fmt.Errorf("running scanners: %w", scanErr)
+	}
+	return result, nil
 }
 
 // Run executes the full audit pipeline for the given state file.

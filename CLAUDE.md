@@ -26,7 +26,7 @@ CI (GitLab) runs `validate` (vet + build), `codegen-check`, `go test ./...`, mer
 `cbx-cli` is the **OSS Apache-2.0** edition. A sibling proprietary `cb-cli` (currently a placeholder in `../cb-cli/`) **depends on `cbx-cli` as a library — never forks**. That dependency direction is the entire reason for the layered layout below: `pkg/` is the contract `cb-cli` consumes. See `../platform-app/agent-arch-talks/rework-2.5.1/01-strategy.md` and `adrs/adr-001-open-core-split.md` for the why.
 
 Implications you must respect:
-- **Any breaking change in `pkg/` is a breaking change for `cb-cli`.** Treat `pkg/auth`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
+- **Any breaking change in `pkg/` is a breaking change for `cb-cli`.** Treat `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
 - **`cbx audit` is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to the audit path; mock scanners are the default specifically to keep this property.
 - **`cbx plan` is BYO-LLM by default** (anonymous tier; user pays the LLM provider, CB pays nothing). Keep it functional without a CB login.
 - **State parsers in `internal/audit/parsers/` are shared substrate** with the hosted "import existing infrastructure" feature in `platform-app`. Changing `DiscoveredResource` shape or parser semantics has cross-repo impact — coordinate.
@@ -36,13 +36,13 @@ Implications you must respect:
 
 ```
 cmd/cbx/            thin main; just calls pkg/cmd.Execute / ExitCode
-pkg/                public, importable surface — auth/, config/, output/, cmd/
+pkg/                public, importable surface — auth/, audit/, config/, output/, cmd/
 core/               cross-module shared logic — core/api/v1/ (generated), core/plan/
 internal/           private to cbx-cli — audit/, plan/, llm/, tui/, output/, config/, …
 ```
 
 - `cmd/cbx/main.go` is **deliberately tiny** (10 lines). All cobra wiring lives in `pkg/cmd/` so it can be embedded by `cb-cli`.
-- `pkg/auth`, `pkg/config`, `pkg/output` are **pure facades**: type aliases and `var X = internal.X` re-exports only. Don't add logic here — implement in `internal/<pkg>` and re-export.
+- `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output` are **pure facades**: type aliases and `var X = internal.X` re-exports only. Don't add logic here — implement in `internal/<pkg>` and re-export.
 - `core/api/v1/client.gen.go` is generated from `api/openapi.yaml` via `tools/codegen/generate.sh` (uses `go tool oapi-codegen`). Never hand-edit; CI's `codegen-check` job will fail. Hand-written companions (`client.go`, `auth.go`, `retry.go`, `ratelimit.go`) wrap the generated client.
 - The API target is the **public** `api.cloudbooster.io/v1/*` surface (anonymous → free → paid tiers, API-key auth). Do **not** call the platform-app **internal** API at `app.cloudbooster.io/api/v1/*` (cookie + CSRF, free to evolve, web-only).
 - `internal/audit` and `internal/plan` are the two large feature areas; both have a CLI entry in `pkg/cmd/{audit,plan}.go` and a Bubble Tea TUI in `internal/tui/{audit,chat}`.

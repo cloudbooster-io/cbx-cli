@@ -114,32 +114,6 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 				return err
 			}
 
-			// Component grouping pass over the discovered resources.
-			// Tag-based and CB-primitive lenses run together — see
-			// internal/audit/group/ for the algorithms. Skipped silently
-			// when no resources were discovered (Group returns nil).
-			components := group.Group(discResult.Resources, group.Options{
-				LookupPrimitive: audit.CFNTypeToCBPrimitive,
-			})
-
-			// Header. Goes to stderr so machine-readable output on stdout
-			// stays unpolluted.
-			if !quietFlag && outputFormat == "" {
-				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" AWS preflight ok"))
-				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
-				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
-				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
-				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
-				renderComponentsSummary(os.Stderr, components)
-				if len(discResult.PermissionErr) > 0 {
-					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
-				}
-				if len(discResult.OtherErrs) > 0 {
-					fmt.Fprintln(os.Stderr, fmt.Sprintf("  other warnings:    %d", len(discResult.OtherErrs)))
-				}
-			}
-
-			// Run the scanner pipeline against the discovered resources.
 			// MockScanners (native CB rules) stays the default when no LLM
 			// is requested — keeps `cbx audit aws` zero-config per plan
 			// §7.10. With --llm the LLM analyzer replaces the rule scanners
@@ -155,19 +129,42 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 				Quiet:        quietFlag,
 				OutputFormat: outputFormat,
 			}
-			findings, scanErr := audit.CollectFromResources(opts, discResult.Resources)
-			if scanErr != nil && findings == nil {
-				return scanErr
+
+			// RunFromResources collapses the previous bespoke flow
+			// (CollectFromResources + group.Group + WriteFile) into one
+			// entry point that cb-cli can call to get the same envelope
+			// shape. The AWS-specific stderr decorations (preflight
+			// header, diagnose summary) remain here in the subcommand
+			// since they're CLI-only.
+			result, runErr := audit.RunFromResources(opts, discResult.Resources)
+			if runErr != nil && result == nil {
+				return runErr
 			}
 
-			// JSON envelope path
+			// Header. Goes to stderr so machine-readable output on stdout
+			// stays unpolluted.
+			if !quietFlag && outputFormat == "" {
+				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" AWS preflight ok"))
+				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
+				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
+				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
+				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
+				renderComponentsSummary(os.Stderr, result.Components)
+				if len(discResult.PermissionErr) > 0 {
+					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
+				}
+				if len(discResult.OtherErrs) > 0 {
+					fmt.Fprintln(os.Stderr, fmt.Sprintf("  other warnings:    %d", len(discResult.OtherErrs)))
+				}
+			}
+
 			if outputFormat == "json" {
 				payload := map[string]any{
 					"identity":          discResult.Identity,
 					"regions":           discResult.Regions,
 					"resources_count":   len(discResult.Resources),
-					"findings":          findings,
-					"components":        components,
+					"findings":          result.Findings,
+					"components":        result.Components,
 					"permission_errors": permErrsToJSON(discResult.PermissionErr),
 				}
 				return output.PrintJSON(payload, nil)
@@ -175,26 +172,21 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 
 			// Plain rendering
 			label := fmt.Sprintf("aws://%s", discResult.Identity.AccountID)
-			fmt.Print(audit.RenderPlain(findings, label))
+			fmt.Print(audit.RenderPlain(result.Findings, label))
 
 			// Diagnose summary (per-call permission errors + IAM patch)
 			if diagnose && len(discResult.PermissionErr) > 0 {
 				renderDiagnose(os.Stderr, discResult.PermissionErr, discResult.Identity.ARN)
 			}
 
-			// Write the markdown report.
-			reportPath := audit.DefaultReportPath(opts)
-			if writeErr := os.WriteFile(reportPath, []byte(audit.RenderMarkdown(findings)), 0o644); writeErr != nil {
-				return fmt.Errorf("writing report: %w", writeErr)
-			}
 			if !quietFlag {
-				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+reportPath))
+				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+result.ReportPath))
 			}
 
-			if severityErr := audit.ExitWithSeverity(findings); severityErr != nil {
+			if severityErr := audit.ExitWithSeverity(result.Findings); severityErr != nil {
 				return severityErr
 			}
-			if scanErr != nil {
+			if runErr != nil {
 				return &audit.ExitCodeError{Code: 1}
 			}
 			return nil
