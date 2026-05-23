@@ -25,12 +25,25 @@ type Result struct {
 }
 
 // Collect executes the audit pipeline and returns findings without writing a
-// report. It is used by the interactive TUI path.
+// report. It is used by the interactive TUI path. Note: opts.AWS audits go
+// through CollectFromResources instead — the AWS subcommand owns its own
+// discovery so it can render the account / region header before scanning.
 func Collect(opts Options) ([]Finding, error) {
 	if opts.SourceDir != "" {
 		return collectFromSource(opts)
 	}
 	return collectFromState(opts)
+}
+
+// CollectFromResources runs the configured FindingProviders against a
+// pre-discovered resource set and returns the aggregated findings.
+// Used by code paths that own their own discovery (currently only the
+// `cbx audit aws` subcommand). Bypasses Collect's input-mode dispatch.
+func CollectFromResources(opts Options, resources []DiscoveredResource) ([]Finding, error) {
+	providers := selectProviders(opts)
+	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	defer cancel()
+	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
 }
 
 func collectFromState(opts Options) ([]Finding, error) {
@@ -269,6 +282,16 @@ func Run(opts Options) (*Result, error) {
 func DefaultReportPath(opts Options) string { return defaultReportPath(opts) }
 
 func defaultReportPath(opts Options) string {
+	if opts.AWS {
+		// AWS account ID is the natural namespace; the subcommand fills
+		// it into opts.AWSAccountID after preflight. Falls back to
+		// "aws" when the field is empty (e.g. tests).
+		base := opts.AWSAccountID
+		if base == "" {
+			base = "aws"
+		}
+		return base + "_audit_report.md"
+	}
 	if opts.SourceDir != "" {
 		base := filepath.Base(opts.SourceDir)
 		if base == "." || base == "/" || base == "" {

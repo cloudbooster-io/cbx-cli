@@ -163,4 +163,9 @@ type Options struct {
 	// recommended IAM policy patch at the end of a live-AWS audit. Only
 	// meaningful when AWS is true.
 	Diagnose bool
+
+	// AWSAccountID is populated by the AWS subcommand after STS preflight
+	// so downstream rendering (default report path, header lines) can
+	// reference the audited account without re-querying.
+	AWSAccountID string
 }

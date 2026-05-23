@@ -44,10 +44,10 @@ interactive picker shows enabled regions. In non-interactive mode
 
 Use --regions all to fan out across every enabled region in the account.
 
-NOTE: this PR ships the subcommand scaffolding + IAM preflight + region
-resolution. CloudControl discovery + per-service describers + the
-component grouping pass land in the next PR — for now the run reports
-the resolved identity/regions and exits cleanly with 0 resources.`,
+Discovery uses the CloudControl API across a curated set of CFN types
+(see internal/audit/discover/aws/types_to_query.go). Per-resource
+permission errors are aggregated and surfaced cleanly; pass --diagnose
+to print every denied API call plus a recommended IAM policy patch.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profile := os.Getenv("AWS_PROFILE")
@@ -55,7 +55,6 @@ the resolved identity/regions and exits cleanly with 0 resources.`,
 				profile = args[0]
 			}
 
-			// Region flag → cleaned []string
 			var regionList []string
 			for _, r := range strings.Split(regions, ",") {
 				r = strings.TrimSpace(r)
@@ -64,36 +63,22 @@ the resolved identity/regions and exits cleanly with 0 resources.`,
 				}
 			}
 
-			// Concurrency default
 			if awsConcurrency < 1 {
 				awsConcurrency = 4
 			}
 
-			opts := audit.Options{
-				AWS:            true,
-				AWSProfile:     profile,
-				AWSConfigFile:  configFile,
-				Regions:        regionList,
-				AWSConcurrency: awsConcurrency,
-				Diagnose:       diagnose,
-				Quiet:          quietFlag,
-				OutputFormat:   coalesceJSON(),
-			}
-
-			// Decide whether to wire the interactive region picker. Available
-			// only when stdin AND stdout are real TTYs and we're not in a
-			// machine-readable mode.
+			outputFormat := coalesceJSON()
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) &&
 				isatty.IsTerminal(os.Stdout.Fd()) &&
-				opts.OutputFormat == "" &&
-				!opts.Quiet
+				outputFormat == "" &&
+				!quietFlag
 
 			discoverParams := awsdisc.DiscoverParams{
-				Profile:         opts.AWSProfile,
-				CredentialsFile: opts.AWSConfigFile,
-				Regions:         opts.Regions,
-				Concurrency:     opts.AWSConcurrency,
-				Diagnose:        opts.Diagnose,
+				Profile:         profile,
+				CredentialsFile: configFile,
+				Regions:         regionList,
+				Concurrency:     awsConcurrency,
+				Diagnose:        diagnose,
 			}
 			if interactive {
 				discoverParams.PromptForRegions = func(ctx context.Context, enabled []string) ([]string, error) {
@@ -102,33 +87,76 @@ the resolved identity/regions and exits cleanly with 0 resources.`,
 			}
 
 			ctx := context.Background()
-			result, err := awsdisc.Discover(ctx, discoverParams)
+			discResult, err := awsdisc.Discover(ctx, discoverParams)
 			if err != nil {
 				return err
 			}
 
-			// Header — surfaces what the run targeted. Same lines whether or
-			// not the discovery layer has been implemented yet.
-			if !opts.Quiet && opts.OutputFormat == "" {
+			// Header. Goes to stderr so machine-readable output on stdout
+			// stays unpolluted.
+			if !quietFlag && outputFormat == "" {
 				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" AWS preflight ok"))
-				fmt.Fprintln(os.Stderr, "  audited account:  "+result.Identity.AccountID)
-				fmt.Fprintln(os.Stderr, "  identity:         "+result.Identity.ARN)
-				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(result.Regions, ", "))
-				fmt.Fprintln(os.Stderr, "  resources found:  "+fmt.Sprint(len(result.Resources))+"  (discovery layer not yet implemented — next PR)")
+				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
+				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
+				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
+				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
+				if len(discResult.PermissionErr) > 0 {
+					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
+				}
+				if len(discResult.OtherErrs) > 0 {
+					fmt.Fprintln(os.Stderr, fmt.Sprintf("  other warnings:    %d", len(discResult.OtherErrs)))
+				}
 			}
 
-			// JSON output for machine consumers — same envelope as other
-			// audit subcommands.
-			if opts.OutputFormat == "json" {
+			// Run the scanner pipeline against the discovered resources.
+			opts := audit.Options{
+				AWS:           true,
+				AWSAccountID:  discResult.Identity.AccountID,
+				MockScanners:  true, // native CB rules; no external CLIs (plan §7.10)
+				Quiet:         quietFlag,
+				OutputFormat:  outputFormat,
+			}
+			findings, scanErr := audit.CollectFromResources(opts, discResult.Resources)
+			if scanErr != nil && findings == nil {
+				return scanErr
+			}
+
+			// JSON envelope path
+			if outputFormat == "json" {
 				payload := map[string]any{
-					"identity":   result.Identity,
-					"regions":    result.Regions,
-					"resources":  result.Resources,
-					"discovery":  "not_yet_implemented",
+					"identity":          discResult.Identity,
+					"regions":           discResult.Regions,
+					"resources_count":   len(discResult.Resources),
+					"findings":          findings,
+					"permission_errors": permErrsToJSON(discResult.PermissionErr),
 				}
 				return output.PrintJSON(payload, nil)
 			}
 
+			// Plain rendering
+			label := fmt.Sprintf("aws://%s", discResult.Identity.AccountID)
+			fmt.Print(audit.RenderPlain(findings, label))
+
+			// Diagnose summary (per-call permission errors + IAM patch)
+			if diagnose && len(discResult.PermissionErr) > 0 {
+				renderDiagnose(os.Stderr, discResult.PermissionErr, discResult.Identity.ARN)
+			}
+
+			// Write the markdown report.
+			reportPath := audit.DefaultReportPath(opts)
+			if writeErr := os.WriteFile(reportPath, []byte(audit.RenderMarkdown(findings)), 0o644); writeErr != nil {
+				return fmt.Errorf("writing report: %w", writeErr)
+			}
+			if !quietFlag {
+				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+reportPath))
+			}
+
+			if severityErr := audit.ExitWithSeverity(findings); severityErr != nil {
+				return severityErr
+			}
+			if scanErr != nil {
+				return &audit.ExitCodeError{Code: 1}
+			}
 			return nil
 		},
 	}
@@ -148,4 +176,61 @@ func coalesceJSON() string {
 		return "json"
 	}
 	return ""
+}
+
+// permErrsToJSON converts *PermissionError slice into the JSON-friendly
+// shape — keeps the JSON output envelope free of pointer/private fields.
+func permErrsToJSON(in []*awsdisc.PermissionError) []map[string]string {
+	out := make([]map[string]string, 0, len(in))
+	for _, e := range in {
+		out = append(out, map[string]string{
+			"service": e.Service,
+			"action":  e.Action,
+			"region":  e.Region,
+			"error":   fmt.Sprintf("%v", e.Cause),
+		})
+	}
+	return out
+}
+
+// renderDiagnose prints the --diagnose summary: per-call permission
+// errors and an actionable IAM policy patch that, if attached to the
+// caller, unblocks the failing API actions.
+func renderDiagnose(w *os.File, errs []*awsdisc.PermissionError, callerARN string) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Permission errors during discovery:")
+	uniqActions := map[string]struct{}{}
+	for _, e := range errs {
+		region := e.Region
+		if region == "" {
+			region = "global"
+		}
+		fmt.Fprintf(w, "  ✗ %-40s → AccessDenied (in %s)\n", e.Action, region)
+		uniqActions[e.Action] = struct{}{}
+	}
+	if len(uniqActions) == 0 {
+		return
+	}
+
+	actions := make([]string, 0, len(uniqActions))
+	for a := range uniqActions {
+		actions = append(actions, a)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Recommended IAM policy patch to fix the above:")
+	fmt.Fprintln(w, "  {")
+	fmt.Fprintln(w, "    \"Effect\": \"Allow\",")
+	fmt.Fprintln(w, "    \"Action\": [")
+	for i, a := range actions {
+		comma := ","
+		if i == len(actions)-1 {
+			comma = ""
+		}
+		fmt.Fprintf(w, "      %q%s\n", a, comma)
+	}
+	fmt.Fprintln(w, "    ],")
+	fmt.Fprintln(w, "    \"Resource\": \"*\"")
+	fmt.Fprintln(w, "  }")
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Caller: %s\n", callerARN)
 }

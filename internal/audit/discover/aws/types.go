@@ -12,7 +12,17 @@ package aws
 import (
 	"fmt"
 	"strings"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 )
+
+// DiscoveredResource is the cross-mode resource shape every audit
+// FindingProvider consumes. Aliased from internal/audit/parsers so the
+// discovery package can return it without dragging the higher-level
+// audit package back in via an import cycle. The aliasing means a
+// resource discovered by the live-AWS path is interchangeable with one
+// parsed from Pulumi/Terraform state by downstream code.
+type DiscoveredResource = parsers.DiscoveredResource
 
 // Identity is the result of an STS GetCallerIdentity probe. Surfaced in
 // the audit report header so the user can see which AWS account + ARN
