@@ -9,10 +9,20 @@ import (
 
 // Config holds the CLI configuration.
 type Config struct {
-	Auth       AuthConfig `json:"auth,omitempty"`
-	LLM        LLMConfig  `json:"llm,omitempty"`
-	APIURL     string     `json:"api_url,omitempty"`
-	DefaultOrg string     `json:"default_org,omitempty"`
+	Auth       AuthConfig      `json:"auth,omitempty"`
+	LLM        LLMConfig       `json:"llm,omitempty"`
+	APIURL     string          `json:"api_url,omitempty"`
+	DefaultOrg string          `json:"default_org,omitempty"`
+	Telemetry  TelemetryConfig `json:"telemetry,omitempty"`
+}
+
+// TelemetryConfig holds the user's opt-in choice for anonymous error
+// reports and usage metrics. Default is "not prompted yet, disabled" —
+// nothing is sent until the user explicitly opts in.
+type TelemetryConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Prompted    bool   `json:"prompted"`
+	PromptedAt  string `json:"prompted_at,omitempty"`
 }
 
 // AuthConfig holds CloudBooster authentication metadata.
@@ -35,7 +45,18 @@ type LLMProvider struct {
 	BaseURL  string `json:"base_url,omitempty"`
 	Model    string `json:"model,omitempty"`
 	LoggedIn bool   `json:"logged_in"`
+
+	// AuthMode records how the provider authenticates. Default ("") and
+	// "api-key" both mean a token stored in the OS keychain. "claude-code-cli"
+	// means cbx shells out to the local `claude` CLI binary (Claude Code)
+	// and reuses its own authentication — no token is stored.
+	AuthMode string `json:"auth_mode,omitempty"`
 }
+
+const (
+	AuthModeAPIKey        = "api-key"
+	AuthModeClaudeCodeCLI = "claude-code-cli"
+)
 
 // Dir returns the configuration directory for cbx.
 func Dir() string {

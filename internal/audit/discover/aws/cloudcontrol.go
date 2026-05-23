@@ -15,7 +15,13 @@ import (
 // region and returns one rawResource per item. Returns (nil, nil) when
 // the type isn't in the CFN registry (UnsupportedActionException) so the
 // caller can skip silently. Other errors propagate.
-func listAndGet(ctx context.Context, c awsCfg, region, cfnType string) ([]rawResource, error) {
+//
+// The spec.KeepIdentifier hook, when set, filters identifiers between
+// the list pagination and the GetResource fan-out — critical for types
+// like AWS::IAM::ManagedPolicy where CloudControl returns ~1,400
+// AWS-managed entries that we never want to audit.
+func listAndGet(ctx context.Context, c awsCfg, region string, spec cfnTypeSpec) ([]rawResource, error) {
+	cfnType := spec.Type
 	regionalCfg := c.withRegion(region)
 	client := cloudcontrol.NewFromConfig(regionalCfg.cfg)
 
@@ -36,9 +42,13 @@ func listAndGet(ctx context.Context, c awsCfg, region, cfnType string) ([]rawRes
 			return nil, classifyCloudControlError(err, cfnType, region, "cloudformation:ListResources")
 		}
 		for _, d := range out.ResourceDescriptions {
-			if d.Identifier != nil {
-				identifiers = append(identifiers, *d.Identifier)
+			if d.Identifier == nil {
+				continue
 			}
+			if spec.KeepIdentifier != nil && !spec.KeepIdentifier(*d.Identifier) {
+				continue
+			}
+			identifiers = append(identifiers, *d.Identifier)
 		}
 		if out.NextToken == nil || *out.NextToken == "" {
 			break

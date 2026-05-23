@@ -25,8 +25,6 @@ func newAuditAWSCmd() *cobra.Command {
 		regions        string
 		awsConcurrency int
 		diagnose       bool
-		llmProvider    string
-		cbKnowledge    bool
 		llmMaxCost     float64
 	)
 
@@ -53,25 +51,15 @@ Discovery uses the CloudControl API across a curated set of CFN types
 permission errors are aggregated and surfaced cleanly; pass --diagnose
 to print every denied API call plus a recommended IAM policy patch.
 
-LLM-grounded mode: pass --llm claude-code --cb-knowledge to ground each
-finding in CloudBooster's curated AWS knowledge via cbx-mcp tool calls.
-The discovered resources (and any cb_describer_* enrichment from the
-per-service describers) are shipped to the model as context; no source
-files are sent. The same --llm-max-cost cap applies as in source mode.`,
+Findings are always grounded in CloudBooster's curated AWS knowledge
+via cbx-mcp tool calls invoked through the Claude Code CLI. This is
+not optional: the audit ships discovered resources (plus
+cb_describer_* enrichment from the per-service describers) to the
+model as context, then matches each finding to a specific CB
+knowledge entry. Claude Code must be on PATH and cbx-mcp must be
+available on disk. Use --llm-max-cost to cap the per-run cost.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if cbKnowledge {
-				if llmProvider == "" {
-					return fmt.Errorf("--cb-knowledge requires --llm claude-code")
-				}
-				if llmProvider != audit.ClaudeCodeProvider {
-					return fmt.Errorf("--cb-knowledge requires --llm claude-code (other providers don't have an MCP tool-call loop)")
-				}
-			}
-			if llmMaxCost != 0 && !cbKnowledge {
-				return fmt.Errorf("--llm-max-cost is only meaningful with --cb-knowledge")
-			}
-
 			profile := os.Getenv("AWS_PROFILE")
 			if len(args) == 1 {
 				profile = args[0]
@@ -108,23 +96,65 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 				}
 			}
 
+			// Live progress UI. Suppressed (no-op) on non-TTY / --quiet
+			// / --json so machine-readable callers stay quiet. The UI
+			// methods are safe to call regardless; wiring stays simple.
+			ui := output.NewAWSDiscoveryUI()
+			if interactive {
+				ui.SetPhase("authenticating")
+				ui.Start()
+				defer ui.Done()
+				discoverParams.OnProgress = func(ev awsdisc.ProgressEvent) {
+					switch ev.Phase {
+					case awsdisc.ProgressPhasePreflight:
+						if ev.Identity != nil {
+							ui.SetIdentity(ev.Identity.ARN)
+						}
+						ui.SetPhase("resolving regions")
+					case awsdisc.ProgressPhaseRegions:
+						ui.SetRegions(ev.Regions)
+						ui.SetPhase("discovering resources")
+					case awsdisc.ProgressPhaseScoutStart:
+						ui.SetPhase("scouting regions for activity")
+						ui.ScoutStart(ev.Total)
+					case awsdisc.ProgressPhaseScoutRegionDone:
+						ui.ScoutRegionDone(ev.Region, ev.Found, ev.Done, ev.Total)
+					case awsdisc.ProgressPhaseScoutDone:
+						ui.ScoutDone(ev.Regions)
+						ui.SetRegions(ev.Regions)
+						ui.SetPhase("discovering resources")
+					case awsdisc.ProgressPhaseDiscoverStart:
+						ui.SetTotalJobs(ev.Total)
+					case awsdisc.ProgressPhaseJobStart:
+						ui.JobStart(ev.Region, ev.Type)
+					case awsdisc.ProgressPhaseEnrichProgress:
+						ui.EnrichProgress(ev.Region, ev.Type, ev.Done, ev.Found)
+					case awsdisc.ProgressPhaseJobDone:
+						ui.JobDone(ev.Region, ev.Type, ev.Found, ev.Done, ev.Total)
+					case awsdisc.ProgressPhaseDiscoverDone:
+						ui.SetPhase("done")
+					}
+				}
+			}
+
 			ctx := context.Background()
 			discResult, err := awsdisc.Discover(ctx, discoverParams)
+			ui.Done()
 			if err != nil {
 				return err
 			}
 
-			// MockScanners (native CB rules) stays the default when no LLM
-			// is requested — keeps `cbx audit aws` zero-config per plan
-			// §7.10. With --llm the LLM analyzer replaces the rule scanners
-			// entirely; native rules and grounded findings would otherwise
-			// fight over the same rule_id namespace and double-count.
+			// CB-grounded LLM analysis is always-on for `cbx audit aws`:
+			// the value of the audit IS the grounding in CB's curated
+			// knowledge, so the native-rules / mock-scanners path is no
+			// longer reachable from the CLI. Library callers in cb-cli
+			// can still construct different Options if they need to.
 			opts := audit.Options{
 				AWS:          true,
 				AWSAccountID: discResult.Identity.AccountID,
-				MockScanners: llmProvider == "",
-				LLMProvider:  llmProvider,
-				CBKnowledge:  cbKnowledge,
+				MockScanners: false,
+				LLMProvider:  audit.ClaudeCodeProvider,
+				CBKnowledge:  true,
 				LLMMaxCost:   llmMaxCost,
 				Quiet:        quietFlag,
 				OutputFormat: outputFormat,
@@ -207,11 +237,10 @@ files are sent. The same --llm-max-cost cap applies as in source mode.`,
 
 	cmd.Flags().StringVar(&configFile, "config", "", "Path to an AWS credentials file (overrides profile resolution)")
 	cmd.Flags().StringVar(&regions, "regions", "", "Comma-separated AWS regions (default: profile default region; 'all' for every enabled region)")
+	cmd.Flags().StringVar(&regions, "region", "", "Alias for --regions (singular form)")
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
-	cmd.Flags().StringVar(&llmProvider, "llm", "", "Ship discovered resources to an LLM analyzer instead of native rules (currently only 'claude-code' is supported)")
-	cmd.Flags().BoolVar(&cbKnowledge, "cb-knowledge", false, "Phase F: ground each finding in CloudBooster's curated AWS knowledge via cbx-mcp tool calls. Requires --llm claude-code.")
-	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 0, "USD ceiling for a single grounded audit; the run is not aborted but a warning finding is emitted when claude's reported total_cost_usd exceeds the cap (0 = default $2.00; only meaningful with --cb-knowledge)")
+	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 0, "USD ceiling for a single grounded audit; the run is not aborted but a warning finding is emitted when claude's reported total_cost_usd exceeds the cap (0 = default $2.00)")
 
 	return cmd
 }

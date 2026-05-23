@@ -1,5 +1,7 @@
 package aws
 
+import "strings"
+
 // discoverableCFNTypes is the curated list of CloudFormation type names
 // that the v1 live-AWS discovery loop will list+get via the CloudControl
 // API. Picked for coverage of the most common workload patterns — every
@@ -18,8 +20,14 @@ package aws
 // the per-region fan-out only lists them once.
 var discoverableCFNTypes = []cfnTypeSpec{
 	// --- global ---
-	{Type: "AWS::IAM::Role", Global: true},
-	{Type: "AWS::IAM::ManagedPolicy", Global: true},
+	{Type: "AWS::IAM::Role", Global: true, KeepIdentifier: keepCustomerIAMRole},
+	// CloudControl's AWS::IAM::ManagedPolicy ListResources returns ALL
+	// policies, including ~1,400 AWS-managed ones (arn:aws:iam::aws:policy/…).
+	// Auditing AWS-managed policies as account resources is pointless —
+	// they're owned by AWS, not the customer — and GetResource-ing all
+	// of them takes 5+ minutes with throttling. Filter to customer-
+	// managed only (account-scoped ARN).
+	{Type: "AWS::IAM::ManagedPolicy", Global: true, KeepIdentifier: keepCustomerIAMPolicy},
 	{Type: "AWS::CloudFront::Distribution", Global: true},
 	{Type: "AWS::Route53::HostedZone", Global: true},
 
@@ -68,10 +76,54 @@ var discoverableCFNTypes = []cfnTypeSpec{
 type cfnTypeSpec struct {
 	Type   string // CFN type name, e.g. "AWS::S3::Bucket"
 	Global bool   // true for IAM / CloudFront / Route53 / etc.
+
+	// KeepIdentifier, if non-nil, is applied to each CloudControl
+	// ListResources identifier before the GetResource call. Returning
+	// false drops the identifier silently (no GetResource issued).
+	// Used to filter AWS-managed noise from types where the CloudControl
+	// list includes resources outside the customer's posture (IAM
+	// managed policies, AWS service-linked roles).
+	KeepIdentifier func(identifier string) bool
 }
 
+// keepCustomerIAMPolicy returns false for AWS-managed policy ARNs
+// (arn:aws:iam::aws:policy/…), true for customer-managed ones
+// (arn:aws:iam::<account>:policy/…). AWS-managed policies aren't part
+// of the customer's posture and listing them all (~1,400) blows the
+// audit budget for no gain.
+func keepCustomerIAMPolicy(identifier string) bool {
+	return !strings.HasPrefix(identifier, "arn:aws:iam::aws:policy/") &&
+		!strings.HasPrefix(identifier, "arn:aws-cn:iam::aws:policy/") &&
+		!strings.HasPrefix(identifier, "arn:aws-us-gov:iam::aws:policy/")
+}
+
+// keepCustomerIAMRole filters out AWS service-linked roles, which the
+// customer can neither modify nor delete and which clutter the role
+// inventory (often dozens per account). CloudControl's primary
+// identifier for AWS::IAM::Role is the RoleName, not the ARN, so we
+// filter by the name prefix AWS uses for SLRs: AWSServiceRoleFor*.
+// AWSReservedSSO_* roles (created by IAM Identity Center) are also
+// AWS-managed and filtered for the same reason.
+func keepCustomerIAMRole(identifier string) bool {
+	return !strings.HasPrefix(identifier, "AWSServiceRoleFor") &&
+		!strings.HasPrefix(identifier, "AWSReservedSSO_")
+}
+
+// fallbackGlobalRegion is the region used for Global types when the
+// caller passed no concrete regions. AWS global services (IAM,
+// CloudFront, Route53) are reachable from any region but the SDK still
+// needs one set; us-east-1 is the canonical home for those services.
+const fallbackGlobalRegion = "us-east-1"
+
 // pickRegionForGlobal returns the region to use when listing a Global
-// type. AWS global services are reachable from any region but the SDK
-// still needs one set; us-east-1 is the canonical home for IAM / CF /
-// Route53.
-const pickRegionForGlobal = "us-east-1"
+// type. It prefers a region the user actually named so the UI doesn't
+// show us-east-1 traffic when the user asked for eu-central-1 — global
+// services route correctly through any region. Falls back to us-east-1
+// when the caller has no regions (shouldn't happen in normal flows but
+// kept defensively).
+func pickRegionForGlobal(userRegions []string) string {
+	if len(userRegions) > 0 {
+		return userRegions[0]
+	}
+	return fallbackGlobalRegion
+}

@@ -21,6 +21,14 @@ type DiscoverParams struct {
 	// Bubble Tea into non-interactive callers.
 	PromptForRegions func(ctx context.Context, enabled []string) ([]string, error)
 
+	// OnProgress, if non-nil, receives ProgressEvent updates throughout
+	// the discovery lifecycle (preflight → regions → per-job → done).
+	// The callback may be invoked from multiple goroutines concurrently
+	// during the fan-out phase, so implementations must be safe for
+	// concurrent use. Wired by the CLI for the live progress display;
+	// library callers (cb-cli, tests) typically leave this nil.
+	OnProgress func(ProgressEvent)
+
 	// Types overrides the curated CFN type list (discoverableCFNTypes).
 	// Used by tests; production callers leave this nil.
 	Types []cfnTypeSpec
@@ -68,6 +76,7 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("AWS preflight failed: %w", err)
 	}
+	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhasePreflight, Identity: &identity})
 
 	regions, err := ResolveRegions(ctx, cfg, p.Regions)
 	if err != nil {
@@ -91,6 +100,28 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 		}
 	}
 
+	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseRegions, Regions: regions})
+
+	// Region scout: when the user asked for --regions all, probe each
+	// enabled region in parallel for any sign of life and narrow the
+	// deep-scan to active regions only. This typically drops 17→3-5
+	// regions and cuts the run by 5-10×. Single-region runs and
+	// explicit lists skip the scout — the user already told us where
+	// to look.
+	var scoutPermErrs []*PermissionError
+	var scoutOtherErrs []error
+	if isAllRegionsRequest(p.Regions) && len(regions) > 1 {
+		active, sperms, sothers := scoutRegions(ctx, cfg, regions, p.OnProgress)
+		scoutPermErrs = sperms
+		scoutOtherErrs = sothers
+		if len(active) > 0 {
+			regions = active
+		}
+		// If the scout found nothing anywhere, keep the original
+		// region list: the deep scan will run end-to-end and confirm
+		// the account is empty — better than silently skipping it.
+	}
+
 	types := p.Types
 	if len(types) == 0 {
 		types = discoverableCFNTypes
@@ -100,8 +131,11 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 		concurrency = 4
 	}
 
-	resources, permErrs, otherErrs := fanOutDiscovery(ctx, cfg, regions, types, concurrency)
+	resources, permErrs, otherErrs := fanOutDiscovery(ctx, cfg, regions, types, concurrency, p.OnProgress)
+	permErrs = append(scoutPermErrs, permErrs...)
+	otherErrs = append(scoutOtherErrs, otherErrs...)
 	deduped := dedupeByURN(resources)
+	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
 
 	return &DiscoverResult{
 		Identity:      identity,
@@ -183,22 +217,18 @@ func perResourceDescriberCost(cfnType string) int {
 // pickRegionForGlobal so we don't N×-fan IAM / CloudFront / Route53.
 // Per-job errors collect into the returned slices; the function never
 // returns a non-nil error itself.
-func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cfnTypeSpec, concurrency int) (
+func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cfnTypeSpec, concurrency int, onProgress func(ProgressEvent)) (
 	resources []DiscoveredResource, permErrs []*PermissionError, otherErrs []error,
 ) {
 	type job struct {
 		region string
 		spec   cfnTypeSpec
 	}
-	type result struct {
-		raws []rawResource
-		err  error
-	}
 
 	var jobs []job
 	for _, t := range types {
 		if t.Global {
-			jobs = append(jobs, job{region: pickRegionForGlobal, spec: t})
+			jobs = append(jobs, job{region: pickRegionForGlobal(regions), spec: t})
 			continue
 		}
 		for _, r := range regions {
@@ -210,8 +240,10 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 		return nil, nil, nil
 	}
 
+	emitProgress(onProgress, ProgressEvent{Phase: ProgressPhaseDiscoverStart, Total: len(jobs)})
+
 	jobCh := make(chan job)
-	resCh := make(chan result, len(jobs))
+	resCh := make(chan jobResult, len(jobs))
 
 	var wg sync.WaitGroup
 	for w := 0; w < concurrency; w++ {
@@ -219,8 +251,7 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 		go func() {
 			defer wg.Done()
 			for j := range jobCh {
-				raws, err := listAndGet(ctx, c, j.region, j.spec.Type)
-				resCh <- result{raws: raws, err: err}
+				resCh <- runJob(ctx, c, j.region, j.spec, onProgress)
 			}
 		}()
 	}
@@ -242,38 +273,97 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 		close(resCh)
 	}()
 
+	done := 0
 	for r := range resCh {
-		for _, raw := range r.raws {
-			dr, mapErr := raw.mapToDiscovered()
-			if mapErr != nil {
-				otherErrs = append(otherErrs, mapErr)
-				continue
-			}
-			// Per-service enrichment: when a describer exists for this
-			// CFN type, run it to backfill data CloudControl doesn't
-			// expose. Failures collect into permErrs / otherErrs but
-			// don't drop the resource — the baseline CC data is still
-			// useful even when enrichment fails.
-			if d := describerFor(dr.Type); d != nil {
-				if eErr := d.Enrich(ctx, c, &dr); eErr != nil {
-					if pe, ok := asPermissionError(eErr); ok {
-						permErrs = append(permErrs, pe)
-					} else {
-						otherErrs = append(otherErrs, eErr)
-					}
-				}
-			}
-			resources = append(resources, dr)
-		}
-		if r.err != nil {
-			if pe, ok := asPermissionError(r.err); ok {
+		resources = append(resources, r.resources...)
+		permErrs = append(permErrs, r.permErrs...)
+		otherErrs = append(otherErrs, r.otherErrs...)
+		if r.listErr != nil {
+			if pe, ok := asPermissionError(r.listErr); ok {
 				permErrs = append(permErrs, pe)
 			} else {
-				otherErrs = append(otherErrs, r.err)
+				otherErrs = append(otherErrs, r.listErr)
 			}
 		}
+		done++
+		emitProgress(onProgress, ProgressEvent{
+			Phase:  ProgressPhaseJobDone,
+			Region: r.region,
+			Type:   r.spec.Type,
+			Found:  len(r.resources),
+			Done:   done,
+			Total:  len(jobs),
+		})
 	}
 	return
+}
+
+// jobResult is the per-job payload workers ship back to the
+// collector: a fully-enriched resource slice plus any errors picked up
+// during list+get or per-resource enrichment.
+type jobResult struct {
+	region    string
+	spec      cfnTypeSpec
+	resources []DiscoveredResource
+	listErr   error
+	permErrs  []*PermissionError
+	otherErrs []error
+}
+
+// runJob executes one (region, type) discovery job end-to-end: list +
+// get + per-resource enrichment. Returning a fully-enriched slice from
+// the worker (rather than enriching serially in the collector) means
+// describer-heavy types like S3 don't block other jobs' progress.
+// In-job progress events fire after each resource is enriched so the
+// UI can show "enriching X/N" during a long describer run.
+func runJob(ctx context.Context, c awsCfg, region string, spec cfnTypeSpec, onProgress func(ProgressEvent)) jobResult {
+	r := jobResult{region: region, spec: spec}
+
+	emitProgress(onProgress, ProgressEvent{Phase: ProgressPhaseJobStart, Region: region, Type: spec.Type})
+
+	raws, lerr := listAndGet(ctx, c, region, spec)
+	if lerr != nil {
+		r.listErr = lerr
+	}
+
+	total := len(raws)
+	d := describerFor(spec.Type)
+	for i, raw := range raws {
+		dr, mapErr := raw.mapToDiscovered()
+		if mapErr != nil {
+			r.otherErrs = append(r.otherErrs, mapErr)
+			continue
+		}
+		if d != nil {
+			if eErr := d.Enrich(ctx, c, &dr); eErr != nil {
+				if pe, ok := asPermissionError(eErr); ok {
+					r.permErrs = append(r.permErrs, pe)
+				} else {
+					r.otherErrs = append(r.otherErrs, eErr)
+				}
+			}
+			// Per-resource progress is only useful for types with a
+			// real describer — for pure-normalization types it'd just
+			// be noise.
+			emitProgress(onProgress, ProgressEvent{
+				Phase:  ProgressPhaseEnrichProgress,
+				Region: region,
+				Type:   spec.Type,
+				Done:   i + 1,
+				Found:  total,
+			})
+		}
+		r.resources = append(r.resources, dr)
+	}
+	return r
+}
+
+// emitProgress is a nil-safe shim around the OnProgress callback. Kept
+// trivial so call sites stay one-liners.
+func emitProgress(cb func(ProgressEvent), ev ProgressEvent) {
+	if cb != nil {
+		cb(ev)
+	}
 }
 
 // asPermissionError type-asserts err down to *PermissionError, returning

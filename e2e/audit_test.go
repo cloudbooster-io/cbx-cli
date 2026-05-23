@@ -1,3 +1,14 @@
+//go:build legacy_iac_audit
+
+// These e2e tests exercise the IaC source / state-file CLI surface
+// (--pulumi-state, --terraform-state, --source, --iac-type, ...) that
+// was removed from the user-facing CLI. The underlying parsers and
+// providers still live in internal/audit, so the library remains
+// callable; only the cobra flag bindings are gone. The tests are kept
+// behind a build tag for the moment in case we ever re-expose the
+// flags. Default builds and CI skip this file. To run:
+//
+//	go test -tags=legacy_iac_audit ./e2e/...
 package e2e
 
 import (
