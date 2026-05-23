@@ -27,7 +27,7 @@ CI (GitLab) runs `validate` (vet + build), `codegen-check`, `go test ./...`, mer
 
 Implications you must respect:
 - **Any breaking change in `pkg/` is a breaking change for `cb-cli`.** Treat `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
-- **`cbx audit` is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to the audit path; mock scanners are the default specifically to keep this property.
+- **`cbx audit` is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to the audit path; mock scanners are the default specifically to keep this property. The one carve-out is `cbx audit aws`, which reads live AWS via the SDK (single-account, ad-hoc, user-initiated); it still makes zero CB API calls and still defaults to native rules unless `--llm` is passed. See `ai_space/analyses/2026-05-23-cbx-audit-live-aws-plan.md` for the boundary vs. the hosted multi-account product in platform-app.
 - **`cbx plan` is BYO-LLM by default** (anonymous tier; user pays the LLM provider, CB pays nothing). Keep it functional without a CB login.
 - **State parsers in `internal/audit/parsers/` are shared substrate** with the hosted "import existing infrastructure" feature in `platform-app`. Changing `DiscoveredResource` shape or parser semantics has cross-repo impact — coordinate.
 - A planned `cbx mcp serve` subcommand will embed an MCP server (Day-2 feature, not yet shipped). When it lands, it must proxy the same `api.cloudbooster.io/v1/*` contract that `cbx-mcp` (Python sibling) uses.

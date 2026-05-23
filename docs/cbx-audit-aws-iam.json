@@ -1,0 +1,77 @@
+{
+  "_comment": "Minimum IAM policy for `cbx audit aws`. Actions cover STS preflight, CloudControl-based discovery, every per-service describer the v1 codebase invokes (S3, IAM, RDS/Lambda/EC2 are pure CC reads), the region-resolution call (ec2:DescribeRegions), and the orphan-detection provider's reads. The AWS-managed AWSReadOnlyAccess policy is a strict superset and is acceptable; use this curated policy when a least-privilege grant is required. Plan §7.6.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Preflight",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:DescribeRegions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudControlDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ListResources",
+        "cloudformation:GetResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3Describer",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketPolicy",
+        "s3:ListBucket"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMRoleDescriber",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DiscoveryReadsForOrphanAndComponentRules",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*",
+        "rds:Describe*",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListFunctions",
+        "elasticloadbalancing:Describe*",
+        "cloudfront:List*",
+        "route53:List*",
+        "dynamodb:List*",
+        "dynamodb:Describe*",
+        "sqs:List*",
+        "sqs:GetQueue*",
+        "sns:List*",
+        "events:List*",
+        "events:Describe*",
+        "logs:Describe*",
+        "cloudwatch:Describe*",
+        "secretsmanager:List*",
+        "secretsmanager:Describe*",
+        "kms:List*",
+        "kms:Describe*",
+        "autoscaling:Describe*",
+        "ecs:List*",
+        "ecs:Describe*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

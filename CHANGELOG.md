@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cbx audit aws [profile]` audits a live AWS account read directly via
+  the SDK — single-account, ad-hoc, user-initiated. Resolves credentials
+  through the standard precedence (`--config` > positional profile >
+  `AWS_PROFILE` > `default`); resolves regions explicitly via
+  `--regions us-east-1,…` / `--regions all` or interactively when the
+  profile has none; runs an STS preflight; discovers resources via
+  CloudFormation CloudControl (`cloudformation:ListResources` /
+  `GetResource`) across a curated set of CFN types covering the common
+  workload primitives; emits findings against the same `Finding` shape
+  every other audit mode uses. `--diagnose` surfaces per-call IAM
+  permission errors and a recommended policy patch. No external CLI
+  dependencies; the default scanner list is the same native CB rules
+  source mode uses. See `ai_space/analyses/2026-05-23-cbx-audit-live-aws-plan.md`
+  for the boundary vs. the hosted multi-account product in platform-app.
+- Per-service describers enrich CloudControl-discovered resources with
+  fields CC doesn't expose: `AWS::S3::Bucket` (PublicAccessBlock,
+  Versioning, Encryption, BucketPolicy presence, ListObjectsV2 probe,
+  ListBuckets-derived CreationDate); `AWS::IAM::Role` (LastUsedDate,
+  decoded AssumeRolePolicyDocument, attached managed policy ARNs);
+  `AWS::RDS::DBInstance` + `AWS::RDS::DBCluster` (engine-resolved CB
+  primitive id via `RDSPrimitiveFor` + normalized security-posture
+  booleans); `AWS::Lambda::Function` (runtime / role / vpc-attached
+  normalization + a key-shape heuristic for cleartext-secret env vars);
+  `AWS::EC2::Instance` (IMDSv2-required, instance-profile ARN, state,
+  public-IP presence).
+- `internal/audit.orphanProvider` is a new `FindingProvider` (registered
+  in `MockScanners()` and `AllScanners()`) with five info-severity
+  detectors over CloudControl-discovered resources: unattached EBS
+  volumes (with `gp3` $/GB-mo cost estimate), unassociated Elastic IPs
+  ($3.65/mo flat), IAM roles unused for 90+ days, empty S3 buckets older
+  than 30 days, security groups with no other-resource references.
+  Filters to `AWS::`-typed resources at Scan time, so state- and
+  source-mode audits silently no-op.
+- Component grouping pass under `internal/audit/group/` (re-exported
+  via `pkg/audit.Component`) projects discovered resources through a
+  tag-based lens (priority `Application` > `Service` > `Component` >
+  `Project`, configurable) and a CB-primitive lens. The grouped
+  components land on `Result.Components` and render in the audit's
+  Markdown report under `## Components` with each finding placed under
+  its primary component; resources matching no lens fall into
+  `## Account-wide Findings`.
+- `cbx audit aws --llm claude-code --cb-knowledge` ships the
+  discovered resources to the Phase F grounded analyzer via cbx-mcp.
+  The grounded prompt builder emits an AWS-discovery header instead of
+  the source-files block when invoked through the new
+  `llmAnalyzer.ScanResources` entry point, includes the
+  `cb_describer_*` describer enrichment per resource, and honors the
+  engine-resolved CB primitive id (so RDS instances ground against
+  `aws:db/postgres@v1` rather than the unmapped CFN type).
+- `audit.RunFromResources(opts, resources, *AWSAuditContext)` mirrors
+  `audit.Run` for the AWS path: scanner pipeline + component grouping
+  + AWS-mode markdown render + populated `Result`. Re-exported via
+  `pkg/audit`. `AWSAuditContext` carries the account / identity /
+  regions / CloudTrail-event-count estimate the report header reads.
+- `pkg/audit` facade: re-exports `Finding`, `Result`, `Component`,
+  `Options`, `DiscoveredResource`, severity + IaC constants, lookup
+  helpers (`CFNTypeToCBPrimitive`, `TFTypeToCBPrimitive`,
+  `PulumiTypeToCBPrimitive`, `RDSPrimitiveFor`), entry points
+  (`Run`, `Collect`, `CollectFromResources`, `RunFromResources`), and
+  the rendering helpers (`RenderMarkdown`, `RenderAWSMarkdown`,
+  `RenderPlain`, `DefaultReportPath`, `ExitWithSeverity`). Per
+  CLAUDE.md, `pkg/audit` joins `pkg/auth`, `pkg/config`, `pkg/output`
+  as semver-public surface for `cb-cli` consumption.
+- `tools/genprimitives` extended to emit a CFN-type-keyed companion
+  to the existing Terraform / Pulumi → CB-primitive maps (82 CFN
+  aliases). `audit.CFNTypeToCBPrimitive(cfnType)` is the public lookup.
+- `ClassifyWorkloads` accepts both Terraform and CFN-shaped resource
+  types via an internal `cfnTypeToTFEquivalent` translation map, so
+  the grounded analyzer's workload primer (`aws_best_practices_for`)
+  fires the same way on live-AWS audits as it does on source audits.
+- `docs/cbx-audit-aws-iam.json` — minimum IAM policy a least-privilege
+  caller of `cbx audit aws` needs. `AWSReadOnlyAccess` is an acceptable
+  superset.
 - `cbx audit --source <dir>` audits an IaC source tree without a state file
   or cloud credentials. Stays fully offline by default (mock scanner) and
   opts into real `tfsec` / `checkov` / `trivy` binaries via `--scanners=`.
