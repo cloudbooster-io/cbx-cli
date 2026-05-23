@@ -1,4 +1,4 @@
-# Implementation plan — `cbx audit --aws` (live AWS account audit)
+# Implementation plan — `cbx audit aws` (live AWS account audit)
 
 **Status:** proposed, not yet ticketed
 **Author:** drafted by Claude Code, 2026-05-23, in collaboration with @radek.forgac
@@ -17,9 +17,9 @@
 
 ## 1. Why this doc exists
 
-`cbx audit` today reads from **declared infrastructure** — Pulumi state, Terraform state, IaC source trees. The natural fourth input is **deployed infrastructure read directly from an AWS account**: a developer logs into a profile, runs `cbx audit --aws`, and gets findings against what's actually running, grouped into components, grounded in CloudBooster's curated knowledge.
+`cbx audit` today reads from **declared infrastructure** — Pulumi state, Terraform state, IaC source trees. The natural fourth input is **deployed infrastructure read directly from an AWS account**: a developer logs into a profile, runs `cbx audit aws`, and gets findings against what's actually running, grouped into components, grounded in CloudBooster's curated knowledge.
 
-This is the input shape `prowlerAdapter` was always built for — `internal/audit/adapter_prowler.go` is gated `ErrSourceModeUnsupported` because there was no live-AWS input mode. This plan unlocks it.
+This is the input shape `prowlerAdapter` was always built for (`internal/audit/adapter_prowler.go` is gated `ErrSourceModeUnsupported` because there was no live-AWS input mode). v1 does not invoke it — see §7.10 for why — but the input mode this plan creates is what eventually unlocks it.
 
 ### 1.1 Strategy reversal vs `agent-arch-talks/rework-2.5.1/01-strategy.md`
 
@@ -36,17 +36,17 @@ Implementation work in §13 includes a one-line update to both `CLAUDE.md` and `
 
 ## 2. Goal
 
-Make `cbx audit --aws` produce findings that:
+Make `cbx audit aws` produce findings that:
 
 1. **Inventory** every resource the configured AWS profile can read, across the user-selected regions, with no external setup (no Config, no Resource Explorer indexes).
 2. **Group** discovered resources into components using two complementary lenses in v1 (tag-based + CB-primitive match), with two more added in later phases (network topology + reference graph).
-3. **Audit** each component / resource against CloudBooster's curated AWS knowledge via the existing Phase F grounded analyzer (`--cb-knowledge`), and against the existing scanner adapters (especially **prowler**, which is purpose-built for this input).
+3. **Audit** each component / resource against CloudBooster's curated AWS knowledge via the existing Phase F grounded analyzer (`--cb-knowledge`) and native CB rules. v1 deliberately ships with no external CLI dependencies (§7.10).
 4. **Flag orphans, misconfigurations, and recommended changes** in the same `Finding` shape as every other `cbx audit` mode, so JSON envelope / exit codes / report rendering all stay unchanged.
 
 ### 2.1 Success criteria for v1
 
-- `cbx audit --aws` against a small dev account (≤ 50 resources, 1 region) finishes in ≤ 60s with zero account setup beyond `aws configure`.
-- Output includes at least one finding from each: prowler check (security), CB-knowledge-grounded check (best-practice), and orphan-detection check (cost/hygiene).
+- `cbx audit aws` against a small dev account (≤ 50 resources, 1 region) finishes in ≤ 60s with zero account setup beyond `aws configure`.
+- Output includes at least one finding from each: native CB-rule check (correctness), CB-knowledge-grounded check (best-practice, when `--cb-knowledge` is on), and orphan-detection check (cost/hygiene).
 - Resources are grouped into ≥ 1 named component (tag-based) plus a `cb:<primitive>:<id>` group for any matched CB recipe.
 - IAM permission errors are caught early with a clear "you need these IAM actions" error, not a flood of partial failures.
 
@@ -75,10 +75,10 @@ Listed because they're tempting and they're not what this is.
 |---|---|---|
 | `internal/audit.FindingProvider` interface | **reuse** | New AWS-discovery-backed providers register the same way |
 | `internal/audit.DiscoveredResource` | **reuse, possibly extend** | May need a small `AWS *AWSDiscoveredMeta` extension for ARN / region / account |
-| `internal/audit/adapter_prowler.go` | **unlock** | Already implemented; flip `SupportsSource` semantics or add a `SupportsAWS` axis |
+| `internal/audit/adapter_prowler.go` | **leave alone in v1** | Ready to be unlocked (just needs a `SupportsAWS` axis), but v1 keeps no-external-CLI rule. Picked up in a follow-up. |
 | `internal/audit/llm_grounded.go` (Phase F) | **reuse** | Same grounded-analyzer path works against `DiscoveredResource` regardless of where the resource was discovered |
 | `internal/audit/primitives_aws.go` (Phase F primitive map) | **extend** | Currently keyed on Terraform type names; needs a CFN-type-keyed companion (see §6) |
-| `pkg/cmd/audit.go` flag plumbing | **extend** | Add `--aws`, `--aws-profile`, `--regions` |
+| `pkg/cmd/audit.go` + new `pkg/cmd/audit_aws.go` | **extend + add** | Existing flag-based modes stay unchanged; `aws` lands as a sibling subcommand |
 | `internal/audit/runner.go` (state/source dispatch) | **extend** | Add an AWS branch |
 | `pkg/output` JSON envelope | **reuse** | Zero changes |
 
@@ -108,8 +108,8 @@ Listed because they're tempting and they're not what this is.
 
 | Phase | Scope | Estimate | Ship gate |
 |---|---|---|---|
-| **v1** | `--aws` + `--aws-profile` + `--regions`. CloudControl discovery + curated per-service for the top ~10 types. Tag-based grouping + CB-primitive matching (gated on §6). Prowler integration + Phase F grounded analyzer. IAM preflight. | ~2 weeks | E2E against a real dev account; ≥ 1 finding from each of prowler / grounded / orphan; IAM-insufficient error is clean |
-| **v1.1** | (only if §6 punts) lookup-table CFN→Terraform-name normalization so CB-primitive matching works even without genprimitives extension | ~2 days | Primitive matching emits ≥ 80% of resources to known primitives on the test account |
+| **v1** | `cbx audit aws [profile]` subcommand. `--config` / `--regions` / `--diagnose` / `--aws-concurrency` flags. CloudControl discovery + curated per-service for the top ~10 types. Tag-based grouping + CB-primitive matching (§6 extension is in-scope, not a prerequisite). Native CB rules + orphan detection + Phase F grounded analyzer. IAM preflight + interactive region prompt. **No external CLI dependencies.** | ~2 weeks | E2E against a real dev account; ≥ 1 finding from each of native-rule / grounded / orphan; IAM-insufficient + `--diagnose` produces a usable policy patch |
+| **v1.1** | *(retired)* §6 fallback no longer needed — the CFN-alias extension is part of v1 | — | — |
 | **v2** | Network topology grouping (VPC → subnet → resource membership) + VPC-scoped findings | ~3–5 days | Topology-based finding emitted; report renders a per-VPC section |
 | **v3** | Reference-graph grouping — walk SG egress, IAM trust policies, S3 bucket policies, Lambda triggers; cluster transitively | ~2 weeks | Cross-resource graph findings (e.g. "this IAM role has admin access and is assumable from an EC2 with public IP") |
 
@@ -119,31 +119,25 @@ v1 is the only phase ticketed by this doc. v1.1 / v2 / v3 get separate plan docs
 
 ## 6. v1 prerequisite — primitive-id map for CFN-style type names
 
-**The blocker the advisor flagged.** `internal/audit/primitives_aws.go` (generated by `tools/genprimitives/`) maps Terraform type names → CB primitive IDs (`aws_s3_bucket → aws:s3/bucket@v1`). CloudControl API returns CloudFormation type names (`AWS::S3::Bucket`). The two namespaces don't overlap.
+**Investigated 2026-05-23 — no longer a v1 risk.** `internal/audit/primitives_aws.go` (generated by `tools/genprimitives/`) maps Terraform type names → CB primitive IDs (`aws_s3_bucket → aws:s3/bucket@v1`). CloudControl API returns CloudFormation type names (`AWS::S3::Bucket`).
 
-Two paths:
-
-### Path A — extend genprimitives (preferred)
-
-Check whether `platform-app/be/app/knowledge/resources/aws/primitives/*/primitive.md` frontmatter carries a CFN-type field (or could). If yes, extend `tools/genprimitives/main.go` to emit a second map:
+**The investigation result:** `platform-app/be/app/knowledge/resources/aws/primitives/*/primitive.md` frontmatter does **not** carry a CFN type field — it only carries `type_ids`, `tags`, and `composition`. BUT the existing generator already hand-curates Terraform + Pulumi aliases in an `aliasTable` (see `tools/genprimitives/main.go` lines 53–115). The CFN extension fits the same pattern:
 
 ```go
-// generated alongside terraformTypeToCBPrimitive
-var cfnTypeToCBPrimitive = map[string]string{
-    "AWS::S3::Bucket":   "aws:s3/bucket@v1",
-    "AWS::IAM::Role":    "aws:iam/role@v1",
-    "AWS::Lambda::Function": "aws:compute/lambda@v1",
-    // …
+type aliasEntry struct {
+    Dir     string   // e.g. "s3_bucket"
+    TF      []string // existing — e.g. "aws_s3_bucket"
+    Pulumi  []string // existing — e.g. "aws:s3/bucket:Bucket"
+    CFN     []string // NEW — e.g. "AWS::S3::Bucket"
+    Comment string
 }
 ```
 
-**Action item before v1 kicks off:** verify the frontmatter shape in platform-app. If the field exists, this is a half-day of work. If it doesn't, it needs to be added — coordinate with platform-app owners.
+The generator then emits a third map (`cfnTypeToCBPrimitive`) alongside the existing two. Populating CFN names is mechanical — they follow a regular pattern (`AWS::Service::Resource`) and there are ~50 entries to fill.
 
-### Path B — hand-curated lookup (v1.1 fallback)
+**Scope:** ~half a day, entirely inside `cbx-cli`, zero cross-repo coordination. Folds into v1 as a regular task, not a prerequisite.
 
-If Path A slips, ship v1 with **tag-based grouping only** and add a small hand-written `cfnToTerraform` lookup table for the ~30 most common types as v1.1. Worse engineering (drift potential, manual maintenance) but unblocks shipping.
-
-**Recommendation:** spike Path A first. Estimate 1 day for the genprimitives extension assuming the frontmatter cooperates; fall back to Path B only if it doesn't.
+**No fallback needed.** v1 ships with CB-primitive matching working.
 
 ---
 
@@ -151,26 +145,47 @@ If Path A slips, ship v1 with **tag-based grouping only** and add a small hand-w
 
 ### 7.1 CLI surface
 
-`pkg/cmd/audit.go`:
+**`aws` is a subcommand of `audit`, not a flag.** The other input modes stay flag-based (no breaking change to existing usage); `aws` lands as a sibling subcommand because its semantics differ — it takes a *profile selector* (or credentials file), not a path to a file/dir.
+
+`pkg/cmd/audit_aws.go` (new file):
 
 ```go
-// new flags
-cmd.Flags().BoolVar(&awsAccount, "aws", false,
-    "Audit a live AWS account using the default AWS SDK credential chain "+
-        "(env vars, ~/.aws/credentials, IAM role, SSO). Mutually exclusive "+
-        "with --pulumi-state / --terraform-state / --source.")
-cmd.Flags().StringVar(&awsProfile, "aws-profile", "",
-    "AWS profile name to use (overrides AWS_PROFILE env var). "+
-        "Only meaningful with --aws.")
+// cbx audit aws                        — default profile (AWS_PROFILE env or "default")
+// cbx audit aws prod                   — positional arg names the profile
+// cbx audit aws --config /path/creds   — explicit credentials file (overrides profile)
+// cbx audit aws --regions us-east-1,eu-west-1
+// cbx audit aws --regions all
+//
+// All grouped/inherited audit flags (--output, --report-file, --llm,
+// --cb-knowledge, --llm-max-cost, --yes, --json, --quiet, etc.) work
+// identically on the subcommand.
+
+cmd := &cobra.Command{
+    Use:   "aws [profile]",
+    Short: "Audit a live AWS account using the default SDK credential chain or an explicit profile / credentials file.",
+    Args:  cobra.MaximumNArgs(1),
+    RunE:  runAuditAWS,
+}
+cmd.Flags().StringVar(&configFile, "config", "",
+    "Path to an AWS credentials file (overrides profile resolution). "+
+        "Equivalent to setting AWS_SHARED_CREDENTIALS_FILE for this run.")
 cmd.Flags().StringVar(&regions, "regions", "",
     "Comma-separated AWS regions to audit. Default: the profile's "+
-        "configured region. Use 'all' to audit every enabled region in "+
-        "the account. Only meaningful with --aws.")
+        "configured region (prompts if missing — see §7.5). "+
+        "Use 'all' to audit every enabled region in the account.")
+cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4,
+    "Max concurrent AWS API calls per service. Lower if you hit throttling.")
 ```
 
-**Mutual exclusion update:** exactly one of `--pulumi-state` / `--terraform-state` / `--source` / `--aws` must be set. Update the error message in `validateInputMutex`.
+**Resolution precedence for the AWS profile** (highest wins):
+1. `--config <path>` — explicit credentials file
+2. positional `[profile]` arg
+3. `AWS_PROFILE` env var
+4. `default` profile in `~/.aws/credentials`
 
-**Why `--aws` is a bool, not a value-bearing flag like `--source <dir>`:** the input "AWS account" has no path-like value. The account is implicit in the credential chain. `--aws-profile` carries the selector. This is the cleanest mapping of CLI conventions.
+The existing `cbx audit` command keeps its current flag-based input selection (`--pulumi-state`, `--terraform-state`, `--source`). When the user runs `cbx audit` *without* any input flag *and* without the `aws` subcommand, the usage error lists all four options.
+
+**Why subcommand + positional, not `--aws` flag:** the existing input flags all take a *path value*. AWS profile is a *named selector*, not a path. Modelling it as a subcommand with an optional positional reads naturally (`cbx audit aws prod` matches how `aws --profile prod sts get-caller-identity` reads) and avoids visually pretending it's a fourth file-path flag.
 
 ### 7.2 Options struct
 
@@ -180,13 +195,16 @@ cmd.Flags().StringVar(&regions, "regions", "",
 type Options struct {
     // existing fields...
 
-    AWS        bool     // when true, audit a live AWS account
-    AWSProfile string   // optional profile name (overrides AWS_PROFILE)
-    Regions    []string // resolved region list (single, multi, or all-enabled)
+    AWS               bool     // true when invoked via `audit aws` subcommand
+    AWSProfile        string   // resolved profile (positional arg | AWS_PROFILE | "default")
+    AWSConfigFile     string   // optional path to credentials file (--config)
+    Regions           []string // resolved region list (single, multi, or all-enabled)
+    AWSConcurrency    int      // per-service API-call concurrency cap
+    Diagnose          bool     // --diagnose: emit per-call permission errors + IAM fix
 }
 ```
 
-`StateFile`, `SourceDir`, `AWS` are mutually exclusive (validated in `pkg/cmd/audit.go`).
+`StateFile`, `SourceDir`, `AWS` are mutually exclusive (validated at the cobra layer, not in `Options`).
 
 ### 7.3 Runner branch
 
@@ -242,16 +260,29 @@ discover/aws/
 
 **Rate-limiting:** AWS APIs throttle hard. Use `aws-sdk-go-v2`'s built-in adaptive retry. Cap concurrent per-service describer calls at N=4 by default; expose `--aws-concurrency` if real users hit limits.
 
-### 7.5 IAM preflight (mandatory)
+### 7.5 IAM preflight + region resolution
 
 Before any discovery call, the runner calls `sts.GetCallerIdentity` to:
 1. Confirm credentials are present and not expired.
 2. Surface the account ID and ARN in the report header.
 3. Bail with a clear error if the credentials are missing/invalid — no partial discovery.
 
-After identity check, the runner attempts `ec2.DescribeRegions` to validate the region list. If the user passed `--regions all`, this is also where the enumeration happens.
+**Region resolution sequence:**
 
-**No explicit policy check.** AWS doesn't have a real "test these permissions" API (IAM Access Analyzer is a stretch and requires extra setup). Permission failures during discovery surface as per-resource-type warnings ("listed 0 EC2 instances — possible permissions issue, check `cbx audit --aws --diagnose`") rather than blocking.
+1. If `--regions` was passed, validate via `ec2.DescribeRegions` and use as-is. `--regions all` triggers the enumeration here.
+2. Else if the profile has a default region (`region = …` in `~/.aws/config`, or `AWS_REGION` env), use it.
+3. Else **prompt the user interactively** with the list of enabled regions:
+   ```
+   ? Profile 'prod' has no default region configured.
+     Which region(s) should this audit cover?
+       › us-east-1  (most resources here, based on a quick S3-bucket-region peek)
+         eu-west-1
+         all enabled regions
+         enter custom list...
+   ```
+4. In non-interactive mode (`--json`, `--quiet`, `--yes`, or no TTY), the prompt is replaced by a clean error: `region is required: pass --regions <list> or set AWS_REGION`.
+
+**No explicit policy check.** AWS doesn't have a real "test these permissions" API. Permission failures during discovery surface as per-resource-type warnings ("listed 0 EC2 instances — possible permissions issue, re-run with `--diagnose`") rather than blocking. The `--diagnose` flag (§7.13) gives the actionable detail.
 
 ### 7.6 Minimum IAM policy (documented)
 
@@ -291,7 +322,7 @@ After identity check, the runner attempts `ec2.DescribeRegions` to validate the 
 
 ### 7.7 CloudTrail / observability note (user-facing)
 
-Every discovery call generates a CloudTrail event in the audited account. For a small account, expect ~50–200 events per `cbx audit --aws` run. The doc page must say this explicitly — security-conscious users will ask. Add the note to the report header:
+Every discovery call generates a CloudTrail event in the audited account. For a small account, expect ~50–200 events per `cbx audit aws` run. The doc page must say this explicitly — security-conscious users will ask. Add the note to the report header:
 
 ```
 audited account:  123456789012
@@ -299,6 +330,8 @@ audited regions:  us-east-1, eu-west-1
 identity:         arn:aws:iam::123456789012:user/alice
 note:             this run generated ~120 CloudTrail Read events
 ```
+
+API call cost is intentionally not surfaced — every AWS Describe* / List* / Get* call used by discovery is free, so the line would read "$0.00" forever.
 
 ### 7.8 Component grouping
 
@@ -349,11 +382,16 @@ Native CB rule, runs only in `--aws` mode. Walks the discovered resource graph f
 
 Each emits an `info`-severity finding with the orphan ARN + estimated monthly cost where calculable. The cost-estimation is back-of-envelope (per-GB-month rates baked in, not Pricing API).
 
-### 7.10 Prowler integration
+### 7.10 Prowler integration — **deferred out of v1**
 
-`adapter_prowler.go` gets a new `SupportsAWS() bool` axis (returns `true`) alongside the existing `SupportsSource()`. The runner picks scanners that support the active input mode.
+`adapter_prowler.go` is ready to be unlocked for `--aws` mode (just needs a `SupportsAWS() bool` axis added). **v1 deliberately does not enable it** because the constraint for this train is *no external CLI dependencies* — cbx should not shell out to a `prowler` binary the user has to install separately.
 
-By default, prowler **is not** auto-invoked (consistent with the existing mock-default principle — opt-in via `--scanners=prowler`). When invoked, the runner passes through `AWS_PROFILE` from `Options.AWSProfile` and constrains via `--region` per the resolved region list.
+This means v1's finding sources are entirely native:
+- **Native CB rules** over the discovered resources (the same `staticScanner.evaluateResource()` path that source mode uses on parsed HCL)
+- **Orphan detection** (§7.9, a new native provider)
+- **Phase F grounded analyzer** when `--cb-knowledge` is passed (§7.11)
+
+Prowler unlock becomes a follow-up phase if/when the no-external-CLI constraint relaxes. The hook surface in `adapter_prowler.go` stays — no code rot — but the runner won't select it for AWS mode in v1.
 
 ### 7.11 Phase F grounded analyzer
 
@@ -364,6 +402,39 @@ By default, prowler **is not** auto-invoked (consistent with the existing mock-d
 Report header gains an "Audited account" section (§7.7). Component grouping renders as `## Components` with one subsection per `Component`. Findings render under their component when possible, with cross-component findings (e.g. orphan SGs) in a separate `## Account-wide findings` section.
 
 JSON envelope: `Result.Components []Component` is a new top-level field. Backward-compatible — existing consumers ignore unknown fields. `pkg/audit` exports the type alias so `cb-cli` can consume.
+
+### 7.13 `--diagnose` mode
+
+A flag on the `aws` subcommand (and only on that subcommand). Default off.
+
+**Without `--diagnose`** — permission failures aggregate into one warning per service:
+
+```
+WARN: 12 IAM-permission errors in s3.*; re-run with --diagnose for details
+```
+
+**With `--diagnose`** — per-call detail + actionable IAM policy patch:
+
+```
+Permission errors during discovery:
+  ✗ s3:ListAllMyBuckets    → AccessDenied (arn:aws:iam::123:user/alice)
+  ✗ iam:ListRoles          → AccessDenied
+  ✗ lambda:ListFunctions   → AccessDenied
+  ✗ ec2:DescribeInstances  → AccessDenied (eu-west-1 only)
+
+Recommended IAM policy patch to fix the above:
+  { "Effect": "Allow",
+    "Action": ["s3:ListAllMyBuckets", "iam:ListRoles",
+               "lambda:ListFunctions", "ec2:DescribeInstances"],
+    "Resource": "*" }
+
+Apply with: aws iam put-user-policy --user-name alice \
+              --policy-name cbx-audit --policy-document file://patch.json
+```
+
+Implementation: every AWS-SDK call in the discovery layer wraps its error in a `PermissionError` with the (service, action, region) tuple parsed from the `*smithy.OperationError`. The diagnose-mode renderer collects all `PermissionError`s and emits the policy-patch JSON at the end of the report.
+
+**Ships in v1.** IAM-policy debugging is the #1 first-run friction; the half-day to add this saves real user pain.
 
 ---
 
@@ -417,17 +488,15 @@ CloudControl supports ~700 of ~1,400 AWS types. The remainder are CFN-registry-a
 - Curated per-service describers in §7.4 fill the most painful gaps.
 - v2+ adds describers as user reports come in.
 
-### R2 — Primitive-id map gap (§6)
+### R2 — Primitive-id map gap (§6) — **mitigated by 2026-05-23 investigation**
 
-**Probability:** medium. **Impact:** high if it lands in §6 Path B.
-
-If genprimitives extension is harder than the half-day estimate, v1 ships **tag-based only** and primitive matching becomes v1.1. Communicated as a known limitation; the product remains useful.
+Originally flagged as a v1 blocker. Investigation found the genprimitives generator already hand-curates the alias table; adding a `CFN []string` field follows the same pattern as the existing TF/Pulumi alias columns. Half-day task inside cbx-cli, no cross-repo coordination. Demoted from "risk" to "regular v1 work."
 
 ### R3 — `api.cloudbooster.io` still NXDOMAIN
 
 **Probability:** medium (per the 2026-05-11 smoke). **Impact:** high for the grounded path, zero for the offline default.
 
-`cbx audit --aws` (no `--cb-knowledge`) works end-to-end with prowler + orphan detection + native rules. The `--cb-knowledge` path stays in the same broken state as today, until the backend is provisioned. Doc this clearly; don't gate v1 on backend revival.
+`cbx audit aws` (no `--cb-knowledge`) works end-to-end with native CB rules + orphan detection. The `--cb-knowledge` path stays in the same broken state as today, until the backend is provisioned. Doc this clearly; don't gate v1 on backend revival.
 
 ### R4 — IAM permission failures cascade into noisy output
 
@@ -441,13 +510,11 @@ Mitigation: per-service describer wraps its errors in a `PermissionDenied` senti
 
 Some resources (IAM, CloudFront, Route53) are global; they appear in any region scan. The discovery layer dedupes by ARN before returning.
 
-### R6 — Prowler binary not installed
+### R6 — Prowler binary not installed — **N/A in v1**
 
-**Probability:** high (Prowler isn't bundled). **Impact:** low.
+Removed. v1 does not invoke prowler (§7.10). Re-emerges if/when the no-external-CLI constraint relaxes.
 
-`--scanners=prowler` already errors cleanly when the binary is missing; v1 inherits this behavior unchanged.
-
-### R7 — User runs `cbx audit --aws` against a prod account by accident
+### R7 — User runs `cbx audit aws` against a prod account by accident
 
 **Probability:** medium. **Impact:** low (it's read-only, but CloudTrail noise is real).
 
@@ -455,14 +522,20 @@ Mitigation: when the resolved account ID matches a pattern like `prod`, `product
 
 ---
 
-## 11. Open questions (to settle before kick-off)
+## 11. Open questions — resolved 2026-05-23
 
-1. **§6 path.** Does `platform-app/be/app/knowledge/resources/aws/primitives/*/primitive.md` frontmatter carry a CFN type field? If not, who adds it? **Owner: platform-app frontend/backend lead.**
-2. **Boolean vs value flag.** Is `--aws` (bool) + `--aws-profile <name>` the right ergonomic, or do we prefer `--aws-profile default` as the single trigger flag? Current draft picks the former.
-3. **Region default behavior.** When no `--regions` and the profile has no default region, do we error or auto-pick `us-east-1`? Current draft says error (explicit > implicit).
-4. **Prowler-by-default for `--aws` mode?** v1 keeps prowler opt-in (`--scanners=prowler`). Should `--aws` flip the default since prowler is purpose-built for this input? Arguments both ways.
-5. **`--diagnose` flag.** §7.5 mentions this as a UX for IAM debugging. Ship in v1 or v1.1?
-6. **Cost surfacing.** Should the report header estimate the total AWS API cost of the run? It's $0 today (Describe* calls are free), but the line is reassuring. Probably yes.
+All six original open questions are settled. Captured here as a decision log.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | §6 — does platform-app frontmatter carry a CFN type field? | **No, and we don't need it.** The genprimitives generator already hand-curates Terraform + Pulumi aliases; CFN aliases extend the same pattern. ~half a day inside cbx-cli, no platform-app coordination. |
+| 2 | Boolean `--aws` flag vs subcommand? | **Subcommand.** `cbx audit aws [profile]`, with `--config <path>` and `--regions <list>` as flags on the subcommand. Reads naturally because AWS profile is a *named selector*, not a *path value*. Existing input flags (`--pulumi-state` etc.) stay unchanged. See §7.1. |
+| 3 | Region default when profile has none? | **Prompt interactively.** Show enabled regions + "all" option. In non-interactive mode (`--json`, `--quiet`, `--yes`, or no TTY), error with a clear "pass --regions" message. See §7.5. |
+| 4 | Prowler invoked by default for AWS mode? | **No — prowler deferred out of v1 entirely.** v1 has no external CLI dependencies; findings come from native CB rules + orphan detection + Phase F grounded analyzer. Prowler stays available in the codebase for a follow-up phase. See §7.10. |
+| 5 | Ship `--diagnose` in v1? | **Yes, in v1.** IAM-policy debugging is the #1 first-run friction; the actionable per-call error + policy-patch JSON output is worth the half-day. See §7.13. |
+| 6 | Surface API cost line in report? | **No.** Discovery uses only free AWS API calls; the line would read "$0.00" forever. Saved as a footnote in §7.7. |
+
+No open questions remain blocking. v1 is ready to ticket.
 
 ---
 
@@ -507,8 +580,8 @@ These are tracked here so they don't get lost when v1 is ticketed.
 
 The framing as a fourth `--<input>` flag on the existing `cbx audit` command means:
 - Every downstream surface (exit codes, JSON envelope, report rendering, `--llm`, `--cb-knowledge`, `--scanners`) works unchanged.
-- The new code is concentrated in three places (discovery, grouping, prowler unlock), which are each independently testable.
+- The new code is concentrated in three places (discovery, grouping, the `aws` subcommand wiring), each independently testable.
 - The pkg/internal layering rule is preserved — new code goes in `internal/`, exposed only through `pkg/audit` type aliases as needed.
 - `cb-cli` gets the feature for free the moment it picks up the new `pkg/cmd.Execute` signature; no proprietary fork required.
 
-The single thing that can derail v1 is §6. If the primitive-map extension blocks for more than a day, v1 ships with tag-based grouping only and §6 becomes v1.1's headline. That's a known graceful degradation, not a project risk.
+No open questions block v1 (§11). The original §6 risk evaporated once we verified the genprimitives generator already hand-curates aliases — extending it for CFN names is regular work, not a coordination headache.
