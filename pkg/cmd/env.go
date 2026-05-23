@@ -15,9 +15,10 @@ import (
 
 func newEnvCmd() *cobra.Command {
 	env := &cobra.Command{
-		Use:   "env",
-		Short: "Manage and inspect environments",
-		Long:  `List environments, view status, cost, drift, and logs.`,
+		Use:     "env",
+		Aliases: []string{"envs"},
+		Short:   "Manage and inspect environments",
+		Long:    `List environments, view status, cost, drift, and logs.`,
 	}
 	env.AddCommand(
 		newEnvListCmd(),
@@ -28,8 +29,9 @@ func newEnvCmd() *cobra.Command {
 
 func newEnvListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List environments for the current project",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List environments for the current project",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errors.New("not implemented")
 		},

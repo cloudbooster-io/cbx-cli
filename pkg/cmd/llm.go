@@ -60,14 +60,10 @@ Two flavours of provider:
 
   api  — direct HTTP to an API endpoint (Anthropic / OpenAI / …) using
          your own API key. Token is stored in the OS keychain.
-           cbx llm api login claude --token sk-ant-...
-           cbx llm api test claude
 
   cli  — shell out to a local CLI binary that already owns its own
          authentication (Claude Code, Codex CLI, …). No token is stored
          by cbx; the CLI handles auth.
-           cbx llm cli list
-           cbx llm cli test claude-code
 
 Use 'cbx llm list' for a combined view and 'cbx llm default <name>' to
 pick which provider plan/audit use by default.`,
@@ -119,6 +115,11 @@ Providers:
 The token can be passed via --token, the CBX_LLM_TOKEN env var, or an
 interactive prompt. To use a local CLI binary (Claude Code, Codex CLI)
 instead of an API key, see 'cbx llm cli'.`,
+		Example: `  # Interactive prompt for the key
+  cbx llm api login claude
+
+  # Pass the key inline (non-interactive)
+  cbx llm api login codex --token sk-...`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return fmt.Errorf("missing provider argument\n\nUsage: cbx llm api login <provider>\nProviders: claude, codex\n\nTo use a local CLI binary instead, see: cbx llm cli")
@@ -230,8 +231,9 @@ func newLLMAPILogoutCmd() *cobra.Command {
 
 func newLLMAPIListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List configured HTTP API providers",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List configured HTTP API providers",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -334,8 +336,9 @@ the binary responds.`,
 
 func newLLMCLIListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List known CLI executors and whether they're detected on PATH",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List known CLI executors and whether they're detected on PATH",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			type row struct {
 				Name     string `json:"name"`
@@ -373,7 +376,9 @@ func newLLMCLITestCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "test <name>",
 		Short: "Run <binary> --version to confirm the executor is callable",
-		Args:  RequireExactlyOneArg("executor name", "cbx llm cli test <name>   (e.g. claude-code, codex; see: cbx llm cli list)"),
+		Example: `  # Verify Claude Code is installed and responding
+  cbx llm cli test claude-code`,
+		Args: RequireExactlyOneArg("executor name", "cbx llm cli test <name>   (e.g. claude-code, codex; see: cbx llm cli list)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			e, ok := findExecutor(name)
@@ -422,8 +427,9 @@ func newLLMCLITestCmd() *cobra.Command {
 
 func newLLMListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "Unified view of all api providers and cli executors",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Unified view of all api providers and cli executors",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -489,7 +495,12 @@ func newLLMDefaultCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "default <name>",
 		Short: "Set the default LLM provider (api or cli) for plan/audit",
-		Args:  RequireExactlyOneArg("provider name", "cbx llm default <name>   (api provider or cli executor; see: cbx llm list)"),
+		Example: `  # Use the Anthropic API provider (after cbx llm api login claude)
+  cbx llm default claude
+
+  # Use the local Claude Code CLI executor
+  cbx llm default claude-code`,
+		Args: RequireExactlyOneArg("provider name", "cbx llm default <name>   (api provider or cli executor; see: cbx llm list)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			cfg, err := config.Load()

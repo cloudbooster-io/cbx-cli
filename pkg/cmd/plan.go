@@ -30,7 +30,15 @@ func newPlanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
 		Short: "Generate an architecture plan from a natural-language intent",
-		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Interactive REPL (TUI) — refine the plan turn by turn
+  cbx plan
+
+  # One-shot: emit plan.md (+ diagram) from an intent in the cwd
+  cbx plan "S3 + Lambda image processor"
+
+  # One-shot + local HTML preview server, don't auto-open the browser
+  cbx plan "intent" --html --no-open`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

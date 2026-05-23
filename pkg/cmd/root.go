@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
@@ -57,6 +58,10 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 	root.PersistentFlags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode without TUI")
 	root.PersistentFlags().BoolVar(&noColorFlag, "no-color", false, "Disable colored output")
 
+	// Unify `cbx --version` / `cbx -v` with the longer `cbx version`
+	// output. Without this, cobra's default emits just `cbx version <ver>`.
+	root.SetVersionTemplate(fmt.Sprintf("cbx version %s (commit: %s, built: %s)\n", Version, Commit, Date))
+
 	output.InstallHelpTemplate(root)
 
 	root.AddCommand(
@@ -65,6 +70,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newLoginCmd(),
 		newLogoutCmd(),
 		newStatusCmd(),
+		newAuthCmd(),
 		newLLMCmd(),
 		newKnowledgeCmd(),
 		newPlanCmd(),

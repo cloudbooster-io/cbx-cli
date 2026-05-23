@@ -25,6 +25,11 @@ func newUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Upgrade cbx to the latest version",
+		Example: `  # Upgrade in place via the detected install method
+  cbx upgrade
+
+  # Show what would be done without changing anything
+  cbx upgrade --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Version == "dev" || Version == "unknown" || Version == "" {
 				if jsonFlag {

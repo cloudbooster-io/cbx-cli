@@ -29,11 +29,15 @@ func newAuditAWSCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "aws [profile]",
-		Short: "Audit a live AWS account using the default SDK credential chain or an explicit profile/credentials file",
+		Use:     "aws [profile]",
+		Aliases: []string{"a"},
+		Short:   "Audit a live AWS account",
 		Long: `Audit a live AWS account directly via the AWS SDK.
 
-Resolution precedence for the profile (highest wins):
+Credentials come from the default SDK credential chain or an explicit
+profile / credentials file. Resolution precedence for the profile
+(highest wins):
+
   1. --config <path>   — explicit credentials file
   2. positional [profile] — named profile in ~/.aws/credentials
   3. AWS_PROFILE env var
@@ -58,6 +62,14 @@ cb_describer_* enrichment from the per-service describers) to the
 model as context, then matches each finding to a specific CB
 knowledge entry. Claude Code must be on PATH and cbx-mcp must be
 available on disk. Use --llm-max-cost to cap the per-run cost.`,
+		Example: `  # Audit the default AWS profile in its configured region
+  cbx audit aws
+
+  # Audit a named profile across specific regions
+  cbx audit aws prod --regions us-east-1,us-west-2
+
+  # Fan out across every enabled region with IAM diagnostics
+  cbx audit aws --regions all --diagnose`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profile := os.Getenv("AWS_PROFILE")
