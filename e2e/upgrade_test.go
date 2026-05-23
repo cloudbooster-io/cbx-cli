@@ -25,13 +25,15 @@ func TestUpgrade(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("upgrade exited %d", code)
 		}
-		var out map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		var envelope struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
 			t.Fatalf("expected valid JSON: %v\noutput: %s", err, stdout)
 		}
-		msg, ok := out["message"].(string)
+		msg, ok := envelope.Data["message"].(string)
 		if !ok || !strings.Contains(msg, "development build") {
-			t.Fatalf("expected development build message in JSON, got: %v", out)
+			t.Fatalf("expected development build message in JSON, got: %v", envelope.Data)
 		}
 	})
 

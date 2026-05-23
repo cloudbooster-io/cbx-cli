@@ -71,17 +71,20 @@ func TestDoctor(t *testing.T) {
 	t.Run("doctor_json", func(t *testing.T) {
 		stdout, _, code := runCBX(t, env, "doctor", "--json")
 		_ = code
-		var report struct {
-			Healthy bool `json:"healthy"`
-			Checks  []struct {
-				Name string `json:"name"`
-				OK   bool   `json:"ok"`
-				Info string `json:"info"`
-			} `json:"checks"`
+		var envelope struct {
+			Data struct {
+				Healthy bool `json:"healthy"`
+				Checks  []struct {
+					Name string `json:"name"`
+					OK   bool   `json:"ok"`
+					Info string `json:"info"`
+				} `json:"checks"`
+			} `json:"data"`
 		}
-		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
 			t.Fatalf("expected valid JSON: %v\noutput: %s", err, stdout)
 		}
+		report := envelope.Data
 		if len(report.Checks) == 0 {
 			t.Fatal("expected at least one check in JSON report")
 		}

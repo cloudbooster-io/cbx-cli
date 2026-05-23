@@ -38,7 +38,12 @@ func newPlanCmd() *cobra.Command {
 			}
 
 			if len(cfg.LLM.Providers) == 0 {
-				return fmt.Errorf("no LLM provider configured; run 'cbx llm login <provider>' first")
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: "no LLM provider configured",
+					Why:  "cbx plan needs a model to generate the plan",
+					Fix:  "run `cbx llm api login claude` (API key) or `cbx llm cli list` (use Claude Code / Codex CLI)",
+					Code: "E_NO_LLM",
+				}))
 			}
 
 			dir := outputDir
