@@ -41,10 +41,15 @@ func RunScanners(scanners []Scanner, resources []Resource) ([]Finding, error) {
 }
 
 // MockScanners returns a set of scanner implementations that do not
-// perform any outbound network calls or invoke external binaries.
+// perform any outbound network calls or invoke external binaries. The
+// orphan provider lands here because the `cbx audit aws` subcommand
+// invokes the runner with MockScanners: true (plan §7.10 — no external
+// CLI dependencies in AWS mode); the provider filters to CFN-shaped
+// resource types internally so it stays a no-op for non-AWS modes.
 func MockScanners() []FindingProvider {
 	return []FindingProvider{
 		&staticScanner{},
+		&orphanProvider{},
 	}
 }
 
@@ -54,6 +59,7 @@ func MockScanners() []FindingProvider {
 func AllScanners() []Scanner {
 	return []Scanner{
 		&staticScanner{},
+		&orphanProvider{},
 		&tfsecAdapter{},
 		&checkovAdapter{},
 		&prowlerAdapter{},

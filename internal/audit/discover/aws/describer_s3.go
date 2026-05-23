@@ -4,11 +4,63 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
+
+// CloudControl's AWS::S3::Bucket schema does NOT expose CreationDate as
+// a read-only property — only Arn, DomainName, RegionalDomainName,
+// DualStackDomainName, WebsiteURL. The orphan provider needs creation
+// time to gate "empty bucket" findings to genuinely-stale buckets, so we
+// hydrate it from a single account-wide ListBuckets call, cached for the
+// process lifetime. Tests reset via resetBucketCreationCacheForTest.
+var (
+	bucketCreationOnce  sync.Once
+	bucketCreationCache map[string]time.Time
+	bucketCreationErr   error
+	bucketCreationMu    sync.Mutex // guards reset; Once handles the populate race
+)
+
+// fetchBucketCreationDates returns the creation date for the named
+// bucket, sourced from a once-per-process ListBuckets. The bool reports
+// "we found this bucket in the list" — when false, the caller should
+// skip the cb_describer_creation_date field rather than guess.
+func fetchBucketCreationDate(ctx context.Context, c awsCfg, name string) (time.Time, bool, error) {
+	bucketCreationOnce.Do(func() {
+		client := s3.NewFromConfig(c.cfg)
+		out, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+		if err != nil {
+			bucketCreationErr = err
+			return
+		}
+		bucketCreationCache = make(map[string]time.Time, len(out.Buckets))
+		for _, b := range out.Buckets {
+			if b.Name != nil && b.CreationDate != nil {
+				bucketCreationCache[*b.Name] = b.CreationDate.UTC()
+			}
+		}
+	})
+	if bucketCreationErr != nil {
+		return time.Time{}, false, bucketCreationErr
+	}
+	t, ok := bucketCreationCache[name]
+	return t, ok, nil
+}
+
+// resetBucketCreationCacheForTest is exported via the _test.go file so
+// describer tests in this package can re-prime the sync.Once between
+// table cases. Kept colocated with the cache to make the link obvious.
+func resetBucketCreationCacheForTest() {
+	bucketCreationMu.Lock()
+	defer bucketCreationMu.Unlock()
+	bucketCreationOnce = sync.Once{}
+	bucketCreationCache = nil
+	bucketCreationErr = nil
+}
 
 // s3BucketDescriber enriches AWS::S3::Bucket resources with the security
 // posture data the CloudControl API doesn't surface in ListResources /
@@ -98,6 +150,33 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 		r.Inputs["cb_describer_bucket_policy_present"] = false
 	default:
 		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketPolicy")
+	}
+
+	// Object-count probe — single-key list is the cheapest signal for
+	// "is this bucket empty?", which the orphan provider consumes. We
+	// only resolve presence/absence; an actual count isn't worth a
+	// paginated walk. Versioned buckets containing only delete markers
+	// still report as non-empty here, which is the correct conservative
+	// behaviour — orphan-flagging shouldn't race ahead of versioning state.
+	one := int32(1)
+	objs, err := client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucket, MaxKeys: &one})
+	switch {
+	case err == nil:
+		r.Inputs["cb_describer_has_objects"] = len(objs.Contents) > 0
+	case isS3NotFound(err):
+		r.Inputs["cb_describer_has_objects"] = false
+	default:
+		return classifyS3Error(err, bucket, r.Region, "s3:ListObjectsV2")
+	}
+
+	// Creation date — sourced from the once-cached ListBuckets, since CC
+	// doesn't surface it for AWS::S3::Bucket. We don't fail the whole
+	// describer if the cache fetch errored (AccessDenied on
+	// s3:ListAllMyBuckets is the most common cause and is already a
+	// preflight failure mode); we just skip the field and let the orphan
+	// detector's "missing-date skip" branch handle it.
+	if t, ok, ferr := fetchBucketCreationDate(ctx, c, bucket); ferr == nil && ok {
+		r.Inputs["cb_describer_creation_date"] = t.Format("2006-01-02T15:04:05Z")
 	}
 
 	return nil

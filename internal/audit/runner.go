@@ -311,6 +311,7 @@ func loadScanners(names []string) []Scanner {
 	}
 	registry := map[string]Scanner{
 		"static":  &staticScanner{},
+		"orphan":  &orphanProvider{},
 		"tfsec":   &tfsecAdapter{},
 		"checkov": &checkovAdapter{},
 		"prowler": &prowlerAdapter{},
