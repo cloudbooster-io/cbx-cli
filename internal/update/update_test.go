@@ -168,10 +168,20 @@ func TestCacheReadWrite(t *testing.T) {
 
 func TestCachePath(t *testing.T) {
 	tmp := t.TempDir()
-	os.Setenv("HOME", tmp)
-	defer os.Unsetenv("HOME")
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CACHE_HOME", "")
 
-	want := filepath.Join(tmp, ".cache", "cb", "version-check")
+	want := filepath.Join(tmp, ".cache", "cbx", "update-check.json")
+	if got := cachePath(); got != want {
+		t.Fatalf("cachePath() = %q, want %q", got, want)
+	}
+}
+
+func TestCachePathXDG(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tmp)
+
+	want := filepath.Join(tmp, "cbx", "update-check.json")
 	if got := cachePath(); got != want {
 		t.Fatalf("cachePath() = %q, want %q", got, want)
 	}

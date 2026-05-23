@@ -11,6 +11,7 @@ import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	awsdisc "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/discover/aws"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/mattn/go-isatty"
@@ -107,6 +108,14 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 			regionList := mergeRegions(regions, regionsCSV)
 			if len(regionList) == 0 && urlRegion != "" {
 				regionList = []string{urlRegion}
+			}
+			// Persistent fallback: `cbx config set aws.default_region us-east-1`
+			// wins over the SDK profile picker and the interactive prompt,
+			// but still loses to any explicit --region / console-URL.
+			if len(regionList) == 0 {
+				if cfg, err := config.Load(); err == nil && cfg.AWS.DefaultRegion != "" {
+					regionList = []string{cfg.AWS.DefaultRegion}
+				}
 			}
 
 			if awsConcurrency < 1 {
@@ -237,14 +246,14 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
 				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
 				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
-				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
-				fmt.Fprintln(os.Stderr, fmt.Sprintf("  note:             this run generated ~%d CloudTrail Read events", discResult.EventCount))
+				fmt.Fprintf(os.Stderr, "  resources found:  %d\n", len(discResult.Resources))
+				fmt.Fprintf(os.Stderr, "  note:             this run generated ~%d CloudTrail Read events\n", discResult.EventCount)
 				renderComponentsSummary(os.Stderr, result.Components)
 				if len(discResult.PermissionErr) > 0 {
-					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
+					fmt.Fprintf(os.Stderr, "  permission errors: %d (re-run with --diagnose for details)\n", len(discResult.PermissionErr))
 				}
 				if len(discResult.OtherErrs) > 0 {
-					fmt.Fprintln(os.Stderr, fmt.Sprintf("  other warnings:    %d", len(discResult.OtherErrs)))
+					fmt.Fprintf(os.Stderr, "  other warnings:    %d\n", len(discResult.OtherErrs))
 				}
 			}
 
@@ -484,7 +493,7 @@ func renderDiagnose(w *os.File, errs []*awsdisc.PermissionError, callerARN strin
 		if region == "" {
 			region = "global"
 		}
-		fmt.Fprintf(w, "  ✗ %-40s → AccessDenied (in %s)\n", e.Action, region)
+		fmt.Fprintf(w, "  %s %-40s → AccessDenied (in %s)\n", output.Symbol("cross"), e.Action, region)
 		uniqActions[e.Action] = struct{}{}
 	}
 	if len(uniqActions) == 0 {

@@ -112,7 +112,7 @@ func setTelemetry(v bool) func(*cobra.Command, []string) error {
 		if output.JSON() {
 			return output.PrintJSON(map[string]any{"enabled": v, "status": state}, nil)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "✓ Telemetry %s\n", state)
+		output.Successf("Telemetry %s", state)
 		return nil
 	}
 }

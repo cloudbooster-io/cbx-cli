@@ -58,9 +58,9 @@ func newDoctorCmd() *cobra.Command {
 			}
 
 			for _, c := range checks {
-				status := "✓"
+				status := output.Symbol("check")
 				if !c.OK {
-					status = "✗"
+					status = output.Symbol("cross")
 				}
 				fmt.Printf("%s %s: %s\n", status, c.Name, c.Info)
 			}

@@ -105,6 +105,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		newAuditCmd(),
 		newUpgradeCmd(),
 		newEnvCmd(),
+		newConfigCmd(),
 		newTelemetryCmd(),
 	)
 

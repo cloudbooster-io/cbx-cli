@@ -193,7 +193,7 @@ instead of an API key, see 'cbx llm cli'.`,
 					"default":   cfg.LLM.Default == provider,
 				}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged in to api/%s (key stored in OS keychain)\n", provider)
+			output.Successf("Logged in to api/%s (key stored in OS keychain)", provider)
 			return nil
 		},
 	}
@@ -223,7 +223,7 @@ func newLLMAPILogoutCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"provider": provider, "status": "logged_out"}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged out of api/%s\n", provider)
+			output.Successf("Logged out of api/%s", provider)
 			return nil
 		},
 	}
@@ -304,7 +304,7 @@ func newLLMAPITestCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"provider": provider, "ok": true}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ api/%s OK\n", provider)
+			output.Successf("api/%s OK", provider)
 			return nil
 		},
 	}
@@ -417,7 +417,7 @@ func newLLMCLITestCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ cli/%s OK (%s)\n  %s\n", name, bin, versionLine)
+			output.Successf("cli/%s OK (%s)\n  %s", name, bin, versionLine)
 			return nil
 		},
 	}
@@ -537,7 +537,7 @@ func newLLMDefaultCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"default": name}, nil)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Default LLM set to %s\n", name)
+			output.Successf("Default LLM set to %s", name)
 			return nil
 		},
 	}

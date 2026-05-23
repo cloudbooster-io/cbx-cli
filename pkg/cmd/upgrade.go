@@ -44,6 +44,10 @@ func newUpgradeCmd() *cobra.Command {
 			}
 
 			checker := update.NewChecker(Version)
+			// `cbx upgrade` is the explicit "tell me what's out there
+			// right now" path; the daily cache is for the cheap
+			// background banner on every other command.
+			checker.IgnoreCache = true
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -69,7 +73,7 @@ func newUpgradeCmd() *cobra.Command {
 						Message:        "Already up to date",
 					}, nil)
 				}
-				fmt.Printf("Already up to date (%s).\n", Version)
+				output.Infof("Already up to date (%s).", Version)
 				return nil
 			}
 
@@ -84,9 +88,9 @@ func newUpgradeCmd() *cobra.Command {
 						Message:        fmt.Sprintf("would run: %s", update.UpgradeCommand(result)),
 					}, nil)
 				}
-				fmt.Printf("Update available: %s → %s\n", Version, result.LatestVersion)
-				fmt.Printf("Install method: %s\n", result.InstallMethod)
-				fmt.Printf("Would run: %s\n", update.UpgradeCommand(result))
+				output.Infof("Update available: %s -> %s", Version, result.LatestVersion)
+				output.Infof("Install method: %s", result.InstallMethod)
+				output.Infof("Would run: %s", update.UpgradeCommand(result))
 				return nil
 			}
 
@@ -112,7 +116,7 @@ func newUpgradeCmd() *cobra.Command {
 			if err := update.Upgrade(ctx, result); err != nil {
 				return fmt.Errorf("upgrade failed: %w", err)
 			}
-			fmt.Printf("✓ Upgraded to %s\n", result.LatestVersion)
+			output.Successf("Upgraded to %s", result.LatestVersion)
 			return nil
 		},
 	}

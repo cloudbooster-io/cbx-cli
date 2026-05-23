@@ -30,8 +30,8 @@ const (
 	// fallbackHTMLURL is shown when we don't have a release-specific URL
 	// (e.g. in upgrade hints).
 	fallbackHTMLURL = "https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases"
-	cacheFile       = "version-check"
-	cacheDir        = "cb"
+	cacheFile       = "update-check.json"
+	cacheDir        = "cbx"
 	cacheTTL        = 24 * time.Hour
 )
 
@@ -58,6 +58,10 @@ type Result struct {
 type Checker struct {
 	CurrentVersion string
 	HTTPClient     *http.Client
+	// IgnoreCache forces a fresh network check; the result is still
+	// written back so subsequent reads pick it up. Used by `cbx upgrade`
+	// where the user explicitly asked for current state.
+	IgnoreCache bool
 }
 
 // NewChecker creates a Checker for the given current version.
@@ -71,8 +75,10 @@ func NewChecker(currentVersion string) *Checker {
 // Check returns the latest release information, using the on-disk cache when
 // it is still fresh.
 func (c *Checker) Check(ctx context.Context) (*Result, error) {
-	if entry, ok := readCache(); ok {
-		return c.resultFromCache(entry), nil
+	if !c.IgnoreCache {
+		if entry, ok := readCache(); ok {
+			return c.resultFromCache(entry), nil
+		}
 	}
 
 	release, err := c.fetchLatest(ctx)
@@ -229,11 +235,18 @@ type cacheEntry struct {
 }
 
 func cachePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
+	// XDG-compliant: $XDG_CACHE_HOME wins, falling back to
+	// $HOME/.cache. Same shape as `cbx-cli`'s config-dir lookup so
+	// the directory layout stays predictable.
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "."
+		}
+		base = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(home, ".cache", cacheDir, cacheFile)
+	return filepath.Join(base, cacheDir, cacheFile)
 }
 
 func readCache() (*cacheEntry, bool) {

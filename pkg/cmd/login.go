@@ -71,9 +71,9 @@ func runLogin(cmd *cobra.Command, deviceCode, noBrowser bool) error {
 
 	if !quietFlag {
 		if result.Email != "" {
-			fmt.Printf("%s Logged in as %s\n", output.Success.Render(output.Symbol("check")), result.Email)
+			output.Successf("Logged in as %s", result.Email)
 		} else {
-			fmt.Printf("%s Logged in to CloudBooster\n", output.Success.Render(output.Symbol("check")))
+			output.Successf("Logged in to CloudBooster")
 		}
 	}
 	return nil
@@ -103,7 +103,7 @@ func runLogout(cmd *cobra.Command) error {
 	}
 
 	if !quietFlag {
-		fmt.Printf("%s Logged out of CloudBooster\n", output.Success.Render(output.Symbol("check")))
+		output.Successf("Logged out of CloudBooster")
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
@@ -19,9 +20,11 @@ func Execute() error {
 	root := NewRootCmd()
 
 	// Start background update check so it runs in parallel with the command.
+	// Skip entirely when the banner would be suppressed anyway (saves a
+	// network round-trip + battery on every short-lived invocation).
 	updateResult := make(chan *update.Result, 1)
 	go func() {
-		if update.IsDisabled() {
+		if update.IsDisabled() || !shouldRunUpdateCheck() {
 			close(updateResult)
 			return
 		}
@@ -71,6 +74,46 @@ func ExitCode(err error) int {
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1
+}
+
+// shouldRunUpdateCheck is a best-effort heuristic over os.Args (cobra hasn't
+// parsed yet at the time Execute fires the background goroutine). When the
+// banner would never display, the network call is wasted — skip it. False
+// positives are fine (we just do an extra round-trip the user won't see);
+// false negatives are also fine (we miss a banner once).
+func shouldRunUpdateCheck() bool {
+	args := os.Args
+	if len(args) < 2 {
+		return true
+	}
+	// Walk past program name; first non-flag arg is the subcommand.
+	for _, a := range args[1:] {
+		switch a {
+		case "--json", "-q", "--quiet":
+			return false
+		}
+		if a == "-o" || a == "--output" {
+			// Conservative: assume the next token is "json"-shaped and
+			// skip. We don't bother indexing because output-as-json
+			// suppresses the banner unconditionally downstream.
+			return false
+		}
+		if strings.HasPrefix(a, "--output=") || strings.HasPrefix(a, "-o=") {
+			return false
+		}
+	}
+	// Find first positional (subcommand).
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		switch a {
+		case "version", "upgrade", "completion", "help":
+			return false
+		}
+		break
+	}
+	return true
 }
 
 func shouldShowUpdateBanner() bool {

@@ -15,7 +15,18 @@ type Config struct {
 	LLM        LLMConfig       `json:"llm,omitempty"`
 	APIURL     string          `json:"api_url,omitempty"`
 	DefaultOrg string          `json:"default_org,omitempty"`
+	AWS        AWSConfig       `json:"aws,omitempty"`
 	Telemetry  TelemetryConfig `json:"telemetry,omitempty"`
+}
+
+// AWSConfig holds AWS-specific defaults shared by `cbx audit aws` and
+// other AWS-touching subcommands. None are required; all fall back to
+// either the AWS SDK profile or interactive prompting.
+type AWSConfig struct {
+	// DefaultRegion is used by `cbx audit aws` when --region is not
+	// passed, the positional console-URL does not carry a region, and
+	// the AWS profile itself has no region set.
+	DefaultRegion string `json:"default_region,omitempty"`
 }
 
 // TelemetryConfig holds the user's opt-in choice for anonymous error
