@@ -30,6 +30,21 @@ func newPlanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   `plan ["<intent>"]`,
 		Short: "Generate an architecture plan from a natural-language intent",
+		Long: `Generate an architecture plan from a natural-language intent.
+
+With no intent on the command line, cbx plan opens an interactive REPL
+(Bubble Tea TUI) that lets you refine the plan turn by turn. Pass an
+intent positionally to run one-shot and exit when the artifacts are on
+disk.
+
+Output artifacts (written into --output-dir, default cwd):
+  plan.md   — the generated architecture plan (ADR-style)
+  plan.d2   — the architecture diagram (or plan.mermaid with --diagram mermaid)
+
+Use --llm <provider> to override the default LLM provider for a single
+run; the default is whatever you configured via 'cbx llm api login' or
+'cbx llm cli list'. Use --variants N to generate N alternative plans
+side by side.`,
 		Example: `  # Interactive REPL (TUI) — refine the plan turn by turn
   cbx plan
 

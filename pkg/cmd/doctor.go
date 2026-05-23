@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -32,6 +33,11 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the health of your cbx installation",
+		Example: `  # Run all health checks
+  cbx doctor
+
+  # Machine-readable output
+  cbx doctor --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -215,13 +221,16 @@ func checkCBXMCPCheckout() (bool, string) {
 
 func checkVersionCurrent() (bool, string) {
 	if Version == "dev" || Version == "unknown" || Version == "" {
-		return false, "development build (no version info)"
+		return true, "running dev build"
 	}
 	checker := update.NewChecker(Version)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result, err := checker.Check(ctx)
 	if err != nil {
+		if errors.Is(err, update.ErrNoReleases) {
+			return true, "no releases yet"
+		}
 		return false, fmt.Sprintf("unable to check: %v", err)
 	}
 	if result.HasUpdate {

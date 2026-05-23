@@ -75,7 +75,7 @@ not optional: the audit ships discovered resources (plus
 cb_describer_* enrichment from the per-service describers) to the
 model as context, then matches each finding to a specific CB
 knowledge entry. Claude Code must be on PATH and cbx-mcp must be
-available on disk. Use --llm-max-cost to cap the per-run cost.`,
+available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00).`,
 		Example: `  # Audit the default AWS profile in its configured region
   cbx audit aws
 
@@ -366,7 +366,7 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
-	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a warning finding is emitted when claude's reported total_cost_usd exceeds the cap. 0 disables the cap")
+	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a warning finding is emitted when claude's reported total_cost_usd exceeds the cap. 0 disables the cap (USD; default 2.00)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
 
