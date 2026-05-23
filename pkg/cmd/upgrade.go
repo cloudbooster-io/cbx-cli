@@ -32,7 +32,7 @@ func newUpgradeCmd() *cobra.Command {
   cbx upgrade --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if Version == "dev" || Version == "unknown" || Version == "" {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        "cannot upgrade development build",
@@ -49,7 +49,7 @@ func newUpgradeCmd() *cobra.Command {
 
 			result, err := checker.Check(ctx)
 			if err != nil {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						Message:        fmt.Sprintf("failed to check for updates: %v", err),
@@ -59,7 +59,7 @@ func newUpgradeCmd() *cobra.Command {
 			}
 
 			if !result.HasUpdate {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
@@ -74,7 +74,7 @@ func newUpgradeCmd() *cobra.Command {
 			}
 
 			if dryRun {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(upgradeResult{
 						CurrentVersion: Version,
 						LatestVersion:  result.LatestVersion,
@@ -90,7 +90,7 @@ func newUpgradeCmd() *cobra.Command {
 				return nil
 			}
 
-			if jsonFlag {
+			if output.JSON() {
 				// JSON mode: report what would happen but don't actually run package manager
 				return output.PrintJSON(upgradeResult{
 					CurrentVersion: Version,

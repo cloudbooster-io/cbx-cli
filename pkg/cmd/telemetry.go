@@ -55,7 +55,7 @@ func newTelemetryStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{
 					"enabled":     cfg.Telemetry.Enabled,
 					"prompted":    cfg.Telemetry.Prompted,
@@ -109,7 +109,7 @@ func setTelemetry(v bool) func(*cobra.Command, []string) error {
 		if v {
 			state = "enabled"
 		}
-		if jsonFlag {
+		if output.JSON() {
 			return output.PrintJSON(map[string]any{"enabled": v, "status": state}, nil)
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "✓ Telemetry %s\n", state)

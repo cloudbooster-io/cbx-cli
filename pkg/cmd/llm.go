@@ -185,7 +185,7 @@ instead of an API key, see 'cbx llm cli'.`,
 				return err
 			}
 
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{
 					"provider":  provider,
 					"status":    "logged_in",
@@ -220,7 +220,7 @@ func newLLMAPILogoutCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"provider": provider, "status": "logged_out"}, nil)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Logged out of api/%s\n", provider)
@@ -260,7 +260,7 @@ func newLLMAPIListCmd() *cobra.Command {
 			}
 			sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"providers": rows}, nil)
 			}
 			if len(rows) == 0 {
@@ -296,12 +296,12 @@ func newLLMAPITestCmd() *cobra.Command {
 				}))
 			}
 			if err := llm.ValidateToken(provider, token); err != nil {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(map[string]any{"provider": provider, "ok": false, "error": err.Error()}, nil)
 				}
 				return fmt.Errorf("api/%s test failed: %w", provider, err)
 			}
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"provider": provider, "ok": true}, nil)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ api/%s OK\n", provider)
@@ -357,7 +357,7 @@ func newLLMCLIListCmd() *cobra.Command {
 				rows = append(rows, r)
 			}
 
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"executors": rows}, nil)
 			}
 			for _, r := range rows {
@@ -409,12 +409,12 @@ func newLLMCLITestCmd() *cobra.Command {
 			out, runErr := exec.CommandContext(ctx, bin, e.VersionArgs...).CombinedOutput()
 			versionLine := strings.TrimSpace(string(out))
 			if runErr != nil {
-				if jsonFlag {
+				if output.JSON() {
 					return output.PrintJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine}, nil)
 				}
 				return fmt.Errorf("executor %s at %s failed --version: %v\n%s", name, bin, runErr, versionLine)
 			}
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine}, nil)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ cli/%s OK (%s)\n  %s\n", name, bin, versionLine)
@@ -472,7 +472,7 @@ func newLLMListCmd() *cobra.Command {
 				return entries[i].Name < entries[j].Name
 			})
 
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"providers": entries, "default": cfg.LLM.Default}, nil)
 			}
 			if len(entries) == 0 {
@@ -534,7 +534,7 @@ func newLLMDefaultCmd() *cobra.Command {
 			if err := config.Save(cfg); err != nil {
 				return err
 			}
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]any{"default": name}, nil)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "✓ Default LLM set to %s\n", name)

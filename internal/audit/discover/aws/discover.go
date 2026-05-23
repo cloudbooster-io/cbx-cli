@@ -32,6 +32,15 @@ type DiscoverParams struct {
 	// Types overrides the curated CFN type list (discoverableCFNTypes).
 	// Used by tests; production callers leave this nil.
 	Types []cfnTypeSpec
+
+	// ScoutOnly, when true, stops the pipeline after the scout phase
+	// (preflight + region resolution + cheap region probe). The
+	// fan-out CloudControl Discover and per-resource enrichment are
+	// skipped entirely. Used by `cbx audit aws --dry-run` to surface
+	// what the audit would do without actually firing the heavy
+	// per-region × per-type list+get pass. EventCount still reflects
+	// the structural estimate for the planned (post-scout) regions.
+	ScoutOnly bool
 }
 
 // DiscoverResult is what Discover returns. PermissionErr is collected
@@ -129,6 +138,22 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	concurrency := p.Concurrency
 	if concurrency < 1 {
 		concurrency = 4
+	}
+
+	// --dry-run: bail before the expensive per-(region × type) fan-out
+	// and per-resource describer work. Caller gets the resolved regions
+	// and an event-count estimate based on the planned types, which is
+	// the entire point of the dry run.
+	if p.ScoutOnly {
+		emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
+		return &DiscoverResult{
+			Identity:      identity,
+			Regions:       regions,
+			Resources:     nil,
+			PermissionErr: scoutPermErrs,
+			OtherErrs:     scoutOtherErrs,
+			EventCount:    estimateEventCount(types, regions, nil),
+		}, nil
 	}
 
 	resources, permErrs, otherErrs := fanOutDiscovery(ctx, cfg, regions, types, concurrency, p.OnProgress)

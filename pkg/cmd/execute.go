@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 )
@@ -75,7 +76,7 @@ func shouldShowUpdateBanner() bool {
 	if os.Getenv("CI") == "true" || os.Getenv("CB_NO_UPDATE_CHECK") == "1" {
 		return false
 	}
-	if quietFlag || jsonFlag {
+	if quietFlag || output.JSON() {
 		return false
 	}
 	if executedCommand == "upgrade" || executedCommand == "version" {

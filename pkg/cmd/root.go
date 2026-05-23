@@ -11,13 +11,13 @@ import (
 )
 
 var (
-	Version     = "dev"
-	Commit      = "unknown"
-	Date        = "unknown"
-	jsonFlag    bool
-	quietFlag   bool
-	noTUI       bool
-	noColorFlag bool
+	Version      = "dev"
+	Commit       = "unknown"
+	Date         = "unknown"
+	jsonFlag     bool
+	quietFlag    bool
+	noColorFlag  bool
+	outputFormat string
 )
 
 // executedCommand tracks which subcommand was run (used by background update check).
@@ -34,9 +34,36 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			output.Configure(noColorFlag, quietFlag)
-			if jsonFlag {
-				output.SetFormat("json")
+
+			// --json is a hidden back-compat alias for `-o json`. If the
+			// user passed both, the explicit --output value wins.
+			if jsonFlag && outputFormat == "" {
+				outputFormat = "json"
 			}
+			// Validate format value. "" (human-readable default) and
+			// "json" are supported today; yaml/table are reserved and
+			// return a structured error so the flag surface signals
+			// intent without lying about coverage.
+			switch outputFormat {
+			case "", "json":
+				// ok
+			case "yaml", "table":
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("output format %q is not yet supported", outputFormat),
+					Why:  "only json (and the human-readable default) are implemented today",
+					Fix:  "drop the --output flag or pass --output json",
+					Code: "E_UNSUPPORTED_FORMAT",
+				}))
+			default:
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("output format %q is not recognized", outputFormat),
+					Why:  "supported formats: json (and the human-readable default)",
+					Fix:  "pass --output json or omit the flag",
+					Code: "E_UNSUPPORTED_FORMAT",
+				}))
+			}
+			output.SetFormat(outputFormat)
+
 			executedCommand = cmd.Name()
 
 			// First-run telemetry prompt, then Sentry init. Skip for
@@ -45,7 +72,7 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 			// and machine-output modes (JSON/quiet — prompt would
 			// corrupt the stream).
 			if !skipTelemetryPrompt(cmd) {
-				telemetry.MaybePromptFirstRun(os.Stdin, os.Stderr, jsonFlag || quietFlag)
+				telemetry.MaybePromptFirstRun(os.Stdin, os.Stderr, output.JSON() || quietFlag)
 			}
 			telemetry.Init(Version, Commit)
 			telemetry.SetTag("command", cmd.CommandPath())
@@ -53,9 +80,10 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 		},
 	}
 
-	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+	root.PersistentFlags().StringVarP(&outputFormat, "output", "o", "", "Output format: json, yaml, table (default: human)")
+	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format (alias for --output json)")
+	_ = root.PersistentFlags().MarkHidden("json")
 	root.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-error output")
-	root.PersistentFlags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive mode without TUI")
 	root.PersistentFlags().BoolVar(&noColorFlag, "no-color", false, "Disable colored output")
 
 	// Unify `cbx --version` / `cbx -v` with the longer `cbx version`

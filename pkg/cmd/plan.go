@@ -64,7 +64,7 @@ func newPlanCmd() *cobra.Command {
 				intent = args[0]
 			}
 
-			isHeadless := noTUI || jsonFlag || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
+			isHeadless := noTUI || output.JSON() || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
 			if isHeadless {
 				if intent == "" {
 					return fmt.Errorf("intent required in non-interactive mode")
@@ -75,7 +75,7 @@ func newPlanCmd() *cobra.Command {
 			return runInteractive(cfg, intent, dir, diagramFormat, noTUI, llmProvider)
 		},
 	}
-	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory for plan files")
+	cmd.Flags().StringVarP(&outputDir, "output-dir", "d", "", "Output directory for plan files (default: cwd)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Use non-interactive one-shot mode")
 	cmd.Flags().StringVar(&diagramFormat, "diagram", "mermaid", "Diagram output format (mermaid or d2)")
 	cmd.Flags().StringVar(&llmProvider, "llm", "", "Override the default LLM provider for this run")
@@ -118,14 +118,14 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 
 	var plans []*coreplan.Plan
 	for i := 0; i < variants; i++ {
-		plan, err := runner.Run(ctx, intent, &headlessProgress{silent: jsonFlag})
+		plan, err := runner.Run(ctx, intent, &headlessProgress{silent: output.JSON()})
 		if err != nil {
 			return err
 		}
 		plans = append(plans, plan)
 	}
 
-	if jsonFlag {
+	if output.JSON() {
 		if variants == 1 {
 			md := output.RenderPlanMD(plans[0].Intent, plans[0].Version, plans[0].ADRContent, plans[0].MermaidContent)
 			return output.PrintJSON(map[string]string{"markdown": md}, nil)
@@ -166,7 +166,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 
 	// Optional HTML preview server (CB-422). Opt-in via --html. Skip in --json
 	// or when running with d2 diagrams (the template renders mermaid only).
-	if htmlPreview && !jsonFlag && diagramFormat != "d2" && len(plans) > 0 {
+	if htmlPreview && !output.JSON() && diagramFormat != "d2" && len(plans) > 0 {
 		htmlBytes, err := generatePlanHTML(plans[0].Intent, plans[0].ADRContent, template.HTML(plans[0].MermaidContent))
 		if err != nil {
 			if !quietFlag {

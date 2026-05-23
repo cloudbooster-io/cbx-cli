@@ -129,8 +129,9 @@ type Options struct {
 	// LLMMaxCost is the USD ceiling for a single grounded audit. When the
 	// terminating `result.total_cost_usd` from claude's stream-json exceeds
 	// this value the analyzer emits a warning finding; partial findings
-	// already returned are preserved. Zero means "use the default"
-	// (defaultLLMMaxCostUSD).
+	// already returned are preserved. Zero means "no cap" (no warning is
+	// ever emitted). The CLI default is 2.00; library callers passing
+	// Options directly must set this explicitly or accept "no cap".
 	LLMMaxCost float64
 
 	// AWS, when true, switches the runner into live-AWS mode. Set by the

@@ -46,7 +46,7 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			if jsonFlag {
+			if output.JSON() {
 				report := doctorReport{Healthy: allOK, Checks: checks}
 				if !allOK {
 					if err := output.PrintJSON(report, output.JSONErrorf("some health checks failed")); err != nil {

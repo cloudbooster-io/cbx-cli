@@ -124,7 +124,7 @@ func envHandleAPIError(err error, statusCode int) error {
 // envPrintJSONOrText outputs data as JSON when --json is set, otherwise
 // delegates to the provided text printer.
 func envPrintJSONOrText(data any, textFn func()) error {
-	if jsonFlag {
+	if output.JSON() {
 		return output.PrintJSON(data, nil)
 	}
 	if !quietFlag {

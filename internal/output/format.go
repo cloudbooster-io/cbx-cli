@@ -10,3 +10,8 @@ func SetFormat(f string) { cfgFormat = f }
 
 // Format returns the requested output format, or "" if unset.
 func Format() string { return cfgFormat }
+
+// JSON is a convenience predicate: true iff the requested output format
+// is JSON. Lets call sites read `output.JSON()` instead of comparing
+// `output.Format() == "json"` every time.
+func JSON() bool { return cfgFormat == "json" }

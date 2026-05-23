@@ -13,7 +13,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version of cbx",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if jsonFlag {
+			if output.JSON() {
 				return output.PrintJSON(map[string]string{
 					"version": Version,
 					"commit":  Commit,

@@ -130,8 +130,8 @@ func TestPlanEndToEnd(t *testing.T) {
 			t.Fatalf("creating output dir: %v", err)
 		}
 
-		// Plan with --output flag --no-tui
-		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "-o", outDir, "static site with auth")
+		// Plan with --output-dir flag (-d) --no-tui
+		stdout, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, nil, "plan", "--no-tui", "-d", outDir, "static site with auth")
 		if code != 0 {
 			t.Fatalf("cbx plan exited %d", code)
 		}

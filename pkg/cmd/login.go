@@ -35,7 +35,7 @@ func runLogin(cmd *cobra.Command, deviceCode, noBrowser bool) error {
 		result, err = auth.RunDeviceFlow(cmd.Context(), ocfg)
 	} else {
 		var spinner *output.Spinner
-		if !noBrowser && !jsonFlag && !quietFlag {
+		if !noBrowser && !output.JSON() && !quietFlag {
 			spinner = output.NewSpinner("Waiting for browser callback…")
 			spinner.Start()
 		}
@@ -63,7 +63,7 @@ func runLogin(cmd *cobra.Command, deviceCode, noBrowser bool) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	if jsonFlag {
+	if output.JSON() {
 		return output.PrintJSON(map[string]string{
 			"email": result.Email,
 		}, nil)
@@ -98,7 +98,7 @@ func runLogout(cmd *cobra.Command) error {
 		return err
 	}
 
-	if jsonFlag {
+	if output.JSON() {
 		return output.PrintJSON(map[string]string{"status": "logged_out"}, nil)
 	}
 
@@ -121,7 +121,7 @@ func runStatus(cmd *cobra.Command) error {
 
 	token, err := auth.LoadToken(kr)
 	if err != nil {
-		if jsonFlag {
+		if output.JSON() {
 			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
 		}
 		fmt.Println("Not logged in.")
@@ -130,7 +130,7 @@ func runStatus(cmd *cobra.Command) error {
 
 	httpClient, err := auth.AuthenticatedClient(cmd.Context(), cfg.APIURL, kr)
 	if err != nil {
-		if jsonFlag {
+		if output.JSON() {
 			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
 		}
 		fmt.Println("Not logged in.")
@@ -146,7 +146,7 @@ func runStatus(cmd *cobra.Command) error {
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "401") || strings.Contains(errStr, "Unauthorized") || strings.Contains(errStr, "cannot fetch token") {
-			if jsonFlag {
+			if output.JSON() {
 				_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
 				return fmt.Errorf("authentication expired")
 			}
@@ -161,7 +161,7 @@ func runStatus(cmd *cobra.Command) error {
 	}
 
 	if resp.StatusCode() == http.StatusUnauthorized {
-		if jsonFlag {
+		if output.JSON() {
 			_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
 			return fmt.Errorf("authentication expired")
 		}
@@ -208,7 +208,7 @@ func runStatus(cmd *cobra.Command) error {
 		org = "—"
 	}
 
-	if jsonFlag {
+	if output.JSON() {
 		return output.PrintJSON(map[string]string{
 			"account":     email,
 			"org":         org,
