@@ -27,3 +27,7 @@ coverage.*
 # Local tooling
 .direnv/
 .envrc.local
+
+# Audit report scratch — `cbx audit` writes <basename>_audit_report.md to CWD;
+# these are command outputs, not source. Keep nested ones (testdata, fixtures).
+/*_audit_report.md
