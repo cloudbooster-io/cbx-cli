@@ -54,9 +54,13 @@ func Preflight(ctx context.Context, c awsCfg) (Identity, error) {
 	}, nil
 }
 
-func deref(s *string) string {
-	if s == nil {
-		return ""
+// deref returns the dereferenced value of p, or the zero value when p
+// is nil. Generic so describers can use it for *bool / *int as well as
+// the *string case in preflight.
+func deref[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
 	}
-	return *s
+	return *p
 }

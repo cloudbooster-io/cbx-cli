@@ -173,6 +173,20 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 				otherErrs = append(otherErrs, mapErr)
 				continue
 			}
+			// Per-service enrichment: when a describer exists for this
+			// CFN type, run it to backfill data CloudControl doesn't
+			// expose. Failures collect into permErrs / otherErrs but
+			// don't drop the resource — the baseline CC data is still
+			// useful even when enrichment fails.
+			if d := describerFor(dr.Type); d != nil {
+				if eErr := d.Enrich(ctx, c, &dr); eErr != nil {
+					if pe, ok := asPermissionError(eErr); ok {
+						permErrs = append(permErrs, pe)
+					} else {
+						otherErrs = append(otherErrs, eErr)
+					}
+				}
+			}
 			resources = append(resources, dr)
 		}
 		if r.err != nil {
