@@ -8,6 +8,7 @@ import (
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	awsdisc "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/discover/aws"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/mattn/go-isatty"
@@ -92,6 +93,14 @@ to print every denied API call plus a recommended IAM policy patch.`,
 				return err
 			}
 
+			// Component grouping pass over the discovered resources.
+			// Tag-based and CB-primitive lenses run together — see
+			// internal/audit/group/ for the algorithms. Skipped silently
+			// when no resources were discovered (Group returns nil).
+			components := group.Group(discResult.Resources, group.Options{
+				LookupPrimitive: audit.CFNTypeToCBPrimitive,
+			})
+
 			// Header. Goes to stderr so machine-readable output on stdout
 			// stays unpolluted.
 			if !quietFlag && outputFormat == "" {
@@ -100,6 +109,7 @@ to print every denied API call plus a recommended IAM policy patch.`,
 				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
 				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
 				fmt.Fprintln(os.Stderr, fmt.Sprintf("  resources found:  %d", len(discResult.Resources)))
+				renderComponentsSummary(os.Stderr, components)
 				if len(discResult.PermissionErr) > 0 {
 					fmt.Fprintln(os.Stderr, fmt.Sprintf("  permission errors: %d (re-run with --diagnose for details)", len(discResult.PermissionErr)))
 				}
@@ -128,6 +138,7 @@ to print every denied API call plus a recommended IAM policy patch.`,
 					"regions":           discResult.Regions,
 					"resources_count":   len(discResult.Resources),
 					"findings":          findings,
+					"components":        components,
 					"permission_errors": permErrsToJSON(discResult.PermissionErr),
 				}
 				return output.PrintJSON(payload, nil)
@@ -176,6 +187,25 @@ func coalesceJSON() string {
 		return "json"
 	}
 	return ""
+}
+
+// renderComponentsSummary prints a one-line-per-kind summary of the
+// component groupings. Quiet by design — full per-component listings go
+// in the markdown report. Suppressed entirely when there are no
+// components (the audit found nothing or had no resources to group).
+func renderComponentsSummary(w *os.File, components []group.Component) {
+	if len(components) == 0 {
+		return
+	}
+	byKind := map[string]int{}
+	for _, c := range components {
+		byKind[c.Kind]++
+	}
+	for _, kind := range []string{"tag", "cb-primitive"} {
+		if n := byKind[kind]; n > 0 {
+			fmt.Fprintln(w, fmt.Sprintf("  components (%-12s): %d", kind, n))
+		}
+	}
 }
 
 // permErrsToJSON converts *PermissionError slice into the JSON-friendly
