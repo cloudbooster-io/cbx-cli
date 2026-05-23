@@ -107,6 +107,83 @@ func TestClassifyWorkloads_TableDriven(t *testing.T) {
 	}
 }
 
+// TestClassifyWorkloads_CFNTypeCoverage asserts that AWS-discovered
+// resources (CFN-shape Type values) trip the same workload branches as
+// their TF equivalents. Replays a representative subset of the
+// TableDriven cases above using CFN names, so any future regression in
+// the translation map is caught with a one-line diff.
+func TestClassifyWorkloads_CFNTypeCoverage(t *testing.T) {
+	cases := []struct {
+		name      string
+		resources []DiscoveredResource
+		want      []string
+	}{
+		{
+			name:      "static site",
+			resources: res("AWS::S3::Bucket", "AWS::CloudFront::Distribution"),
+			want:      []string{"static-site"},
+		},
+		{
+			name:      "api-with-auth via apigatewayv2",
+			resources: res("AWS::ApiGatewayV2::Api", "AWS::Lambda::Function", "AWS::Cognito::UserPool"),
+			want:      []string{"api-with-auth"},
+		},
+		{
+			name:      "http-app (ECS behind ALB)",
+			resources: res("AWS::ElasticLoadBalancingV2::LoadBalancer", "AWS::ECS::Service", "AWS::ECS::Cluster"),
+			want:      []string{"http-app"},
+		},
+		{
+			name: "multi-tier webapp via CFN",
+			resources: res(
+				"AWS::ElasticLoadBalancingV2::LoadBalancer",
+				"AWS::ECS::Service",
+				"AWS::RDS::DBInstance",
+			),
+			want: []string{"http-app", "multi-tier-web-app"},
+		},
+		{
+			name:      "queue worker via CFN",
+			resources: res("AWS::SQS::Queue", "AWS::Lambda::Function"),
+			want:      []string{"queue-worker"},
+		},
+		{
+			name:      "scheduled job via Scheduler::Schedule",
+			resources: res("AWS::Scheduler::Schedule", "AWS::Lambda::Function"),
+			want:      []string{"scheduled-job"},
+		},
+		{
+			name:      "event pipeline (Kinesis Firehose CFN)",
+			resources: res("AWS::KinesisFirehose::DeliveryStream"),
+			want:      []string{"event-pipeline"},
+		},
+		{
+			name:      "network baseline",
+			resources: res("AWS::EC2::VPC", "AWS::EC2::Subnet", "AWS::EC2::SecurityGroup"),
+			want:      []string{"network-baseline"},
+		},
+		{
+			name:      "mixed CFN + TF in the same set still classifies correctly",
+			resources: res("AWS::S3::Bucket", "aws_cloudfront_distribution"),
+			want:      []string{"static-site"},
+		},
+		{
+			name:      "AWS::Lambda::Function alone does not fire any workload",
+			resources: res("AWS::Lambda::Function"),
+			want:      nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClassifyWorkloads(tc.resources)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ClassifyWorkloads = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestClassifyWorkloads_NeverEmitsUnauthoredSlug(t *testing.T) {
 	// Cover a wide cross-section of resource types and confirm every emitted
 	// slug is in the AuthoredWorkloadSlugs set. Guards a refactor that adds
