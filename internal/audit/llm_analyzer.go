@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 )
@@ -143,12 +144,17 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 		return nil, nil
 	}
 
-	var workloads []string
+	var bundle *GroundingBundle
 	if l.cbKnowledge {
-		workloads = ClassifyWorkloads(resources)
+		var fetchErr error
+		bundle, fetchErr = l.fetchBundle(ctx, resources)
+		if fetchErr != nil {
+			return []Finding{l.errorFinding(fmt.Sprintf("fetching cb knowledge: %v", fetchErr))}, nil
+		}
+		l.installBundle(bundle)
 	}
 
-	prompt := l.buildPrompt(nil, resources, workloads)
+	prompt := l.buildPrompt(nil, resources, bundle)
 
 	var sb strings.Builder
 	streamErr := l.streamer.Stream(ctx, prompt, func(tok string) {
@@ -169,6 +175,40 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 	return findings, nil
 }
 
+// fetchBundle runs the Go-side grounding enumerator: looks up every CB
+// primitive id, every detected workload, and the bulk composition once.
+// Returns nil bundle on no inputs (the prompt renders that explicitly).
+// The CB backend's reachability is already verified by the streamer
+// constructor's preflight; per-request errors here propagate up.
+func (l *llmAnalyzer) fetchBundle(ctx context.Context, resources []DiscoveredResource) (*GroundingBundle, error) {
+	workloads := ClassifyWorkloads(resources)
+	if uniqueSortedPrimitiveIDs(resources) == nil && len(workloads) == 0 {
+		return nil, nil
+	}
+	kc := knowledge.New(resolvedCBKnowledgeBaseURL())
+	bundle, _, err := BuildGrounding(ctx, kc, resources, workloads, 6)
+	return bundle, err
+}
+
+// installBundle hands the pre-fetched bundle to the streamer (if it
+// supports the grounded interface) so GroundingTrail() returns events
+// reflecting actual fetches, not the LLM's tool calls.
+func (l *llmAnalyzer) installBundle(bundle *GroundingBundle) {
+	if bundle == nil {
+		return
+	}
+	if installer, ok := l.streamer.(bundleInstaller); ok {
+		installer.InstallBundle(bundle)
+	}
+}
+
+// bundleInstaller is the optional capability the grounded streamer
+// exposes so the analyzer can pre-populate its grounding trail before
+// streaming the LLM response.
+type bundleInstaller interface {
+	InstallBundle(*GroundingBundle)
+}
+
 func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, error) {
 	files, err := collectSourceFiles(dir, l.iacType, l.maxFiles, l.maxBytesPerFile)
 	if err != nil {
@@ -180,20 +220,24 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 
 	var (
 		resources []DiscoveredResource
-		workloads []string
+		bundle    *GroundingBundle
 	)
 	if l.cbKnowledge && l.iacType == IaCTypeTerraform {
-		// Pre-resolve resources so the model can feed CB primitive ids
-		// straight into the MCP tools. Best-effort: a parse error here
-		// degrades to the non-pre-resolved prompt rather than failing the
-		// whole audit.
+		// Pre-resolve resources so the bundle fetcher can look up the
+		// right CB primitives. Best-effort: a parse error here degrades
+		// to an empty bundle rather than failing the whole audit.
 		if parsed, perr := parsers.ParseTerraformSource(dir); perr == nil {
 			resources = parsed
-			workloads = ClassifyWorkloads(resources)
+			b, ferr := l.fetchBundle(ctx, resources)
+			if ferr != nil {
+				return []Finding{l.errorFinding(fmt.Sprintf("fetching cb knowledge: %v", ferr))}, nil
+			}
+			bundle = b
+			l.installBundle(bundle)
 		}
 	}
 
-	prompt := l.buildPrompt(files, resources, workloads)
+	prompt := l.buildPrompt(files, resources, bundle)
 
 	var sb strings.Builder
 	streamErr := l.streamer.Stream(ctx, prompt, func(tok string) {
@@ -349,10 +393,12 @@ func (l *llmAnalyzer) errorFinding(detail string) Finding {
 
 // buildPrompt routes to the grounded or ungrounded prompt builder. Method
 // (not free function) so it can carry the analyzer's cbKnowledge bit
-// without an extra arg at every call site.
-func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, workloads []string) string {
+// without an extra arg at every call site. In grounded mode bundle is
+// the pre-fetched CB knowledge; nil is acceptable when no primitives
+// resolved (the prompt then states the bundle is empty).
+func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle) string {
 	if l.cbKnowledge {
-		return buildGroundedPrompt(l.iacType, files, resources, workloads)
+		return buildGroundedPrompt(l.iacType, files, resources, bundle)
 	}
 	return buildLLMPrompt(l.iacType, files)
 }
@@ -385,85 +431,38 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 	return sb.String()
 }
 
-// buildGroundedPrompt is the Phase F prompt variant. Differs from the
-// vanilla prompt in three load-bearing ways: (1) primes the model on the
-// available `aws_*` MCP tools and tells it to call them BEFORE emitting a
-// finding; (2) feeds the parsed []DiscoveredResource and detected CB
-// workload slugs so the model doesn't waste turns re-parsing; (3) requires
-// a `cb_source` field on every finding citing the tool call that grounded it.
-func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, workloads []string) string {
+// buildGroundedPrompt assembles the deterministic grounded prompt. The
+// LLM does NOT call MCP tools — every CB-knowledge lookup has already
+// run on the Go side (see BuildGrounding), and the result is inlined
+// here as plain text. The model's job is purely to reason over the
+// frozen knowledge bundle and emit findings.
+//
+// Determinism is load-bearing: this function must produce byte-identical
+// output for identical inputs across runs. That means:
+//   - bundle slices are pre-sorted by BuildGrounding,
+//   - resources are sorted by URN/Type before iteration here,
+//   - describer-enrichment keys are sorted by formatDescriberEnrichment,
+//   - no map iteration leaks into the output.
+//
+// Knowledge gaps (CB has no entry for a primitive / workload) are
+// rendered as "(no CB entry)" placeholders, never silently omitted —
+// otherwise a backend deploy that adds or removes a primitive would
+// shift the prompt invisibly.
+func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle) string {
 	var sb strings.Builder
-	sb.WriteString("You are CloudBooster's IaC audit analyzer, grounded in CB-curated AWS knowledge.\n\n")
-	sb.WriteString("You have access to four MCP tools under the `mcp__cbx__*` namespace:\n")
-	sb.WriteString("  - aws_lookup_primitive(type_id): CB's posture for a specific resource (e.g. type_id=\"aws:s3/bucket@v1\")\n")
-	sb.WriteString("  - aws_best_practices_for(workload): CB's posture for a workload class (e.g. workload=\"static-site\")\n")
-	sb.WriteString("  - aws_composition_for(type_ids): CB's recommended companions for a given set of primitive ids\n")
-	sb.WriteString("  - aws_narrative_refs(topic): CB's narrative justification for a topic (best-effort; may return empty)\n\n")
-	sb.WriteString("MANDATORY tool-use protocol BEFORE emitting any finding:\n")
-	sb.WriteString("  1. Call `aws_best_practices_for` at least once for each detected workload listed below.\n")
-	sb.WriteString("  2. Call `aws_lookup_primitive` at least once for each distinct CB primitive id in the resource table below.\n")
-	sb.WriteString("  3. Only emit findings that CB's authored knowledge supports. Do NOT rely on your pretraining alone.\n\n")
-	sb.WriteString("Every finding MUST carry a `cb_source` object citing the tool call that grounded it:\n")
-	sb.WriteString(`  "cb_source": {"tool": "aws_lookup_primitive", "key": "aws:s3/bucket@v1", "snippet": "<the CB-authored text you anchored to>"}`)
+	sb.WriteString("You are CloudBooster's IaC audit analyzer.\n\n")
+	sb.WriteString("All CB-curated AWS knowledge needed to ground this audit has been pre-fetched and is provided below. ")
+	sb.WriteString("DO NOT call any tools — none are available in this run. ")
+	sb.WriteString("Reason strictly over the knowledge sections (CB-PRIMITIVE / CB-WORKLOAD / CB-COMPOSITION) and emit findings only for issues that the provided CB text supports.\n\n")
+	sb.WriteString("Every finding MUST carry a `cb_source` object citing which knowledge block grounded it:\n")
+	sb.WriteString(`  "cb_source": {"tool": "aws_lookup_primitive", "key": "aws:s3/bucket@v1", "snippet": "<verbatim phrase from the CB block>"}`)
+	sb.WriteString("\n\nTool values: \"aws_lookup_primitive\" (key=primitive id), \"aws_best_practices_for\" (key=workload slug), or \"aws_composition_for\" (key=\"composition\").")
 	sb.WriteString("\n\nReturn a single JSON object:\n")
 	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"path/to/file.tf","line":42,"cb_source":{"tool":"…","key":"…","snippet":"…"}}]}`)
-	sb.WriteString("\n\nOnly emit JSON in your FINAL response. Tool-call turns happen automatically; do not narrate them.\n")
-	sb.WriteString("If you find nothing return {\"findings\":[]}.\n\n")
+	sb.WriteString("\n\nOnly emit JSON. No commentary, no code fences. If you find nothing return {\"findings\":[]}.\n\n")
 
-	if len(workloads) > 0 {
-		sb.WriteString("Detected CB workload slugs (call aws_best_practices_for on EACH): ")
-		sb.WriteString(formatWorkloads(workloads))
-		sb.WriteString("\n\n")
-	} else {
-		sb.WriteString("No CB workload slugs detected; rely on per-resource grounding via aws_lookup_primitive.\n\n")
-	}
-
-	if len(resources) > 0 {
-		sb.WriteString("Pre-resolved resources (Terraform type → CB primitive id; call aws_lookup_primitive on each distinct primitive id):\n")
-		// Deduplicate primitive ids for the model — the loop just below
-		// shows raw resource lines; the dedup block makes the call list
-		// explicit so the model doesn't fan out to dozens of redundant calls.
-		seen := map[string]struct{}{}
-		for _, r := range resources {
-			pid := primitiveIDFor(r)
-			if pid == "" {
-				continue
-			}
-			if _, ok := seen[pid]; ok {
-				continue
-			}
-			seen[pid] = struct{}{}
-			sb.WriteString("  - ")
-			sb.WriteString(pid)
-			sb.WriteString("\n")
-		}
-		sb.WriteString("\nResource-level detail (type / urn / region / primitive / describer enrichment):\n")
-		for _, r := range resources {
-			sb.WriteString("  ")
-			sb.WriteString(r.Type)
-			if r.URN != "" {
-				sb.WriteString(" (")
-				sb.WriteString(r.URN)
-				sb.WriteString(")")
-			}
-			if r.Region != "" {
-				sb.WriteString(" [")
-				sb.WriteString(r.Region)
-				sb.WriteString("]")
-			}
-			pid := primitiveIDFor(r)
-			if pid != "" {
-				sb.WriteString(" → ")
-				sb.WriteString(pid)
-			}
-			if enrich := formatDescriberEnrichment(r.Inputs); enrich != "" {
-				sb.WriteString("\n    ")
-				sb.WriteString(enrich)
-			}
-			sb.WriteString("\n")
-		}
-		sb.WriteString("\n")
-	}
+	writeGroundingBundle(&sb, bundle)
+	writeResourceTable(&sb, resources)
 
 	if len(files) > 0 {
 		sb.WriteString("Source files follow. Use the paths exactly as given.\n\n")
@@ -487,6 +486,123 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 	}
 	_ = iacType // currently unused in grounded variant; primitives carry the type info
 	return sb.String()
+}
+
+// writeGroundingBundle serialises the pre-fetched CB knowledge into the
+// prompt. Each section is delimited by a stable header so the model can
+// reference blocks by tool+key in its cb_source citations. Knowledge
+// gaps surface as "(no CB entry)" lines rather than being skipped, so
+// the section structure is invariant to backend KB content drift.
+func writeGroundingBundle(sb *strings.Builder, bundle *GroundingBundle) {
+	if bundle == nil {
+		sb.WriteString("CB knowledge bundle: (empty — no resources mapped to CB primitives)\n\n")
+		return
+	}
+
+	sb.WriteString("==== CB KNOWLEDGE BUNDLE ====\n")
+	if bundle.Composition != nil && bundle.Composition.Data != nil && bundle.Composition.Data.KBVersion > 0 {
+		fmt.Fprintf(sb, "(kb_version=%d)\n", bundle.Composition.Data.KBVersion)
+	}
+	sb.WriteString("\n")
+
+	for _, p := range bundle.Primitives {
+		fmt.Fprintf(sb, "---- CB-PRIMITIVE: %s ----\n", p.TypeID)
+		if p.Missing || p.Data == nil || len(p.Data.Chunks) == 0 {
+			sb.WriteString("(no CB entry)\n\n")
+			continue
+		}
+		writeChunks(sb, p.Data.Chunks)
+	}
+
+	for _, w := range bundle.Practices {
+		fmt.Fprintf(sb, "---- CB-WORKLOAD: %s ----\n", w.Workload)
+		if w.Missing || w.Data == nil || len(w.Data.Chunks) == 0 {
+			sb.WriteString("(no CB entry)\n\n")
+			continue
+		}
+		writeChunks(sb, w.Data.Chunks)
+	}
+
+	if bundle.Composition != nil {
+		fmt.Fprintf(sb, "---- CB-COMPOSITION (type_ids=[%s]) ----\n", strings.Join(bundle.Composition.TypeIDs, ", "))
+		if bundle.Composition.Missing || bundle.Composition.Data == nil || len(bundle.Composition.Data.Chunks) == 0 {
+			sb.WriteString("(no CB entry)\n\n")
+		} else {
+			writeChunks(sb, bundle.Composition.Data.Chunks)
+		}
+	}
+
+	sb.WriteString("==== END CB KNOWLEDGE BUNDLE ====\n\n")
+}
+
+// writeChunks renders the chunk array as readable Markdown-ish blocks.
+// Chunks arrive sorted by chunk_index from the backend, but we re-sort
+// defensively — KB renumbering or a partial response shouldn't reorder
+// the prompt.
+func writeChunks(sb *strings.Builder, chunks []knowledge.Chunk) {
+	ordered := append([]knowledge.Chunk(nil), chunks...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].DocPath != ordered[j].DocPath {
+			return ordered[i].DocPath < ordered[j].DocPath
+		}
+		return ordered[i].ChunkIndex < ordered[j].ChunkIndex
+	})
+	for _, c := range ordered {
+		if c.Heading != "" {
+			fmt.Fprintf(sb, "## %s\n", c.Heading)
+		}
+		if c.DocPath != "" {
+			fmt.Fprintf(sb, "_(source: %s)_\n", c.DocPath)
+		}
+		sb.WriteString(strings.TrimSpace(c.ChunkText))
+		sb.WriteString("\n\n")
+	}
+}
+
+// writeResourceTable lists discovered resources in stable order so two
+// audits over the same account produce the same prompt. Resources are
+// sorted by (URN, Region, Type) — URN is globally unique when present,
+// and the fallback compound key handles legacy resources without one.
+func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
+	if len(resources) == 0 {
+		return
+	}
+	sorted := append([]DiscoveredResource(nil), resources...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].URN != sorted[j].URN {
+			return sorted[i].URN < sorted[j].URN
+		}
+		if sorted[i].Region != sorted[j].Region {
+			return sorted[i].Region < sorted[j].Region
+		}
+		return sorted[i].Type < sorted[j].Type
+	})
+	sb.WriteString("Discovered resources (type / urn / region / primitive / describer enrichment):\n")
+	for _, r := range sorted {
+		sb.WriteString("  ")
+		sb.WriteString(r.Type)
+		if r.URN != "" {
+			sb.WriteString(" (")
+			sb.WriteString(r.URN)
+			sb.WriteString(")")
+		}
+		if r.Region != "" {
+			sb.WriteString(" [")
+			sb.WriteString(r.Region)
+			sb.WriteString("]")
+		}
+		pid := primitiveIDFor(r)
+		if pid != "" {
+			sb.WriteString(" → ")
+			sb.WriteString(pid)
+		}
+		if enrich := formatDescriberEnrichment(r.Inputs); enrich != "" {
+			sb.WriteString("\n    ")
+			sb.WriteString(enrich)
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
 }
 
 // formatDescriberEnrichment serializes only the cb_describer_* keys

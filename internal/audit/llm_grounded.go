@@ -1,57 +1,45 @@
 package audit
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 )
 
 // defaultLLMMaxCostUSD is the default --llm-max-cost cap (USD per audit).
-// Sourced from `2026-05-11-phase-f-uptime-cost.md` §3: $2.00 covers a typical
-// Sonnet/Opus audit with prompt-cache discount and leaves headroom for a
-// noisy tool-loop without runaway spend.
+// Sourced from `2026-05-11-phase-f-uptime-cost.md` §3: $2.00 covered the
+// previous MCP-tool-loop audit with room for noise. The deterministic
+// grounding path is dramatically cheaper (one prompt, no tool turns),
+// so the cap mostly serves as a guardrail against future model drift.
 const defaultLLMMaxCostUSD = 2.00
 
-// cbxMCPPathEnv is the env-var users set to point the wrapper at a local
-// cbx-mcp working tree (typical when iterating on cbx-mcp + cbx-cli together).
-// When unset we fall back to `uvx --from <discovered-path> cbx-mcp` against
-// the sibling checkout. There's no published-package path yet — `uvx
-// cbx-mcp@latest` will be wired once the package ships.
-const cbxMCPPathEnv = "CBX_MCP_PATH"
+// cbAPIURLEnv lets users override the CB knowledge backend URL used by
+// the grounding enumerator. Empty falls back to defaultCBAPIURL. The
+// audit always grounds against a live backend; an unreachable URL
+// fails fast with the backend's actual error.
+const cbAPIURLEnv = "CB_API_URL"
 
-// cbxMCPUseBackendEnv, when set to any non-empty value, opts the cbx-mcp
-// subprocess **out** of stub mode — i.e. cbx-mcp will hit the real backend
-// (api.cloudbooster.io) instead of reading from a local platform-app
-// knowledge tree. Default is stub-on because `api.cloudbooster.io` was
-// NXDOMAIN at Phase F implementation time (see Session 2 doc).
-const cbxMCPUseBackendEnv = "CBX_MCP_USE_BACKEND"
+// defaultCBAPIURL is the CloudBooster knowledge backend the audit
+// grounds against by default. Currently pointed at the local
+// platform-app dev backend (host-published on port 18000) because
+// api.cloudbooster.io is not yet reachable from outside the cluster.
+// Flip this to the production URL once it ships; override via
+// CB_API_URL for any other endpoint.
+const defaultCBAPIURL = "http://localhost:18000"
 
-// cbxMCPKBStubEnv is the cbx-mcp side env flag this wrapper sets when stub
-// mode is in force. Keep in sync with cbx-mcp/src/cbx_mcp/kb_stub.py:_ENV_FLAG.
-const (
-	cbxMCPKBStubEnv     = "CBX_MCP_KB_STUB"
-	cbxMCPKBStubPathEnv = "CBX_MCP_KB_STUB_PATH"
-)
-
-// cbxMCPServerName is the key under "mcpServers" in the generated .mcp.json
-// AND the prefix claude uses in its tool namespace (`mcp__cbx__*`). Both
-// callers of `--allowedTools` and the init-event assertion depend on this
-// value being exactly "cbx" — keep them in sync.
-const cbxMCPServerName = "cbx"
-
-// GroundingEvent records one tool_use / tool_result pair pulled from the
-// claude stream-json output. Snippet pulls from structuredContent when
-// present, falling back to the plain-text result. Used to (a) decorate
-// Finding.CBSource when the model emitted only a partial citation, and (b)
-// surface a structured grounding trail to the renderer/JSON envelope.
+// GroundingEvent records one CB-knowledge fetch as a flat
+// (tool, input, result) triple. Historically these came from parsing
+// the LLM's MCP tool-call stream; in the deterministic path they are
+// synthesised by GroundingBundle.toEvents() from Go-side fetches. The
+// shape stays the same so snippetForCitation / postProcessGrounded
+// keep working unchanged.
 type GroundingEvent struct {
 	Tool             string                 `json:"tool"`
 	Input            map[string]interface{} `json:"input,omitempty"`
@@ -59,412 +47,141 @@ type GroundingEvent struct {
 	TextResult       string                 `json:"text_result,omitempty"`
 }
 
-// streamJSONEvent is the subset of fields the parser needs. Untyped fields
-// (`message`, `tool_use_result`) are kept as json.RawMessage so we can decode
-// them with shape-specific structs when relevant.
-type streamJSONEvent struct {
-	Type           string          `json:"type"`
-	Subtype        string          `json:"subtype,omitempty"`
-	MCPServers     []mcpServerInfo `json:"mcp_servers,omitempty"`
-	Message        json.RawMessage `json:"message,omitempty"`
-	ToolUseResult  json.RawMessage `json:"tool_use_result,omitempty"`
-	Result         string          `json:"result,omitempty"`
-	NumTurns       int             `json:"num_turns,omitempty"`
-	TotalCostUSD   float64         `json:"total_cost_usd,omitempty"`
-	DurationMS     int             `json:"duration_ms,omitempty"`
-	IsError        bool            `json:"is_error,omitempty"`
-}
-
-type mcpServerInfo struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-}
-
-type assistantMessage struct {
-	Content []assistantContent `json:"content"`
-}
-
-type assistantContent struct {
-	Type  string                 `json:"type"`
-	ID    string                 `json:"id,omitempty"`
-	Name  string                 `json:"name,omitempty"`
-	Input map[string]interface{} `json:"input,omitempty"`
-}
-
-type userMessage struct {
-	Content []userContent `json:"content"`
-}
-
-type userContent struct {
-	Type       string `json:"type"`
-	ToolUseID  string `json:"tool_use_id,omitempty"`
-	Content    string `json:"content,omitempty"`
-}
-
-type toolUseResultPayload struct {
-	StructuredContent map[string]interface{} `json:"structuredContent,omitempty"`
-}
-
-// groundedClaudeStreamer shells out to `claude -p` with --output-format
-// stream-json and an --mcp-config pointing at cbx-mcp, parses NDJSON events
-// to build a grounding trail, and exposes the model's final text result via
-// the existing onToken/Stream contract. Holds per-call state populated by
-// Stream — callers MUST treat one streamer instance as single-use per audit.
+// groundedClaudeStreamer shells out to `claude -p` with NO MCP
+// configuration, so the model literally cannot call tools. All
+// CB-knowledge grounding is fetched Go-side and inlined in the prompt
+// (see buildGroundedPrompt + BuildGrounding). The streamer keeps the
+// GroundingTrail() interface for backward compat with
+// postProcessGrounded — InstallBundle wires the pre-fetched events in.
 type groundedClaudeStreamer struct {
-	binary     string
-	cbxMCPPath string // resolved path passed to `uvx --from`
-	useStub    bool   // when true, inject CBX_MCP_KB_STUB=1 into the MCP subprocess
+	binary string
 
-	// Populated by Stream:
-	trail        []GroundingEvent
-	finalText    string
+	// trail is the deterministic grounding trail, set by InstallBundle
+	// before Stream runs. We seed it from the Go-side fetch rather than
+	// parsing LLM tool calls — that's the whole reason this rewrite
+	// exists.
+	trail []GroundingEvent
+
+	// Populated by Stream, surfaced via TotalCostUSD for the cost-cap
+	// finding in postProcessGrounded.
 	totalCostUSD float64
-	numTurns     int
-	isError      bool
-	resultSeen   bool
 }
 
-// newGroundedClaudeStreamer resolves the local claude binary, the cbx-mcp
-// install path (CBX_MCP_PATH env > "../cbx-mcp" sibling > error), and the
-// stub-vs-backend toggle. Same posture as newClaudeCLIStreamer for binary
-// resolution — explicit error so the user sees "install Claude Code" instead
-// of a generic exec failure.
+// newGroundedClaudeStreamer resolves the local claude binary and
+// preflights the CB knowledge backend. The backend check is up-front
+// so the audit fails before discovery if grounding is going to be
+// unreachable.
 func newGroundedClaudeStreamer() (*groundedClaudeStreamer, error) {
 	bin, err := exec.LookPath(claudeCodeBinary)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"--cb-knowledge requires the 'claude' CLI on PATH; install Claude Code from https://claude.com/code",
+			"cbx audit aws requires the 'claude' CLI on PATH; install Claude Code from https://claude.com/code",
 		)
 	}
 
-	cbxPath, err := resolveCBXMCPPath()
-	if err != nil {
+	apiURL := resolvedCBAPIURL()
+	if err := preflightCBBackend(apiURL); err != nil {
 		return nil, err
 	}
 
-	useStub := os.Getenv(cbxMCPUseBackendEnv) == ""
-
-	return &groundedClaudeStreamer{
-		binary:     bin,
-		cbxMCPPath: cbxPath,
-		useStub:    useStub,
-	}, nil
+	return &groundedClaudeStreamer{binary: bin}, nil
 }
 
-// resolveCBXMCPPath returns the directory containing cbx-mcp's pyproject.toml.
-// Honours CBX_MCP_PATH first; otherwise probes the sibling checkout that
-// CloudBooster contributors maintain side-by-side with cbx-cli. We don't fall
-// back to a published-package path: cbx-mcp isn't on PyPI yet, and silently
-// hitting `uvx cbx-mcp` without `--from` would download whatever happens to
-// be cached, which is the opposite of "deterministic subprocess."
-func resolveCBXMCPPath() (string, error) {
-	if p := os.Getenv(cbxMCPPathEnv); p != "" {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			return "", fmt.Errorf("resolving %s=%q: %w", cbxMCPPathEnv, p, err)
-		}
-		if _, err := os.Stat(filepath.Join(abs, "pyproject.toml")); err != nil {
-			return "", fmt.Errorf(
-				"%s=%q does not look like a cbx-mcp checkout (no pyproject.toml): %w",
-				cbxMCPPathEnv, p, err,
-			)
-		}
-		return abs, nil
+// resolvedCBAPIURL returns the CB knowledge backend URL the audit will
+// use: CB_API_URL when set, otherwise defaultCBAPIURL.
+func resolvedCBAPIURL() string {
+	if u := os.Getenv(cbAPIURLEnv); u != "" {
+		return u
 	}
+	return defaultCBAPIURL
+}
 
-	// Probe for a sibling cbx-mcp checkout next to the cbx-cli working dir.
-	// Walks up from cwd; supports both `cd cbx-cli && cbx audit …` and
-	// running cbx from inside a nested directory.
-	cwd, err := os.Getwd()
+// preflightCBBackend confirms the CB knowledge backend is reachable
+// before we launch claude and the grounding enumerator. Without this
+// check, an unreachable backend silently degrades into a half-fetched
+// bundle → mostly-empty grounding context → spurious findings. Ping
+// /health with a short timeout; non-2xx and network errors both abort
+// with an actionable message naming the URL and the override env var.
+func preflightCBBackend(apiURL string) error {
+	u, err := url.Parse(apiURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("invalid CB API URL %q (set %s to a reachable backend)", apiURL, cbAPIURLEnv)
+	}
+	healthURL := strings.TrimRight(apiURL, "/") + "/health"
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(healthURL)
 	if err != nil {
-		return "", fmt.Errorf("resolving cbx-mcp path: getwd: %w", err)
+		return fmt.Errorf(
+			"CB knowledge backend at %s is unreachable: %v\n  set %s to a reachable backend (e.g. http://localhost:18000 for a local platform-app)",
+			apiURL, err, cbAPIURLEnv,
+		)
 	}
-	dir := cwd
-	for i := 0; i < 8; i++ {
-		candidate := filepath.Join(dir, "cbx-mcp", "pyproject.toml")
-		if _, err := os.Stat(candidate); err == nil {
-			return filepath.Dir(candidate), nil
-		}
-		// Also check sibling layout when cwd is itself cbx-cli.
-		sibling := filepath.Join(filepath.Dir(dir), "cbx-mcp", "pyproject.toml")
-		if _, err := os.Stat(sibling); err == nil {
-			return filepath.Dir(sibling), nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf(
+			"CB knowledge backend at %s returned HTTP %d on /health; set %s to a reachable backend",
+			apiURL, resp.StatusCode, cbAPIURLEnv,
+		)
 	}
-
-	return "", fmt.Errorf(
-		"--cb-knowledge needs cbx-mcp on disk; set %s to a cbx-mcp checkout or run from inside the cloudbooster/platform workspace",
-		cbxMCPPathEnv,
-	)
+	return nil
 }
 
-// Stream implements llmStreamer. Writes a temp .mcp.json wiring "cbx" to
-// `uvx --from <cbxMCPPath> cbx-mcp`, invokes claude with the mandatory Phase F
-// flags, parses NDJSON events as they arrive, and finally surfaces
-// result.result as a single onToken callback (matching the existing analyzer's
-// stream-accumulate-then-parse model).
+// InstallBundle stores the pre-fetched grounding bundle's events on
+// the streamer so GroundingTrail() reports the deterministic Go-side
+// fetches that actually produced the model's context. Called by the
+// analyzer before Stream.
+func (g *groundedClaudeStreamer) InstallBundle(bundle *GroundingBundle) {
+	if bundle == nil {
+		g.trail = nil
+		return
+	}
+	g.trail = bundle.toEvents()
+}
+
+// Stream invokes `claude -p` with text output and the prompt on
+// stdin. No --mcp-config / --allowedTools / --output-format stream-json
+// — the model has no tools to call and we don't need to parse the
+// stream-json envelope. stdout accumulates into the final text result.
 func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onToken func(string)) error {
-	tmpDir, err := os.MkdirTemp("", "cbx-audit-grounded-*")
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfgPath, err := writeMCPConfig(tmpDir, g.cbxMCPPath, g.useStub)
-	if err != nil {
-		return err
-	}
-
-	// --verbose is required by claude when combining -p with --output-format
-	// stream-json; without it claude rejects the flag combination. Verified
-	// 2026-05-11 against claude 2.1.138 by the grounded-streamer test fixture.
-	//
-	// --bare was intentionally dropped 2026-05-11: it strips Claude Code's
-	// keychain along with auto-memory/plugins/CLAUDE.md discovery, so the
-	// subprocess could connect MCP but couldn't authenticate to Anthropic.
-	// --strict-mcp-config alone already enforces the controlled tool
-	// surface (no `~/.claude.json` or project `.mcp.json` leakage). The
-	// remaining --bare side-effects (auto-memory, plugins, CLAUDE.md
-	// discovery) are noise for an audit run and don't affect finding
-	// correctness; accept the trade-off for the v1 ship.
-	args := []string{
-		"-p",
-		"--mcp-config", cfgPath,
-		"--strict-mcp-config",
-		"--allowedTools", "mcp__" + cbxMCPServerName + "__*",
-		"--permission-mode", "auto",
-		"--output-format", "stream-json",
-		"--verbose",
-	}
-	cmd := exec.CommandContext(ctx, g.binary, args...)
+	cmd := exec.CommandContext(ctx, g.binary, "-p", "--output-format", "text")
 	cmd.Stdin = strings.NewReader(prompt)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("attaching stdout pipe: %w", err)
-	}
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting %s: %w", g.binary, err)
-	}
-
-	parseErr := g.parseStream(stdout)
-
-	// Drain stdout closure / process exit before composing the error.
-	waitErr := cmd.Wait()
-	if parseErr != nil {
-		return parseErr
-	}
-	if waitErr != nil {
+	runErr := cmd.Run()
+	if runErr != nil {
 		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
+		if errors.As(runErr, &exitErr) {
 			if msg := strings.TrimSpace(stderr.String()); msg != "" {
 				return fmt.Errorf("%s exited %d: %s", g.binary, exitErr.ExitCode(), msg)
 			}
 			return fmt.Errorf("%s exited %d", g.binary, exitErr.ExitCode())
 		}
-		return fmt.Errorf("waiting on %s: %w", g.binary, waitErr)
+		return fmt.Errorf("running %s: %w", g.binary, runErr)
 	}
 
-	if !g.resultSeen {
-		return fmt.Errorf("claude stream-json ended without a `result` event")
-	}
-	onToken(g.finalText)
+	onToken(stdout.String())
 	return nil
 }
 
-// parseStream reads NDJSON events from r and updates streamer state. Returns
-// fast when the init event reports cbx as not-connected; this is the most
-// common Phase F failure mode (cbx-mcp not installed / uvx unreachable) and
-// failing here surfaces a clear error instead of "the LLM didn't cite cb_source."
-func (g *groundedClaudeStreamer) parseStream(r io.Reader) error {
-	scanner := bufio.NewScanner(r)
-	// Stream-json lines can hold large tool_use_result payloads — bump the
-	// max token to avoid bufio.ErrTooLong on real audits.
-	buf := make([]byte, 0, 1<<20)
-	scanner.Buffer(buf, 16<<20)
-
-	pendingToolUse := map[string]assistantContent{} // id → tool_use call
-
-	initSeen := false
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-		var ev streamJSONEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			// Tolerate non-JSON noise; only stream-json events matter for
-			// grounding. claude with --bare doesn't emit such noise in
-			// practice, but be defensive against future stream shapes.
-			continue
-		}
-
-		switch ev.Type {
-		case "system":
-			if ev.Subtype == "init" {
-				initSeen = true
-				if err := assertCBXConnected(ev.MCPServers); err != nil {
-					return err
-				}
-			}
-		case "assistant":
-			var msg assistantMessage
-			if err := json.Unmarshal(ev.Message, &msg); err != nil {
-				continue
-			}
-			for _, c := range msg.Content {
-				if c.Type == "tool_use" && c.ID != "" {
-					pendingToolUse[c.ID] = c
-				}
-			}
-		case "user":
-			var msg userMessage
-			if err := json.Unmarshal(ev.Message, &msg); err != nil {
-				continue
-			}
-			for _, c := range msg.Content {
-				if c.Type != "tool_result" || c.ToolUseID == "" {
-					continue
-				}
-				use, ok := pendingToolUse[c.ToolUseID]
-				if !ok {
-					continue
-				}
-				ge := GroundingEvent{
-					Tool:       stripMCPPrefix(use.Name),
-					Input:      use.Input,
-					TextResult: c.Content,
-				}
-				if len(ev.ToolUseResult) > 0 {
-					var tur toolUseResultPayload
-					if err := json.Unmarshal(ev.ToolUseResult, &tur); err == nil {
-						ge.StructuredResult = tur.StructuredContent
-					}
-				}
-				g.trail = append(g.trail, ge)
-				delete(pendingToolUse, c.ToolUseID)
-			}
-		case "result":
-			g.resultSeen = true
-			g.finalText = ev.Result
-			g.totalCostUSD = ev.TotalCostUSD
-			g.numTurns = ev.NumTurns
-			g.isError = ev.IsError
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading stream-json: %w", err)
-	}
-	if !initSeen {
-		return fmt.Errorf("claude stream-json missing init event; cbx-mcp connection unverified")
-	}
-	return nil
-}
-
-// assertCBXConnected enforces §4.3's init-event gate: bail fast when the cbx
-// MCP server didn't connect (no need to wait for an empty or hallucinated
-// model output) and bail just as fast when claude didn't even surface it.
-func assertCBXConnected(servers []mcpServerInfo) error {
-	for _, s := range servers {
-		if s.Name == cbxMCPServerName {
-			if s.Status == "connected" {
-				return nil
-			}
-			return fmt.Errorf(
-				"cbx-mcp connection failed: status=%q (check %s; run `uvx --from <path> cbx-mcp --help` to debug)",
-				s.Status, cbxMCPPathEnv,
-			)
-		}
-	}
-	return fmt.Errorf(
-		"claude init event does not list the %q MCP server; check --mcp-config and --strict-mcp-config",
-		cbxMCPServerName,
-	)
-}
-
-// stripMCPPrefix turns "mcp__cbx__aws_lookup_primitive" into
-// "aws_lookup_primitive" so cb_source.tool matches the cbx-mcp tool name a
-// human would read in CLAUDE.md.
-func stripMCPPrefix(name string) string {
-	prefix := "mcp__" + cbxMCPServerName + "__"
-	return strings.TrimPrefix(name, prefix)
-}
-
-// writeMCPConfig materialises the .mcp.json claude consumes. When useStub is
-// true we inject CBX_MCP_KB_STUB=1 into the cbx-mcp subprocess env so the
-// stub Python module short-circuits backend calls. The server name must
-// match cbxMCPServerName — both the init assertion and the --allowedTools
-// glob key off it.
-func writeMCPConfig(dir, cbxMCPPath string, useStub bool) (string, error) {
-	env := map[string]string{}
-	if useStub {
-		env[cbxMCPKBStubEnv] = "1"
-		// uvx installs cbx-mcp into a transient cache dir, so the stub's
-		// __file__-relative default KB-root computation walks into the
-		// uvx cache instead of platform-app/. Anchor the path explicitly
-		// against the cbx-mcp checkout so the default works regardless
-		// of how the Python process gets launched. Honour an outer
-		// override if the user already set one.
-		if existing := os.Getenv(cbxMCPKBStubPathEnv); existing != "" {
-			env[cbxMCPKBStubPathEnv] = existing
-		} else {
-			kbRoot := filepath.Join(cbxMCPPath, "..", "platform-app", "be", "app", "knowledge", "resources", "aws")
-			env[cbxMCPKBStubPathEnv] = filepath.Clean(kbRoot)
-		}
-	}
-	cfg := map[string]interface{}{
-		"mcpServers": map[string]interface{}{
-			cbxMCPServerName: map[string]interface{}{
-				"command": "uvx",
-				"args":    []string{"--from", cbxMCPPath, "cbx-mcp"},
-				"env":     env,
-			},
-		},
-	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("encoding .mcp.json: %w", err)
-	}
-	cfgPath := filepath.Join(dir, ".mcp.json")
-	if err := os.WriteFile(cfgPath, data, 0o600); err != nil {
-		return "", fmt.Errorf("writing .mcp.json: %w", err)
-	}
-	return cfgPath, nil
-}
-
-// GroundingTrail exposes the parsed tool_use/tool_result pairs the streamer
-// observed during the last Stream call. Returns nil if Stream hasn't run.
-// Surfaced via the groundingTrailer interface so the analyzer can backfill
-// Finding.CBSource without depending on the concrete streamer type.
+// GroundingTrail exposes the pre-fetched grounding events surfaced by
+// InstallBundle. Returns nil when no bundle was installed (e.g. unit
+// tests using a fake streamer).
 func (g *groundedClaudeStreamer) GroundingTrail() []GroundingEvent { return g.trail }
 
-// TotalCostUSD reports the model's reported cost from the terminating
-// `result` event (zero when not provided by claude). Used by the analyzer to
-// emit the --llm-max-cost warning.
+// TotalCostUSD reports the model's reported cost. With no MCP tool
+// loop and a single non-stream invocation, claude -p does not surface
+// a structured cost back to us — this returns 0. The cost-cap finding
+// in postProcessGrounded therefore only fires for legacy MCP-driven
+// streamers (kept for future use if/when claude -p exposes a cost
+// header).
 func (g *groundedClaudeStreamer) TotalCostUSD() float64 { return g.totalCostUSD }
 
-// groundingTrailer is the optional capability the analyzer probes via type
-// assertion. Concrete groundedClaudeStreamer implements it; the legacy
-// claudeCLIStreamer does not, which is exactly how the analyzer distinguishes
-// "ungrounded run" from "grounded run with zero citations."
+// groundingTrailer is the optional capability postProcessGrounded
+// probes via type assertion to backfill snippets and emit cost-cap
+// findings. The deterministic streamer implements both methods.
 type groundingTrailer interface {
 	GroundingTrail() []GroundingEvent
 	TotalCostUSD() float64
-}
-
-// HasCBXMCPCheckout reports whether resolveCBXMCPPath can locate a
-// usable cbx-mcp checkout in the current environment. Used by
-// `cbx audit aws --dry-run` to surface a precondition check without
-// actually running the analyzer. Errors collapse to false — the caller
-// only cares "would the grounded path succeed?", not "why not?".
-func HasCBXMCPCheckout() bool {
-	_, err := resolveCBXMCPPath()
-	return err == nil
 }

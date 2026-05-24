@@ -477,7 +477,6 @@ func isLikelyAWSRegion(s string) bool {
 func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.DiscoverParams) error {
 	_, claudeErr := exec.LookPath("claude")
 	claudeOK := claudeErr == nil
-	mcpOK := audit.HasCBXMCPCheckout()
 	cfnCount := awsdisc.DiscoverableTypeCount()
 
 	if outputFormat == "json" {
@@ -488,7 +487,6 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 			"cfn_type_count":             cfnCount,
 			"cloudtrail_events_estimate": dr.EventCount,
 			"claude_cli_available":       claudeOK,
-			"cbx_mcp_available":          mcpOK,
 		}
 		return output.PrintJSON(payload, nil)
 	}
@@ -504,7 +502,6 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 	fmt.Fprintf(os.Stderr, "  CFN types queried: %d\n", cfnCount)
 	fmt.Fprintf(os.Stderr, "  est CloudTrail Read events: ~%d\n", dr.EventCount)
 	fmt.Fprintf(os.Stderr, "  claude CLI on PATH: %v\n", claudeOK)
-	fmt.Fprintf(os.Stderr, "  cbx-mcp available:  %v\n", mcpOK)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "(no CloudControl Discover or LLM calls were made)")
 	return nil

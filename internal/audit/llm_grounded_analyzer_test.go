@@ -155,13 +155,22 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 		{Type: "aws_s3_bucket", URN: "aws_s3_bucket.x"},
 		{Type: "aws_cloudfront_distribution"},
 	}
-	workloads := ClassifyWorkloads(resources)
-	if len(workloads) == 0 {
-		t.Fatal("classifier produced no workloads — fixture is broken")
+	// In the deterministic grounding path the prompt builder consumes a
+	// pre-fetched GroundingBundle, not workload slugs. Synthesise a
+	// representative bundle here so the prompt carries the expected
+	// keys/snippets.
+	bundle := &GroundingBundle{
+		Primitives: []PrimitiveKnowledge{
+			{TypeID: "aws:cdn/distribution@v1", Missing: true},
+			{TypeID: "aws:s3/bucket@v1", Missing: true},
+		},
+		Practices: []WorkloadKnowledge{
+			{Workload: "static-site", Missing: true},
+		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, workloads)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle)
 	for _, want := range []string{
-		"mcp__cbx__",
+		"CB KNOWLEDGE BUNDLE",
 		"aws_lookup_primitive",
 		"aws_best_practices_for",
 		"static-site",
