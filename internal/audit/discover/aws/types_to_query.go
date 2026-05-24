@@ -100,6 +100,11 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// separate describer just for rotation state.
 	{Type: "AWS::SecretsManager::RotationSchedule"},
 	{Type: "AWS::KMS::Key"},
+	// Aliases are a sibling CFN resource; cross-referenced by
+	// crossReferenceKMS so a key's "is_unused" calculation can
+	// resolve `alias/foo` references in other resources back to the
+	// underlying key ARN.
+	{Type: "AWS::KMS::Alias"},
 	{Type: "AWS::CloudTrail::Trail"},
 }
 

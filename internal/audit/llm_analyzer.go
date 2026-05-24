@@ -472,7 +472,7 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 	sb.WriteString("       • Databases / cache clusters with `PubliclyAccessible: true`.\n")
 	sb.WriteString("       • Secrets without rotation (`RotationEnabled: false` or unset).\n")
 	sb.WriteString("       • DynamoDB tables without point-in-time recovery, or without CMK encryption when storing sensitive data.\n")
-	sb.WriteString("       • Unattached / orphaned resources accruing cost: EBS volumes (`State: available`), EIPs (no `AssociationId`), unused KMS keys.\n")
+	sb.WriteString("       • Unattached / orphaned resources accruing cost: EBS volumes (`State: available`), EIPs (no `AssociationId`), KMS keys with `cb_describer_is_unused: true` (no other resource references the key — pure cost waste).\n")
 	sb.WriteString("       • Account-level gaps from the ACCOUNT POSTURE block: missing CloudTrail in a region, default EBS encryption disabled, no S3 account-level public-access-block.\n")
 	sb.WriteString("       • EC2 instances effectively exposed via attached wide-open security groups (cross-reference SG ingress with instance SG list).\n")
 	sb.WriteString("     This list is NOT exhaustive — use AWS-baseline judgement.\n")

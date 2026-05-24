@@ -172,6 +172,13 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	otherErrs = append(scoutOtherErrs, otherErrs...)
 	deduped := dedupeByURN(resources)
 
+	// Cross-resource KMS pass: annotate every AWS::KMS::Key with the
+	// list of other resources referencing it (cb_describer_referenced_by)
+	// and a derived cb_describer_is_unused boolean. Runs after dedupe
+	// so global-service collapsing doesn't double-count cross-region
+	// references.
+	crossReferenceKMS(deduped)
+
 	// Account-posture pass runs after fan-out so it shares the cfg
 	// already authenticated by Preflight. Cheap (~4 API calls total)
 	// and parallel with itself; doesn't gate the discovery result.
