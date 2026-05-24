@@ -174,15 +174,20 @@ func isKMSFieldName(name string) bool {
 }
 
 // isAWSManagedKMSKey returns true when the key looks AWS-managed
-// (alias prefix `aws/`, key manager AWS). We don't flag those as
-// unused because they're created and reaped by AWS itself.
+// (KeyManager=AWS, surfaced by the KMS describer via kms:DescribeKey
+// — CloudControl's CFN Properties for AWS::KMS::Key don't carry the
+// field). AWS-managed keys are created and reaped by AWS itself, so
+// they should NEVER be flagged as unused by the cross-reference
+// pass even when no customer resource references them by ARN.
 func isAWSManagedKMSKey(in map[string]any) bool {
+	if mgr, ok := in["cb_describer_key_manager"].(string); ok && strings.EqualFold(mgr, "AWS") {
+		return true
+	}
+	// Legacy fallback: some CC responses MAY surface KeyManager
+	// directly (newer CFN schema). Keep this for forward compat.
 	if mgr, ok := in["KeyManager"].(string); ok && strings.EqualFold(mgr, "AWS") {
 		return true
 	}
-	// Some CC responses surface the key's primary alias under
-	// "Aliases" or via the alias resources we cross-referenced.
-	// Fallback: ARN contains the aws- prefix in some forms.
 	return false
 }
 
