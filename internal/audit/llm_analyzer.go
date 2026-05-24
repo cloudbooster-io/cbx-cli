@@ -47,6 +47,24 @@ type llmAnalyzer struct {
 	// can flag account-wide gaps (default EBS encryption off, no MFA
 	// on root, etc.). Nil for non-AWS audits.
 	posture *AccountPosture
+
+	// lastConnections holds the architecture-diagram edges extracted
+	// from the most recent grounded response. Read by
+	// CollectFromResources after ScanResources returns so the
+	// downstream renderer can draw labelled arrows alongside the
+	// deterministic Inputs-based ones. Empty when grounded mode is
+	// off or the model didn't emit any.
+	lastConnections []LLMConnection
+}
+
+// LastConnections returns the architecture edges the analyzer
+// extracted from the most recent ScanResources call. Safe to call
+// after the stream completes; nil otherwise.
+func (l *llmAnalyzer) LastConnections() []LLMConnection {
+	if l == nil {
+		return nil
+	}
+	return l.lastConnections
 }
 
 // newLLMAnalyzer wires a Stream-based analyzer against the user's logged-in
@@ -172,10 +190,14 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 		return []Finding{l.errorFinding(fmt.Sprintf("llm stream: %v", streamErr))}, nil
 	}
 
-	findings, parseErr := parseLLMFindings(sb.String(), l.providerForRuleID)
+	rawResp := sb.String()
+	findings, parseErr := parseLLMFindings(rawResp, l.providerForRuleID)
 	if parseErr != nil {
 		return []Finding{l.errorFinding(fmt.Sprintf("parsing llm output: %v", parseErr))}, nil
 	}
+	// Connections are best-effort — parse failures here never block
+	// findings from making it to the user.
+	l.lastConnections = parseLLMConnections(rawResp)
 
 	if l.cbKnowledge {
 		findings = l.postProcessGrounded(findings)
@@ -255,10 +277,14 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 		return []Finding{l.errorFinding(fmt.Sprintf("llm stream: %v", streamErr))}, nil
 	}
 
-	findings, parseErr := parseLLMFindings(sb.String(), l.providerForRuleID)
+	rawResp := sb.String()
+	findings, parseErr := parseLLMFindings(rawResp, l.providerForRuleID)
 	if parseErr != nil {
 		return []Finding{l.errorFinding(fmt.Sprintf("parsing llm output: %v", parseErr))}, nil
 	}
+	// Connections are best-effort — parse failures here never block
+	// findings from making it to the user.
+	l.lastConnections = parseLLMConnections(rawResp)
 
 	if l.cbKnowledge {
 		findings = l.postProcessGrounded(findings)
@@ -474,20 +500,36 @@ func buildGroundedPrompt(iacType string, files []SourceFile, resources []Discove
 	sb.WriteString("       • DynamoDB tables without point-in-time recovery, or without CMK encryption when storing sensitive data.\n")
 	sb.WriteString("       • Unattached / orphaned resources accruing cost: EBS volumes (`State: available`), EIPs (`cb_describer_is_attached: false`), KMS keys with `cb_describer_is_unused: true` (no other resource references the key — pure cost waste). Exclude AWS-managed keys (`cb_describer_key_manager == \"AWS\"`) from unused-key findings.\n")
 	sb.WriteString("       • Account-level gaps from the ACCOUNT POSTURE block: any region in `CloudTrail coverage` reporting `false` (no trail covers it — emit an account-level finding `account:<accountId>` for each), default EBS encryption disabled for a region, no IAM password policy.\n")
-	sb.WriteString("       • EC2 instances effectively exposed via attached wide-open security groups (cross-reference SG ingress with instance SG list).\n")
+	sb.WriteString("       • EC2 instances effectively exposed: check `cb_describer_subnet_is_public` (pre-computed — subnet has MapPublicIpOnLaunch=true OR its route table has a 0.0.0.0/0 → IGW route) combined with `cb_describer_public_ip_present`. When both true AND any attached SG has wide-open admin ingress, emit a CRITICAL compound finding referencing the instance, subnet, and SG.\n")
 	sb.WriteString("     This list is NOT exhaustive — use AWS-baseline judgement.\n\n")
 	sb.WriteString("  2. **DO NOT MERGE ORTHOGONAL ISSUES.** If a single resource has multiple distinct security issues, emit ONE FINDING PER ISSUE — never roll them into one finding with a long remediation. Specifically:\n")
 	sb.WriteString("       • Security groups: emit ONE CRITICAL finding per (SG, exposed admin port) pair listed in `cb_describer_ingress_exposed_admin_ports`. A SG with ports [22, 3389] open to 0.0.0.0/0 produces TWO findings, not one. Title each as `SSH (port 22) open to the internet on <SG-id>`, `RDP (port 3389) open to the internet on <SG-id>`, etc. Compound \"instance exposed via SG\" findings are ADDITIONAL — they don't replace the per-port SG findings.\n")
 	sb.WriteString("       • EBS snapshots: a snapshot that is both unencrypted AND publicly shared (`cb_describer_publicly_shared: true`) produces TWO findings — an unencryption finding (WARNING) and a SEPARATE publicly-shared-snapshot finding (CRITICAL). The public-share finding is the most dangerous attribute and MUST stand alone; never bury it in a remediation paragraph.\n")
-	sb.WriteString("       • API Gateway with no authorizer + backing Lambda with admin-equivalent role: emit a CRITICAL compound finding referencing both resources (\"unauthenticated public API invokes admin-privileged Lambda\"). Cross-reference the Lambda's `Role` ARN against IAM Role / User findings to verify privilege escalation potential.\n")
-	sb.WriteString("       • RDS / databases with `PubliclyAccessible: true`: emit a HIGH finding for the flag itself (\"the publicly-accessible flag is set — one route-table change exposes the database\"). Only escalate to CRITICAL if you can verify from the discovered route-table / subnet / IGW resources that the subnet actually has a default route to an IGW. When route data is incomplete, stay at HIGH and say so in the description; don't overstate blast radius.\n\n")
+	sb.WriteString("       • API Gateway with no authorizer + backing Lambda with admin-equivalent role: emit a CRITICAL compound finding referencing both resources. The Lambda's role privilege is pre-computed — check `cb_describer_role_is_admin_equivalent` (true means AdministratorAccess / PowerUserAccess / IAMFullAccess attached) and `cb_describer_role_has_wildcard_inline_policy` (true means an inline `Action:* Resource:*` Allow). Either flag being true on a Lambda fronted by an unauthenticated route is CRITICAL.\n")
+	sb.WriteString("       • RDS / databases with `PubliclyAccessible: true`: severity is pre-computed via `cb_describer_effectively_public`. When that field is `true` (the DBSubnetGroup contains at least one internet-routable subnet) emit CRITICAL (\"database is reachable from the internet\"). When `false` (all subnets are private) emit HIGH (\"publicly-accessible flag is set — one route-table change exposes the database\") with the explicit caveat that current routing keeps it private. Never escalate to CRITICAL on the flag alone.\n\n")
 	sb.WriteString("  3. Use the CB knowledge bundle as authoritative context for CB's RECOMMENDED posture. When a finding aligns with CB-authored guidance, quote the relevant phrase in `cb_source.snippet` and set `cb_source.tool` to the bundle section (`aws_lookup_primitive` / `aws_best_practices_for` / `aws_composition_for`) with `key` set to the primitive id / workload slug / \"composition\".\n")
 	sb.WriteString("  4. When a finding has no exact CB-authored anchor (baseline AWS hygiene), set `cb_source` to {tool: \"aws_baseline\", key: \"<short-rule-name>\", snippet: \"<the AWS-baseline rule you applied>\"} so the report still carries a justification.\n")
 	sb.WriteString("  5. Use the resource's URN as `resource` for resource-scoped findings, and `account:<accountId>` for account-posture findings.\n")
 	sb.WriteString("  6. Don't invent file/line fields — set `file: \"\"` and `line: 0` for live-AWS findings.\n\n")
+
+	sb.WriteString("ARCHITECTURE CONNECTIONS — Alongside findings, also emit a `connections` array describing the SEMANTIC data-flow relationships between discovered resources. These power the architecture diagram. Only emit edges you can support from concrete fields in the resource data:\n")
+	sb.WriteString("  • CloudFront → S3 origin: when an `AWS::CloudFront::Distribution` has `Origins[*].S3OriginConfig` AND the origin's `DomainName` resolves to a discovered S3 bucket (match the bucket name prefix of `DomainName` against discovered bucket IDs).\n")
+	sb.WriteString("  • CloudFront → ALB origin: when `Origins[*].CustomOriginConfig` plus `DomainName` resolves to a discovered ALB/ELB DNS name.\n")
+	sb.WriteString("  • API Gateway → Lambda: when `AWS::APIGateway::Method.Integration.Uri` ARN references a discovered Lambda function ARN, or `AWS::ApiGatewayV2::Integration.IntegrationUri` does.\n")
+	sb.WriteString("  • Lambda → DynamoDB / S3 / Secrets / KMS: when the Lambda's execution role's INLINE or ATTACHED policy lists Allow actions (`dynamodb:*`, `s3:*`, `secretsmanager:GetSecretValue`, `kms:Decrypt`, etc.) targeting a specific Resource ARN that matches a discovered resource. Skip wildcard `Resource: \"*\"` cases — the edge isn't specific enough to draw.\n")
+	sb.WriteString("  • AppSync → Lambda / DynamoDB: from data source definitions in the GraphQL API.\n")
+	sb.WriteString("  • SNS / SQS / EventBridge → Lambda subscriptions: from event source mappings or subscriptions.\n")
+	sb.WriteString("  • RDS / DynamoDB → KMS CMK: when the database's `KmsKeyId` / `SSESpecification.KMSMasterKeyId` matches a discovered KMS key.\n\n")
+	sb.WriteString("RULES for connections:\n")
+	sb.WriteString("  (a) `from` and `to` must be the EXACT discovered URNs (the `urn` field on each resource). Do not invent or paraphrase URNs.\n")
+	sb.WriteString("  (b) Skip the edge if either endpoint isn't in the discovered set.\n")
+	sb.WriteString("  (c) `label` is a 1-3 word verb describing the flow (\"origin\", \"invokes\", \"reads\", \"writes\", \"publishes to\", \"encrypts\"). Keep it short — it overlays the arrow on the diagram.\n")
+	sb.WriteString("  (d) Don't emit duplicate edges (same from+to+label). Don't emit edges between resources in the same Component the audit already groups together (those are implicit).\n")
+	sb.WriteString("  (e) When uncertain, OMIT the edge. A clean smaller graph beats a noisy speculative one.\n\n")
+
 	sb.WriteString("Return a single JSON object:\n")
-	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"","line":0,"cb_source":{"tool":"…","key":"…","snippet":"…"}}]}`)
-	sb.WriteString("\n\nOnly emit JSON. No commentary, no code fences. If you find nothing return {\"findings\":[]}.\n\n")
+	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"","line":0,"cb_source":{"tool":"…","key":"…","snippet":"…"}}],"connections":[{"from":"<urn>","to":"<urn>","label":"…"}]}`)
+	sb.WriteString("\n\nOnly emit JSON. No commentary, no code fences. If you find nothing return {\"findings\":[],\"connections\":[]}.\n\n")
 
 	writeAccountPosture(&sb, posture)
 	writeGroundingBundle(&sb, bundle)
@@ -758,7 +800,8 @@ var jsonBlockRe = regexp.MustCompile(`(?s)\{.*\}`)
 
 // llmRawResponse mirrors the structured-output schema in buildLLMPrompt.
 type llmRawResponse struct {
-	Findings []llmRawFinding `json:"findings"`
+	Findings    []llmRawFinding    `json:"findings"`
+	Connections []llmRawConnection `json:"connections,omitempty"`
 }
 
 type llmRawFinding struct {
@@ -778,6 +821,12 @@ type llmRawCBSrc struct {
 	Tool    string `json:"tool"`
 	Key     string `json:"key"`
 	Snippet string `json:"snippet"`
+}
+
+type llmRawConnection struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label,omitempty"`
 }
 
 // parseLLMFindings tolerates code-fenced output / leading prose by extracting
@@ -840,6 +889,48 @@ func parseLLMFindings(raw, providerLabel string) ([]Finding, error) {
 		findings = append(findings, f)
 	}
 	return findings, nil
+}
+
+// parseLLMConnections extracts the `connections` array from the same
+// JSON envelope the grounded prompt now asks for. Returns nil when
+// the field is absent or empty; tolerates the same fenced / prose
+// wrappers parseLLMFindings handles.
+//
+// Connections with the same endpoint URN on both sides are dropped
+// (self-loops add noise), as are entries missing either URN.
+func parseLLMConnections(raw string) []LLMConnection {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "```") {
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimPrefix(raw, "```")
+		if idx := strings.LastIndex(raw, "```"); idx >= 0 {
+			raw = raw[:idx]
+		}
+		raw = strings.TrimSpace(raw)
+	}
+	jsonBlob := raw
+	if !strings.HasPrefix(jsonBlob, "{") {
+		if m := jsonBlockRe.FindString(raw); m != "" {
+			jsonBlob = m
+		} else {
+			return nil
+		}
+	}
+	var parsed llmRawResponse
+	if err := json.Unmarshal([]byte(jsonBlob), &parsed); err != nil {
+		return nil
+	}
+	out := make([]LLMConnection, 0, len(parsed.Connections))
+	for _, c := range parsed.Connections {
+		if c.From == "" || c.To == "" || c.From == c.To {
+			continue
+		}
+		out = append(out, LLMConnection{From: c.From, To: c.To, Label: c.Label})
+	}
+	return out
 }
 
 func clampSeverity(s string) string {

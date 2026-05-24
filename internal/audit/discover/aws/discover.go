@@ -179,6 +179,16 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	// references.
 	crossReferenceKMS(deduped)
 
+	// Network reachability pass: pre-compute cb_describer_internet_routable
+	// on Subnets and cb_describer_effectively_public on RDS/EC2 so the
+	// LLM doesn't have to walk subnet→route-table→IGW chains itself.
+	crossReferenceNetwork(deduped)
+
+	// Lambda execution-role privilege: copy admin-policy flags from
+	// IAM roles onto their consuming Lambda functions for the
+	// "API GW + admin Lambda" CRITICAL pattern.
+	crossReferenceLambdaRole(deduped)
+
 	// Account-posture pass runs after fan-out so it shares the cfg
 	// already authenticated by Preflight. Cheap (~4 API calls total)
 	// and parallel with itself; doesn't gate the discovery result.

@@ -67,6 +67,10 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::EC2::NatGateway"},
 	{Type: "AWS::EC2::EIP"},
 	{Type: "AWS::EC2::RouteTable"},
+	// SubnetRouteTableAssociation lets crossref_network resolve which
+	// route table applies to a subnet. Without it the route-table walk
+	// for "is this subnet internet-routable" defaults to MapPublicIpOnLaunch.
+	{Type: "AWS::EC2::SubnetRouteTableAssociation"},
 	{Type: "AWS::EC2::VPCEndpoint"},
 	{Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"},
 	{Type: "AWS::ElasticLoadBalancingV2::Listener"},
@@ -83,6 +87,11 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// --- regional data ---
 	{Type: "AWS::RDS::DBInstance"},
 	{Type: "AWS::RDS::DBCluster"},
+	// DBSubnetGroup carries the SubnetIds we need to compute whether
+	// an RDS instance with PubliclyAccessible=true is actually
+	// reachable from the internet (any constituent subnet routable
+	// via an IGW route).
+	{Type: "AWS::RDS::DBSubnetGroup"},
 	{Type: "AWS::DynamoDB::Table"},
 	{Type: "AWS::ElastiCache::ReplicationGroup"},
 	{Type: "AWS::ElastiCache::CacheCluster"},
