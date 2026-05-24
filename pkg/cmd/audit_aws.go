@@ -13,7 +13,10 @@ import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	audittui "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/audit"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +34,7 @@ func newAuditAWSCmd() *cobra.Command {
 		diagnose        bool
 		llmMaxCost      float64
 		dryRun          bool
+		noTUI           bool
 	)
 
 	cmd := &cobra.Command{
@@ -202,6 +206,32 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				return renderDryRun(outputFormat, discResult, discoverParams)
 			}
 
+			// Discovery header card — what we just learned about the
+			// account, rendered before grounding so the user sees their
+			// audit context immediately rather than after a silent
+			// LLM pause.
+			if !quietFlag && outputFormat == "" {
+				fmt.Fprint(os.Stderr, renderDiscoveryCard(discResult))
+				fmt.Fprintln(os.Stderr)
+			}
+
+			// Move non-fatal discovery warnings into the advisories
+			// buffer so they surface in the end-of-run card instead of
+			// inline noise above the findings.
+			if len(discResult.PermissionErr) > 0 {
+				output.Advise(output.Advisory{
+					Code:  "aws-permission-errors",
+					Title: fmt.Sprintf("%d AWS permission errors during discovery", len(discResult.PermissionErr)),
+					Hint:  "cbx audit aws --diagnose",
+				})
+			}
+			if len(discResult.OtherErrs) > 0 {
+				output.Advise(output.Advisory{
+					Code:  "aws-discovery-warnings",
+					Title: fmt.Sprintf("%d non-fatal warnings during discovery", len(discResult.OtherErrs)),
+				})
+			}
+
 			// CB-grounded LLM analysis is always-on for `cbx audit aws`:
 			// the value of the audit IS the grounding in CB's curated
 			// knowledge, so the native-rules / mock-scanners path is no
@@ -232,29 +262,29 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				Regions:    discResult.Regions,
 				EventCount: discResult.EventCount,
 			}
+
+			// Grounding-phase spinner. RunFromResources spawns claude -p
+			// under the hood; without this the user sees the discovery
+			// header, then dead silence, then findings — and reasonably
+			// assumes the audit has hung. Suppressed on --quiet / --json
+			// so machine consumers aren't polluted with ANSI cursor games.
+			var groundingSpinner *output.Spinner
+			if !quietFlag && outputFormat == "" {
+				groundingSpinner = output.NewSpinner("grounding findings against CloudBooster knowledge")
+				groundingSpinner.Start()
+			}
 			result, runErr := audit.RunFromResources(opts, discResult.Resources, awsCtx)
+			if groundingSpinner != nil {
+				groundingSpinner.Stop()
+			}
 			if runErr != nil && result == nil {
 				return runErr
 			}
 
-			// Header. Goes to stderr so machine-readable output on stdout
-			// stays unpolluted. The CloudTrail line is the v1 nod to
-			// security-conscious users (plan §7.7) — they always ask
-			// "how noisy is this in CloudTrail?" before running.
-			if !quietFlag && outputFormat == "" {
-				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" AWS preflight ok"))
-				fmt.Fprintln(os.Stderr, "  audited account:  "+discResult.Identity.AccountID)
-				fmt.Fprintln(os.Stderr, "  identity:         "+discResult.Identity.ARN)
-				fmt.Fprintln(os.Stderr, "  audited regions:  "+strings.Join(discResult.Regions, ", "))
-				fmt.Fprintf(os.Stderr, "  resources found:  %d\n", len(discResult.Resources))
-				fmt.Fprintf(os.Stderr, "  note:             this run generated ~%d CloudTrail Read events\n", discResult.EventCount)
-				renderComponentsSummary(os.Stderr, result.Components)
-				if len(discResult.PermissionErr) > 0 {
-					fmt.Fprintf(os.Stderr, "  permission errors: %d (re-run with --diagnose for details)\n", len(discResult.PermissionErr))
-				}
-				if len(discResult.OtherErrs) > 0 {
-					fmt.Fprintf(os.Stderr, "  other warnings:    %d\n", len(discResult.OtherErrs))
-				}
+			// One-line component summary right after grounding so the
+			// user knows the LLM ran and what it grouped resources into.
+			if !quietFlag && outputFormat == "" && result != nil {
+				fmt.Fprintln(os.Stderr, renderGroundingSummary(result.Components))
 			}
 
 			if output.JSON() {
@@ -270,7 +300,12 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				return output.PrintJSON(payload, nil)
 			}
 
-			// Plain rendering
+			// Plain rendering. The label is the "stateFile" identifier
+			// RenderPlain uses to derive the report path — keep the
+			// "aws://<accountID>" form so reportFileFor() produces
+			// "<accountID>_audit_report.md", matching what the runner
+			// wrote. (Passing result.ReportPath here would double the
+			// suffix and produce a broken OSC-8 link.)
 			label := fmt.Sprintf("aws://%s", discResult.Identity.AccountID)
 			fmt.Print(audit.RenderPlain(result.Findings, label))
 
@@ -279,8 +314,30 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				renderDiagnose(os.Stderr, discResult.PermissionErr, discResult.Identity.ARN)
 			}
 
-			if !quietFlag {
-				fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Wrote markdown report: "+result.ReportPath))
+			// Interactive TUI takeover. The static report already
+			// printed above, so the TUI runs on the alt-screen — on
+			// exit, the user is back in their shell with the static
+			// output preserved in scrollback. Suppressed on --no-tui,
+			// --json, --quiet, and non-TTY paths so machine consumers
+			// stay quiet and CI never spawns a Bubble Tea program.
+			if interactive && !noTUI && len(result.Findings) > 0 {
+				ctxLine := fmt.Sprintf("AWS · %s · %s", discResult.Identity.AccountID, strings.Join(discResult.Regions, ", "))
+				if name := bestAccountLabel(discResult.Identity, os.Getenv("AWS_PROFILE")); name != "" {
+					ctxLine = fmt.Sprintf("AWS · %s (%s) · %s", discResult.Identity.AccountID, name, strings.Join(discResult.Regions, ", "))
+				}
+				model := audittui.NewModel(result.Findings).
+					WithContext(ctxLine).
+					WithReportPath(result.ReportPath)
+				p := tea.NewProgram(model, tea.WithAltScreen())
+				if _, err := p.Run(); err != nil {
+					// TUI failure shouldn't fail the audit — the static
+					// findings already printed. Surface as advisory.
+					output.Advise(output.Advisory{
+						Code:  "audit-tui-failed",
+						Title: "interactive viewer failed: " + err.Error(),
+						Hint:  "pass --no-tui to suppress",
+					})
+				}
 			}
 
 			if severityErr := audit.ExitWithSeverity(result.Findings); severityErr != nil {
@@ -310,6 +367,7 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
 	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a warning finding is emitted when claude's reported total_cost_usd exceeds the cap. 0 disables the cap")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
 
 	return cmd
 }
@@ -435,7 +493,11 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 	}
 
 	fmt.Fprintln(os.Stderr, output.Success.Render(output.Symbol("check")+" Dry run — audit plan"))
-	fmt.Fprintln(os.Stderr, "  account:           "+dr.Identity.AccountID)
+	acct := dr.Identity.AccountID
+	if name := bestAccountLabel(dr.Identity, os.Getenv("AWS_PROFILE")); name != "" {
+		acct += " (" + name + ")"
+	}
+	fmt.Fprintln(os.Stderr, "  account:           "+acct)
 	fmt.Fprintln(os.Stderr, "  identity:          "+dr.Identity.ARN)
 	fmt.Fprintln(os.Stderr, "  regions:           "+strings.Join(dr.Regions, ", "))
 	fmt.Fprintf(os.Stderr, "  CFN types queried: %d\n", cfnCount)
@@ -447,23 +509,103 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 	return nil
 }
 
-// renderComponentsSummary prints a one-line-per-kind summary of the
-// component groupings. Quiet by design — full per-component listings go
-// in the markdown report. Suppressed entirely when there are no
-// components (the audit found nothing or had no resources to group).
-func renderComponentsSummary(w *os.File, components []group.Component) {
+// renderDiscoveryCard builds the framed AWS discovery summary printed to
+// stderr after preflight + discovery and before LLM grounding. Replaces
+// the prior six `fmt.Fprintln` lines so the header reads as a single
+// visual unit with an "AWS" chip up top.
+func renderDiscoveryCard(dr *awsdisc.DiscoverResult) string {
+	title := "audit · " + dr.Identity.AccountID
+	if name := bestAccountLabel(dr.Identity, os.Getenv("AWS_PROFILE")); name != "" {
+		title += " · " + name
+	}
+	card := output.Card{
+		Label: output.Chip("AWS", lipgloss.Color("231"), lipgloss.Color("236")),
+		Title: title,
+	}
+	card.AddRow("identity", shortenIdentity(dr.Identity.ARN))
+	card.AddRow("regions", strings.Join(dr.Regions, ", "))
+	card.AddRow("resources", fmt.Sprintf("%d", len(dr.Resources)))
+	card.AddRow("CloudTrail", output.Dim.Render(
+		fmt.Sprintf("~%d Read events generated by this run", dr.EventCount)))
+	card.Footer = "grounded in CloudBooster knowledge"
+	return card.Render()
+}
+
+// bestAccountLabel returns the friendliest account name we can derive.
+// Precedence: IAM account alias (set via iam:CreateAccountAlias) > a
+// sanitized fragment of the AWS profile name (the part between the
+// first ':' and the first '/' — e.g. "CB:platform-testing-customer4/
+// AdministratorAccess" → "platform-testing-customer4"). Empty when
+// nothing useful is available. The profile fragment is purely a
+// client-side label, not authoritative for the account, but it's the
+// only place a human-readable name exists when the alias is unset.
+func bestAccountLabel(id awsdisc.Identity, profile string) string {
+	if id.AccountAlias != "" {
+		return id.AccountAlias
+	}
+	return profileFriendlyName(profile)
+}
+
+// profileFriendlyName extracts the human fragment from an AWS profile
+// name that follows the "<org>:<account-name>/<role>" convention
+// (common for SSO-managed profiles). Returns "" for unrecognised
+// shapes — we don't want to print a confusing partial string when the
+// profile doesn't follow the convention.
+func profileFriendlyName(profile string) string {
+	if profile == "" {
+		return ""
+	}
+	colon := strings.Index(profile, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest := profile[colon+1:]
+	if slash := strings.Index(rest, "/"); slash >= 0 {
+		return rest[:slash]
+	}
+	return rest
+}
+
+// renderGroundingSummary returns a single dim status line summarising
+// the LLM grouping pass: total component count plus per-kind breakdown.
+// Empty result is rendered as a "no components" hint so the user knows
+// grouping actually ran.
+func renderGroundingSummary(components []group.Component) string {
 	if len(components) == 0 {
-		return
+		return output.Dim.Render("  " + output.Symbol("arrow") + " grounded · no components extracted")
 	}
 	byKind := map[string]int{}
 	for _, c := range components {
 		byKind[c.Kind]++
 	}
+	parts := []string{}
 	for _, kind := range []string{"tag", "cb-primitive"} {
 		if n := byKind[kind]; n > 0 {
-			fmt.Fprintln(w, fmt.Sprintf("  components (%-12s): %d", kind, n))
+			parts = append(parts, fmt.Sprintf("%d %s", n, kind))
 		}
 	}
+	detail := strings.Join(parts, " · ")
+	if detail == "" {
+		detail = fmt.Sprintf("%d components", len(components))
+	}
+	return output.Dim.Render(
+		fmt.Sprintf("  %s grounded · %d components (%s)",
+			output.Symbol("arrow"), len(components), detail))
+}
+
+// shortenIdentity trims long SSO/role ARNs so the discovery header card
+// stays readable. We keep the role name + assumed-user suffix and middle-
+// elide the rest. ARNs that fit untouched pass through unchanged.
+func shortenIdentity(arn string) string {
+	if len(arn) <= 80 {
+		return arn
+	}
+	parts := strings.Split(arn, "/")
+	if len(parts) < 2 {
+		return arn
+	}
+	tail := strings.Join(parts[len(parts)-2:], "/")
+	return ".../" + tail
 }
 
 // permErrsToJSON converts *PermissionError slice into the JSON-friendly

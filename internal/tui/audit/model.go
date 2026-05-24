@@ -2,38 +2,70 @@ package audit
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 )
 
+// focusedPane controls which pane receives navigation keys when both
+// panes are visible. In narrow mode only one pane is shown.
+type focusedPane int
+
+const (
+	focusList focusedPane = iota
+	focusDetail
+)
+
+// viewMode tracks the current top-level screen. In wide mode we stay
+// in listMode and toggle pane focus; in narrow mode `enter` flips to
+// detailMode so the user can read the full finding without splitting
+// 80 cols across two panels.
 type viewMode int
 
 const (
 	listMode viewMode = iota
 	detailMode
+	helpMode
 )
 
 // Model is the Bubble Tea model for the interactive audit TUI.
 type Model struct {
-	findings []auditcore.Finding
+	// Immutable inputs
+	findings    []auditcore.Finding
+	contextLine string
+	reportPath  string
+
+	// Derived view state
 	filtered []int
 	cursor   int
 	offset   int
-	mode     viewMode
-	filter   FilterState
-	keymap   KeyMap
 
-	// Search mode
-	searchMode   bool
-	searchBuffer string
+	// Layout
+	width     int
+	height    int
+	wideMode  bool
+	listWidth int
 
-	width  int
-	height int
+	// Components
+	keymap     KeyMap
+	filter     FilterState
+	searchMode bool
+	searchIn   textinput.Model
+	detail     viewport.Model
+	focus      focusedPane
+	mode       viewMode
+
+	// Transient UI
+	flash    string // toast message (e.g. "rule copied")
+	flashTTL int    // remaining frames before flash clears
 
 	quitting bool
 }
@@ -41,16 +73,41 @@ type Model struct {
 // NewModel creates a new audit TUI model with the given findings.
 // Findings are sorted by severity before display.
 func NewModel(findings []auditcore.Finding) Model {
-	SortFindings(findings)
+	// Copy so we don't mutate the caller's slice ordering when callers
+	// reuse findings for other output.
+	cp := make([]auditcore.Finding, len(findings))
+	copy(cp, findings)
+	SortFindings(cp)
+
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.Placeholder = "type to filter findings"
+	ti.CharLimit = 80
+
+	vp := viewport.New(0, 0)
+
 	m := Model{
-		findings: findings,
-		filtered: make([]int, len(findings)),
+		findings: cp,
+		filtered: make([]int, len(cp)),
 		keymap:   DefaultKeyMap(),
-		mode:     listMode,
+		searchIn: ti,
+		detail:   vp,
 	}
-	for i := range findings {
+	for i := range cp {
 		m.filtered[i] = i
 	}
+	return m
+}
+
+// WithContext sets the header line (e.g. "AWS · 839000215051 · eu-central-1").
+func (m Model) WithContext(line string) Model {
+	m.contextLine = line
+	return m
+}
+
+// WithReportPath sets the path opened by the `o` key.
+func (m Model) WithReportPath(p string) Model {
+	m.reportPath = p
 	return m
 }
 
@@ -59,10 +116,40 @@ func (m Model) Init() tea.Cmd {
 	return nil
 }
 
-// SetSize updates the model dimensions.
+// SetSize updates the model dimensions and reflows panes.
 func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
+	m.wideMode = width >= 110
+
+	if m.wideMode {
+		// Split 45 / 55 favouring the detail pane — the list compresses
+		// gracefully while the detail body benefits from extra width.
+		m.listWidth = width * 45 / 100
+		if m.listWidth < 36 {
+			m.listWidth = 36
+		}
+	} else {
+		m.listWidth = width
+	}
+
+	mainH := m.mainHeight()
+	var detailContentW int
+	switch {
+	case m.mode == detailMode:
+		// Narrow-screen drilldown takes the full width.
+		detailContentW = width - 4 // panel border + a little margin
+	case m.wideMode:
+		detailContentW = width - m.listWidth - 5 // panel borders + spacer
+	default:
+		detailContentW = width - 4
+	}
+	if detailContentW < 20 {
+		detailContentW = 20
+	}
+	m.detail.Width = detailContentW
+	m.detail.Height = mainH - 2 // border lines
+	m.refreshDetail()
 }
 
 // SelectedFinding returns the currently selected finding, or nil.
@@ -80,106 +167,187 @@ func (m *Model) SelectedFinding() *auditcore.Finding {
 
 // Update is the Bubble Tea update loop.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.flashTTL > 0 {
+		m.flashTTL--
+		if m.flashTTL == 0 {
+			m.flash = ""
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.SetSize(msg.Width, msg.Height)
 		return m, nil
-
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
-
 	return m, nil
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Global quit
-	if key.Matches(msg, m.keymap.Quit) {
-		m.quitting = true
-		return m, tea.Quit
-	}
-
-	switch m.mode {
-	case detailMode:
-		return m.handleDetailKey(msg)
-	case listMode:
-		return m.handleListKey(msg)
-	}
-
-	return m, nil
-}
-
-func (m Model) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keymap.Back):
-		m.mode = listMode
-		return m, nil
-	case key.Matches(msg, m.keymap.Up), key.Matches(msg, m.keymap.PageUp):
-		if m.offset > 0 {
-			m.offset--
-		}
-		return m, nil
-	case key.Matches(msg, m.keymap.Down), key.Matches(msg, m.keymap.PageDown):
-		m.offset++
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Search input owns the keyboard while open.
 	if m.searchMode {
 		return m.handleSearchKey(msg)
 	}
 
+	// Ctrl+C always exits, regardless of mode.
+	if msg.Type == tea.KeyCtrlC {
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	// Help overlay: any key dismisses, except help-toggle itself.
+	if m.mode == helpMode {
+		if key.Matches(msg, m.keymap.Help) {
+			m.mode = listMode
+			return m, nil
+		}
+		// `q` and `ctrl+c` still quit from help.
+		if key.Matches(msg, m.keymap.Quit) {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		// Anything else closes help.
+		m.mode = listMode
+		return m, nil
+	}
+
+	// Help-toggle works from list and detail modes.
+	if key.Matches(msg, m.keymap.Help) {
+		m.mode = helpMode
+		return m, nil
+	}
+
+	// Detail mode (narrow-screen drilldown): a focused, fullscreen
+	// view of one finding with scrolling.
+	if m.mode == detailMode {
+		switch {
+		case key.Matches(msg, m.keymap.Back):
+			m.mode = listMode
+			m.SetSize(m.width, m.height) // resize detail back to pane width
+			return m, nil
+		case key.Matches(msg, m.keymap.Quit):
+			m.quitting = true
+			return m, tea.Quit
+		case key.Matches(msg, m.keymap.Up):
+			m.detail.LineUp(1)
+		case key.Matches(msg, m.keymap.Down):
+			m.detail.LineDown(1)
+		case key.Matches(msg, m.keymap.PageUp):
+			m.detail.PageUp()
+		case key.Matches(msg, m.keymap.PageDown):
+			m.detail.PageDown()
+		case key.Matches(msg, m.keymap.Yank):
+			if f := m.SelectedFinding(); f != nil {
+				if err := copyToClipboard(f.RuleID); err == nil {
+					m.setFlash("copied " + f.RuleID)
+				} else {
+					m.setFlash("copy unavailable on this system")
+				}
+			}
+		case key.Matches(msg, m.keymap.Open):
+			if m.reportPath != "" {
+				if err := openInOS(m.reportPath); err == nil {
+					m.setFlash("opened " + m.reportPath)
+				} else {
+					m.setFlash("could not open report")
+				}
+			}
+		}
+		return m, nil
+	}
+
+	// List mode dispatches.
 	switch {
+	case key.Matches(msg, m.keymap.Quit):
+		m.quitting = true
+		return m, tea.Quit
+
 	case key.Matches(msg, m.keymap.Enter):
-		if len(m.filtered) > 0 {
+		// In wide mode the detail pane is already visible; enter just
+		// focuses it for scrolling. In narrow mode it pops a fullscreen
+		// detail view so the user can actually read the body.
+		if m.SelectedFinding() == nil {
+			return m, nil
+		}
+		if m.wideMode {
+			m.focus = focusDetail
+		} else {
 			m.mode = detailMode
-			m.offset = 0
+			m.SetSize(m.width, m.height) // expand detail to full width
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keymap.Back):
+		if m.wideMode && m.focus == focusDetail {
+			m.focus = focusList
+			return m, nil
+		}
 		m.quitting = true
 		return m, tea.Quit
 
+	case key.Matches(msg, m.keymap.Tab):
+		if m.wideMode {
+			if m.focus == focusList {
+				m.focus = focusDetail
+			} else {
+				m.focus = focusList
+			}
+		}
+		return m, nil
+
 	case key.Matches(msg, m.keymap.Up):
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureCursorVisible()
+		if m.focus == focusDetail && m.wideMode {
+			m.detail.LineUp(1)
+		} else {
+			m.moveCursor(-1)
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keymap.Down):
-		if m.cursor < len(m.filtered)-1 {
-			m.cursor++
-			m.ensureCursorVisible()
+		if m.focus == focusDetail && m.wideMode {
+			m.detail.LineDown(1)
+		} else {
+			m.moveCursor(1)
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keymap.PageUp):
-		m.cursor -= m.visibleCount()
-		if m.cursor < 0 {
-			m.cursor = 0
+		if m.focus == focusDetail && m.wideMode {
+			m.detail.PageUp()
+		} else {
+			m.moveCursor(-m.visibleCount())
 		}
-		m.ensureCursorVisible()
 		return m, nil
 
 	case key.Matches(msg, m.keymap.PageDown):
-		m.cursor += m.visibleCount()
-		if m.cursor >= len(m.filtered) {
-			m.cursor = len(m.filtered) - 1
+		if m.focus == focusDetail && m.wideMode {
+			m.detail.PageDown()
+		} else {
+			m.moveCursor(m.visibleCount())
 		}
+		return m, nil
+
+	case key.Matches(msg, m.keymap.Top):
+		m.cursor = 0
+		m.offset = 0
+		m.refreshDetail()
+		return m, nil
+
+	case key.Matches(msg, m.keymap.Bottom):
+		m.cursor = len(m.filtered) - 1
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
 		m.ensureCursorVisible()
+		m.refreshDetail()
 		return m, nil
 
 	case key.Matches(msg, m.keymap.Filter):
 		m.searchMode = true
-		m.searchBuffer = ""
-		return m, nil
+		m.searchIn.SetValue(m.filter.Search)
+		m.searchIn.Focus()
+		return m, textinput.Blink
 
 	case key.Matches(msg, m.keymap.CycleSev):
 		m.cycleSeverityFilter()
@@ -191,7 +359,28 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keymap.Reset):
 		m.filter = FilterState{}
+		m.searchIn.SetValue("")
 		m.applyFilter()
+		return m, nil
+
+	case key.Matches(msg, m.keymap.Yank):
+		if f := m.SelectedFinding(); f != nil {
+			if err := copyToClipboard(f.RuleID); err == nil {
+				m.setFlash("copied " + f.RuleID)
+			} else {
+				m.setFlash("copy unavailable on this system")
+			}
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keymap.Open):
+		if m.reportPath != "" {
+			if err := openInOS(m.reportPath); err == nil {
+				m.setFlash("opened " + m.reportPath)
+			} else {
+				m.setFlash("could not open report")
+			}
+		}
 		return m, nil
 	}
 
@@ -201,36 +390,48 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		m.filter.Search = m.searchBuffer
+		m.filter.Search = m.searchIn.Value()
 		m.applyFilter()
 		m.searchMode = false
+		m.searchIn.Blur()
 		return m, nil
 	case tea.KeyEsc:
 		m.searchMode = false
-		m.searchBuffer = ""
-		return m, nil
-	case tea.KeyBackspace:
-		if len(m.searchBuffer) > 0 {
-			m.searchBuffer = m.searchBuffer[:len(m.searchBuffer)-1]
-		}
+		m.searchIn.Blur()
 		return m, nil
 	}
+	var cmd tea.Cmd
+	m.searchIn, cmd = m.searchIn.Update(msg)
+	// Live-filter as the user types so the list narrows on every keystroke.
+	m.filter.Search = m.searchIn.Value()
+	m.applyFilter()
+	return m, cmd
+}
 
-	// Append runes to search buffer
-	if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-		m.searchBuffer += string(msg.Runes)
+// ---- selection / scrolling helpers ----
+
+func (m *Model) moveCursor(delta int) {
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
 	}
-
-	return m, nil
+	if m.cursor >= len(m.filtered) {
+		m.cursor = len(m.filtered) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	m.ensureCursorVisible()
+	m.refreshDetail()
 }
 
 func (m *Model) visibleCount() int {
-	// Header = 1 line, footer = 1 line, each item = 2 lines
-	available := m.height - 2
-	if available < 2 {
+	// Each list row takes 2 lines (title + dim sub-line); subtract chrome.
+	mainH := m.mainHeight() - 2 // panel borders
+	if mainH < 2 {
 		return 1
 	}
-	return available / 2
+	return mainH / 2
 }
 
 func (m *Model) ensureCursorVisible() {
@@ -245,12 +446,24 @@ func (m *Model) ensureCursorVisible() {
 	}
 }
 
+func (m *Model) refreshDetail() {
+	body := renderDetailBody(m.SelectedFinding(), m.detail.Width)
+	m.detail.SetContent(body)
+	m.detail.GotoTop()
+}
+
+func (m *Model) setFlash(s string) {
+	m.flash = s
+	m.flashTTL = 12 // ~clear after a handful of key presses
+}
+
+// ---- filter wiring ----
+
 func (m *Model) cycleSeverityFilter() {
 	order := []string{"", auditcore.SeverityCritical, auditcore.SeverityHigh, auditcore.SeverityWarning, auditcore.SeverityInfo}
-	current := m.filter.Severity
 	idx := 0
 	for i, s := range order {
-		if s == current {
+		if s == m.filter.Severity {
 			idx = i
 			break
 		}
@@ -275,15 +488,13 @@ func (m *Model) cycleServiceFilter() {
 		}
 	}
 	if idx < 0 {
-		// currently no service filter; set to first
 		m.filter.Service = services[0]
 	} else {
-		// cycle to next, or back to "" if at last
-		nextIdx := idx + 1
-		if nextIdx >= len(services) {
+		next := idx + 1
+		if next >= len(services) {
 			m.filter.Service = ""
 		} else {
-			m.filter.Service = services[nextIdx]
+			m.filter.Service = services[next]
 		}
 	}
 	m.applyFilter()
@@ -298,173 +509,319 @@ func (m *Model) applyFilter() {
 		m.cursor = 0
 	}
 	m.offset = 0
+	m.refreshDetail()
 }
+
+// ---- view ----
 
 // View renders the TUI.
 func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	switch m.mode {
-	case detailMode:
-		return m.viewDetail()
-	default:
-		return m.viewList()
+	if m.width == 0 || m.height == 0 {
+		return ""
 	}
+	header := m.renderHeader()
+	var main string
+	switch m.mode {
+	case helpMode:
+		main = m.renderHelpOverlay()
+	case detailMode:
+		main = m.renderDetailFullscreen()
+	default:
+		main = m.renderMain()
+	}
+	footer := m.renderFooter()
+	return lipgloss.JoinVertical(lipgloss.Left, header, main, footer)
 }
 
-func (m Model) viewList() string {
-	var sb strings.Builder
-
-	// Header
-	sb.WriteString(m.renderHeader())
-	sb.WriteString("\n")
-
-	// List content
-	if len(m.filtered) == 0 {
-		sb.WriteString("No findings match the current filters.\n")
-	} else {
-		sb.WriteString(m.renderListContent())
+// renderDetailFullscreen draws the selected finding's detail viewport
+// taking the full main area, used in narrow-screen drilldown.
+func (m Model) renderDetailFullscreen() string {
+	w := m.width - 2
+	h := m.mainHeight() - 2
+	if w < 20 {
+		w = 20
 	}
+	style := panelBorder.Width(w).Height(h).BorderForeground(colAccent)
+	if m.SelectedFinding() == nil {
+		return style.Render(emptyHintStyle.Render("no finding selected"))
+	}
+	return style.Render(m.detail.View())
+}
 
-	// Footer
-	sb.WriteString(m.renderFooter())
+// renderHelpOverlay draws a centered help box listing every binding.
+func (m Model) renderHelpOverlay() string {
+	rows := []struct{ k, d string }{
+		{"↑/↓ · j/k", "move selection"},
+		{"g · G", "jump to top / bottom"},
+		{"pgup · pgdn", "page in the focused pane"},
+		{"tab", "toggle list / detail focus (wide mode)"},
+		{"enter", "drill into the selected finding"},
+		{"esc", "back from detail to list (then quit)"},
+		{"/", "live-filter findings as you type"},
+		{"s", "cycle severity filter"},
+		{"v", "cycle service filter"},
+		{"r", "reset all filters"},
+		{"y", "copy the rule ID to the clipboard"},
+		{"o", "open the saved report.md in your OS"},
+		{"?", "toggle this help"},
+		{"q · ctrl+c", "quit"},
+	}
+	var sb strings.Builder
+	sb.WriteString(detailHeading.Render("Keyboard"))
+	sb.WriteString("\n\n")
+	for _, r := range rows {
+		k := footerKeyStyle.Render(padRightVisual(r.k, 14))
+		d := detailBody.Render(r.d)
+		sb.WriteString(k + "  " + d + "\n")
+	}
+	body := sb.String()
+	w := minInt(72, m.width-4)
+	h := m.mainHeight() - 2
+	if h < 4 {
+		h = 4
+	}
+	box := panelBorder.
+		Width(w).
+		Height(h).
+		BorderForeground(colAccent).
+		Padding(1, 2).
+		Render(body)
+	return lipgloss.Place(m.width, m.mainHeight(), lipgloss.Center, lipgloss.Center, box)
+}
 
-	return sb.String()
+// padRightVisual right-pads s to n display columns, counting runes via
+// lipgloss.Width so multi-byte UTF-8 (↑ ↓ →) doesn't break alignment.
+func padRightVisual(s string, n int) string {
+	w := lipgloss.Width(s)
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (m Model) renderHeader() string {
-	title := HeaderStyle.Render("CloudBooster Audit — Interactive")
-	count := fmt.Sprintf("%d/%d findings", len(m.filtered), len(m.findings))
-	if m.searchMode {
-		count = "search: " + m.searchBuffer + "_"
-	} else if !m.filter.IsZero() {
-		parts := []string{}
-		if m.filter.Severity != "" {
-			parts = append(parts, "sev="+m.filter.Severity)
-		}
-		if m.filter.Service != "" {
-			parts = append(parts, "svc="+m.filter.Service)
-		}
-		if m.filter.Search != "" {
-			parts = append(parts, "q="+m.filter.Search)
-		}
-		count += " [" + strings.Join(parts, " ") + "]"
+	title := titleStyle.Render("CloudBooster Audit")
+	ctx := subtitleStyle.Render(m.contextLine)
+	chips := m.renderSeverityChips()
+
+	left := title
+	if m.contextLine != "" {
+		left = title + "  " + ctx
 	}
-	padding := m.width - lipgloss.Width(title) - len(count)
-	if padding < 1 {
-		padding = 1
+	rule := headerRule.Render(strings.Repeat("─", m.width))
+
+	// If everything fits on one line, render it as title + spacer + chips.
+	if lipgloss.Width(left)+lipgloss.Width(chips)+2 <= m.width {
+		pad := m.width - lipgloss.Width(left) - lipgloss.Width(chips)
+		if pad < 1 {
+			pad = 1
+		}
+		return left + strings.Repeat(" ", pad) + chips + "\n" + rule
 	}
-	return title + strings.Repeat(" ", padding) + count
+
+	// Doesn't fit. Drop the context line on narrow terminals — the
+	// account ID was already printed in the static discovery card just
+	// above. Try title + chips with a single space of padding; if that
+	// still overflows, fall back to chips on their own row.
+	if lipgloss.Width(title)+lipgloss.Width(chips)+1 <= m.width {
+		pad := m.width - lipgloss.Width(title) - lipgloss.Width(chips)
+		if pad < 1 {
+			pad = 1
+		}
+		return title + strings.Repeat(" ", pad) + chips + "\n" + rule
+	}
+	// Last resort: stack title above chips on two header lines.
+	return title + "\n" + chips + "\n" + rule
 }
 
-func (m Model) renderListContent() string {
-	var sb strings.Builder
-	vc := m.visibleCount()
-	end := m.offset + vc
-	if end > len(m.filtered) {
-		end = len(m.filtered)
-	}
-
-	for i := m.offset; i < end; i++ {
-		idx := m.filtered[i]
-		f := m.findings[idx]
-		sb.WriteString(m.renderFindingLine(i, f))
-		if i < end-1 {
-			sb.WriteString("\n")
+func (m Model) renderSeverityChips() string {
+	counts := severityCounts(m.findings)
+	parts := []string{}
+	for _, sev := range []string{auditcore.SeverityCritical, auditcore.SeverityHigh, auditcore.SeverityWarning, auditcore.SeverityInfo} {
+		n := counts[sev]
+		if n == 0 {
+			continue
 		}
+		c := severityColor(sev)
+		num := lipgloss.NewStyle().Foreground(c).Bold(true).Render(fmt.Sprintf("%d", n))
+		label := lipgloss.NewStyle().Foreground(colMuted).Render(strings.ToLower(sev))
+		parts = append(parts, num+" "+label)
 	}
-	return sb.String()
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, footerStyle.Render("  ·  "))
 }
 
-func (m Model) renderFindingLine(idx int, f auditcore.Finding) string {
-	badge := SeverityBadge(f.Severity)
-	line := fmt.Sprintf("%s %s — %s", badge, f.RuleID, f.Title)
-	dim := fmt.Sprintf("   %s (%s)", f.Resource, f.Service)
-	if idx == m.cursor {
-		line = SelectedStyle.Render("▸ " + line)
-		dim = SelectedStyle.Render("  " + dim)
-	} else {
-		line = "  " + line
+func (m Model) mainHeight() int {
+	// 2 lines header + 2 lines footer (counts/keys + search line when active)
+	h := m.height - 4
+	if h < 4 {
+		h = 4
 	}
-	return line + "\n" + dim
+	return h
+}
+
+func (m Model) renderMain() string {
+	listView := m.renderListPanel()
+	if !m.wideMode {
+		return listView
+	}
+	detailView := m.renderDetailPanel()
+	return lipgloss.JoinHorizontal(lipgloss.Top, listView, " ", detailView)
+}
+
+func (m Model) renderListPanel() string {
+	w := m.listWidth
+	if !m.wideMode {
+		w = m.width
+	}
+	h := m.mainHeight()
+	body := m.renderListBody(w-2, h-2)
+	style := panelBorder.Width(w - 2).Height(h - 2)
+	if m.focus == focusList && m.wideMode {
+		style = style.BorderForeground(colAccent)
+	}
+	return style.Render(body)
+}
+
+func (m Model) renderDetailPanel() string {
+	w := m.width - m.listWidth - 3
+	if w < 20 {
+		w = 20
+	}
+	h := m.mainHeight()
+	style := panelBorder.Width(w).Height(h - 2)
+	if m.focus == focusDetail {
+		style = style.BorderForeground(colAccent)
+	}
+	if m.SelectedFinding() == nil {
+		return style.Render(emptyHintStyle.Render("no finding selected"))
+	}
+	return style.Render(m.detail.View())
 }
 
 func (m Model) renderFooter() string {
+	keymap := m.renderKeymap()
+	left := m.renderFilterState()
+	if m.flash != "" {
+		left = flashStyle.Render(m.flash) + "  " + left
+	}
+	pad := m.width - lipgloss.Width(left) - lipgloss.Width(keymap)
+	if pad < 1 {
+		pad = 1
+	}
+	statusLine := left + strings.Repeat(" ", pad) + keymap
+
+	// Second line: search prompt when active, otherwise empty.
+	var second string
 	if m.searchMode {
-		help := "enter apply • esc cancel"
-		return HelpStyle.Render(help)
+		second = searchPromptSty.Render("/") + " " + m.searchIn.View() + footerStyle.Render("    enter apply · esc cancel")
 	}
-	help := "↑/↓ navigate • enter drilldown • s severity • v service • / search • r reset • q quit"
-	if m.width > 0 && len(help) > m.width {
-		help = help[:m.width]
+	if second == "" {
+		return statusLine
 	}
-	return HelpStyle.Render(help)
+	return statusLine + "\n" + second
 }
 
-func (m Model) viewDetail() string {
-	f := m.SelectedFinding()
-	if f == nil {
-		return ""
+func (m Model) renderFilterState() string {
+	total := len(m.findings)
+	shown := len(m.filtered)
+	base := fmt.Sprintf("%d/%d findings", shown, total)
+	parts := []string{base}
+	if m.filter.Severity != "" {
+		parts = append(parts, "sev="+m.filter.Severity)
 	}
-
-	var lines []string
-	lines = append(lines, HeaderStyle.Render("Finding Detail"))
-	lines = append(lines, "")
-
-	lines = append(lines, DetailLabelStyle.Render("Rule: ")+f.RuleID)
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Title: ")+f.Title)
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Severity: ")+SeverityStyle(f.Severity).Render(f.Severity))
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Resource: ")+f.Resource)
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Service: ")+f.Service)
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Description:"))
-	lines = append(lines, wrapText(f.Description, m.width))
-	lines = append(lines, "")
-	lines = append(lines, DetailLabelStyle.Render("Remediation:"))
-	lines = append(lines, wrapText(f.Remediation, m.width))
-	if f.File != "" {
-		lines = append(lines, "")
-		lines = append(lines, DetailLabelStyle.Render("File: ")+fmt.Sprintf("%s:%d", f.File, f.Line))
+	if m.filter.Service != "" {
+		parts = append(parts, "svc="+m.filter.Service)
 	}
-	lines = append(lines, "")
-	lines = append(lines, HelpStyle.Render("esc/q back to list • ↑/↓ scroll"))
-
-	// Apply offset for scrolling in detail view
-	content := strings.Join(lines, "\n")
-	if m.offset > 0 {
-		allLines := strings.Split(content, "\n")
-		if m.offset < len(allLines) {
-			content = strings.Join(allLines[m.offset:], "\n")
-		}
+	if m.filter.Search != "" {
+		parts = append(parts, "q="+m.filter.Search)
 	}
-
-	return content
+	return footerStyle.Render(strings.Join(parts, "  ·  "))
 }
 
-func wrapText(text string, width int) string {
-	if width <= 0 {
-		return text
+func (m Model) renderKeymap() string {
+	binds := []key.Binding{
+		m.keymap.Up,
+		m.keymap.Filter,
+		m.keymap.CycleSev,
+		m.keymap.CycleSvc,
+		m.keymap.Reset,
+		m.keymap.Yank,
 	}
-	var sb strings.Builder
-	words := strings.Fields(text)
-	lineLen := 0
-	for _, word := range words {
-		wlen := len(word)
-		if lineLen > 0 && lineLen+1+wlen > width {
-			sb.WriteString("\n")
-			lineLen = 0
-		}
-		if lineLen > 0 {
-			sb.WriteString(" ")
-			lineLen++
-		}
-		sb.WriteString(word)
-		lineLen += wlen
+	if m.reportPath != "" {
+		binds = append(binds, m.keymap.Open)
 	}
-	return sb.String()
+	if m.wideMode {
+		binds = append(binds, m.keymap.Tab)
+	}
+	binds = append(binds, m.keymap.Quit)
+
+	parts := make([]string, 0, len(binds))
+	for _, b := range binds {
+		k, hlp := b.Help().Key, b.Help().Desc
+		parts = append(parts, footerKeyStyle.Render(k)+" "+footerStyle.Render(hlp))
+	}
+	return strings.Join(parts, footerStyle.Render("  "))
+}
+
+// ---- platform shims ----
+
+func copyToClipboard(s string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "linux":
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command("wl-copy")
+		} else if _, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		} else if _, err := exec.LookPath("xsel"); err == nil {
+			cmd = exec.Command("xsel", "--clipboard", "--input")
+		} else {
+			return fmt.Errorf("no clipboard utility on PATH")
+		}
+	case "windows":
+		cmd = exec.Command("clip")
+	default:
+		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+	}
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
+}
+
+func openInOS(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", path)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", path)
+	default:
+		return fmt.Errorf("open not supported on %s", runtime.GOOS)
+	}
+	return cmd.Start()
+}
+
+// severityCounts tallies findings per severity for the header chips.
+func severityCounts(findings []auditcore.Finding) map[string]int {
+	out := map[string]int{}
+	for _, f := range findings {
+		out[f.Severity]++
+	}
+	return out
 }
