@@ -140,10 +140,44 @@ func TestBuildGroundedPrompt_StableAcrossResourceShuffle(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
 
-	p1 := buildGroundedPrompt(IaCTypeTerraform, nil, resources, bundle)
-	p2 := buildGroundedPrompt(IaCTypeTerraform, nil, shuffled, bundle)
+	p1 := buildGroundedPrompt(IaCTypeTerraform, nil, resources, bundle, nil)
+	p2 := buildGroundedPrompt(IaCTypeTerraform, nil, shuffled, bundle, nil)
 	if p1 != p2 {
 		t.Errorf("prompt differs across shuffled resources:\n  a=%s\n  b=%s", p1, p2)
+	}
+}
+
+// TestBuildGroundedPrompt_RendersAccountPosture asserts the account
+// posture block lands in the prompt with the LLM-readable per-region
+// EBS-encryption table, the IAM summary, and the probe-errors list.
+// Without this the LLM has no signal for account-wide gaps like
+// "default EBS encryption disabled in eu-central-1".
+func TestBuildGroundedPrompt_RendersAccountPosture(t *testing.T) {
+	hasPolicy := false
+	posture := &AccountPosture{
+		EBSEncryptionByDefault: map[string]bool{
+			"eu-central-1": false,
+			"us-east-1":    true,
+		},
+		IAMSummary: map[string]int32{
+			"AccountMFAEnabled": 0,
+			"Users":             3,
+		},
+		PasswordPolicyPresent: &hasPolicy,
+		Errors:                []string{"iam:ListVirtualMFADevices: AccessDenied"},
+	}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	for _, want := range []string{
+		"ACCOUNT POSTURE",
+		"eu-central-1: false",
+		"us-east-1: true",
+		"AccountMFAEnabled: 0",
+		"IAM password policy configured: false",
+		"AccessDenied",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
 	}
 }
 

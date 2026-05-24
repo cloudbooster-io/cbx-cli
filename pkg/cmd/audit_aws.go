@@ -238,14 +238,15 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 			// longer reachable from the CLI. Library callers in cb-cli
 			// can still construct different Options if they need to.
 			opts := audit.Options{
-				AWS:          true,
-				AWSAccountID: discResult.Identity.AccountID,
-				MockScanners: false,
-				LLMProvider:  audit.ClaudeCodeProvider,
-				CBKnowledge:  true,
-				LLMMaxCost:   llmMaxCost,
-				Quiet:        quietFlag,
-				OutputFormat: outputFormat,
+				AWS:               true,
+				AWSAccountID:      discResult.Identity.AccountID,
+				AWSAccountPosture: discResult.AccountPosture,
+				MockScanners:      false,
+				LLMProvider:       audit.ClaudeCodeProvider,
+				CBKnowledge:       true,
+				LLMMaxCost:        llmMaxCost,
+				Quiet:             quietFlag,
+				OutputFormat:      outputFormat,
 			}
 
 			// RunFromResources collapses the previous bespoke flow
@@ -257,10 +258,11 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 			// decorations (preflight header, diagnose summary) remain
 			// here in the subcommand since they're CLI-only.
 			awsCtx := &audit.AWSAuditContext{
-				AccountID:  discResult.Identity.AccountID,
-				Identity:   discResult.Identity.ARN,
-				Regions:    discResult.Regions,
-				EventCount: discResult.EventCount,
+				AccountID:      discResult.Identity.AccountID,
+				Identity:       discResult.Identity.ARN,
+				Regions:        discResult.Regions,
+				EventCount:     discResult.EventCount,
+				AccountPosture: discResult.AccountPosture,
 			}
 
 			// Grounding-phase spinner. RunFromResources spawns claude -p

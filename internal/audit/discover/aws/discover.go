@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 )
 
 // DiscoverParams is the input to Discover. Kept as a struct so the
@@ -63,6 +65,15 @@ type DiscoverResult struct {
 	// users typically want order-of-magnitude rather than ±1 fidelity.
 	// Plan §7.7.
 	EventCount int
+
+	// AccountPosture carries account-level configuration probes (default
+	// EBS encryption per region, IAM account summary, password policy
+	// presence). These are inputs to findings that don't live on any
+	// single resource — see gatherAccountPosture. Nil for ScoutOnly
+	// runs where the posture pass is skipped. Owned by internal/audit
+	// (shared shape) rather than this package so the LLM prompt
+	// builder can render it without an import cycle.
+	AccountPosture *audit.AccountPosture
 }
 
 // Discover runs the live-AWS discovery pipeline:
@@ -160,15 +171,22 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	permErrs = append(scoutPermErrs, permErrs...)
 	otherErrs = append(scoutOtherErrs, otherErrs...)
 	deduped := dedupeByURN(resources)
+
+	// Account-posture pass runs after fan-out so it shares the cfg
+	// already authenticated by Preflight. Cheap (~4 API calls total)
+	// and parallel with itself; doesn't gate the discovery result.
+	posture := gatherAccountPosture(ctx, cfg, regions)
+
 	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
 
 	return &DiscoverResult{
-		Identity:      identity,
-		Regions:       regions,
-		Resources:     deduped,
-		PermissionErr: permErrs,
-		OtherErrs:     otherErrs,
-		EventCount:    estimateEventCount(types, regions, deduped),
+		Identity:       identity,
+		Regions:        regions,
+		Resources:      deduped,
+		PermissionErr:  permErrs,
+		OtherErrs:      otherErrs,
+		EventCount:     estimateEventCount(types, regions, deduped),
+		AccountPosture: posture,
 	}, nil
 }
 
@@ -229,8 +247,11 @@ func perResourceDescriberCost(cfnType string) int {
 		// added separately.)
 		return 5
 	case "AWS::IAM::Role":
-		// GetRole + ListAttachedRolePolicies.
-		return 2
+		// GetRole + ListAttachedRolePolicies + ListRolePolicies.
+		// Inline GetRolePolicy fan-out is proportional to inline-policy
+		// count and not folded in here — usually 0-2 per role; coarse
+		// estimate stays useful at order-of-magnitude.
+		return 3
 	}
 	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
 	// make no SDK calls.

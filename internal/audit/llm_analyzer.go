@@ -40,6 +40,13 @@ type llmAnalyzer struct {
 	// the constructor enforces that pairing.
 	cbKnowledge bool
 	maxCostUSD  float64
+
+	// posture is the pre-fetched account-level configuration block
+	// passed in via Options.AWSAccountPosture. The prompt builder
+	// inlines it as an ==== ACCOUNT POSTURE ==== section so the LLM
+	// can flag account-wide gaps (default EBS encryption off, no MFA
+	// on root, etc.). Nil for non-AWS audits.
+	posture *AccountPosture
 }
 
 // newLLMAnalyzer wires a Stream-based analyzer against the user's logged-in
@@ -76,6 +83,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 				providerForRuleID: "claudecode",
 				cbKnowledge:       true,
 				maxCostUSD:        opts.LLMMaxCost,
+				posture:           opts.AWSAccountPosture,
 			}, nil
 		}
 		streamer, err := newClaudeCLIStreamer()
@@ -154,7 +162,7 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 		l.installBundle(bundle)
 	}
 
-	prompt := l.buildPrompt(nil, resources, bundle)
+	prompt := l.buildPrompt(nil, resources, bundle, l.posture)
 
 	var sb strings.Builder
 	streamErr := l.streamer.Stream(ctx, prompt, func(tok string) {
@@ -237,7 +245,7 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 		}
 	}
 
-	prompt := l.buildPrompt(files, resources, bundle)
+	prompt := l.buildPrompt(files, resources, bundle, l.posture)
 
 	var sb strings.Builder
 	streamErr := l.streamer.Stream(ctx, prompt, func(tok string) {
@@ -394,11 +402,12 @@ func (l *llmAnalyzer) errorFinding(detail string) Finding {
 // buildPrompt routes to the grounded or ungrounded prompt builder. Method
 // (not free function) so it can carry the analyzer's cbKnowledge bit
 // without an extra arg at every call site. In grounded mode bundle is
-// the pre-fetched CB knowledge; nil is acceptable when no primitives
-// resolved (the prompt then states the bundle is empty).
-func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle) string {
+// the pre-fetched CB knowledge and posture is the account-level
+// configuration block (both may be nil — the prompt builder handles
+// that explicitly).
+func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	if l.cbKnowledge {
-		return buildGroundedPrompt(l.iacType, files, resources, bundle)
+		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture)
 	}
 	return buildLLMPrompt(l.iacType, files)
 }
@@ -448,19 +457,34 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 // rendered as "(no CB entry)" placeholders, never silently omitted —
 // otherwise a backend deploy that adds or removes a primitive would
 // shift the prompt invisibly.
-func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle) string {
+func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	var sb strings.Builder
-	sb.WriteString("You are CloudBooster's IaC audit analyzer.\n\n")
-	sb.WriteString("All CB-curated AWS knowledge needed to ground this audit has been pre-fetched and is provided below. ")
-	sb.WriteString("DO NOT call any tools — none are available in this run. ")
-	sb.WriteString("Reason strictly over the knowledge sections (CB-PRIMITIVE / CB-WORKLOAD / CB-COMPOSITION) and emit findings only for issues that the provided CB text supports.\n\n")
-	sb.WriteString("Every finding MUST carry a `cb_source` object citing which knowledge block grounded it:\n")
-	sb.WriteString(`  "cb_source": {"tool": "aws_lookup_primitive", "key": "aws:s3/bucket@v1", "snippet": "<verbatim phrase from the CB block>"}`)
-	sb.WriteString("\n\nTool values: \"aws_lookup_primitive\" (key=primitive id), \"aws_best_practices_for\" (key=workload slug), or \"aws_composition_for\" (key=\"composition\").")
-	sb.WriteString("\n\nReturn a single JSON object:\n")
-	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"path/to/file.tf","line":42,"cb_source":{"tool":"…","key":"…","snippet":"…"}}]}`)
+	sb.WriteString("You are CloudBooster's AWS security and architecture auditor.\n\n")
+	sb.WriteString("You will be given: (a) a CB knowledge bundle with CloudBooster's curated AWS posture, (b) an account-posture block with account-level configuration, and (c) every discovered resource with its full deployed state (raw CFN Properties + describer enrichment).\n\n")
+	sb.WriteString("DO NOT call any tools — none are available in this run.\n\n")
+	sb.WriteString("Reasoning rules:\n")
+	sb.WriteString("  1. Flag well-known AWS misconfigurations from the resource state DIRECTLY, even when the CB knowledge bundle doesn't explicitly enumerate the pattern. Baseline examples (non-exhaustive):\n")
+	sb.WriteString("       • Security groups with 0.0.0.0/0 ingress on admin/database ports (22, 3389, 3306, 5432, 6379, 1433, 27017, 9200).\n")
+	sb.WriteString("       • EBS snapshots with `CreateVolumePermission` shared publicly (group=all) — anyone can copy the volume.\n")
+	sb.WriteString("       • IAM users with active access keys AND no MFA AND admin-equivalent policy attached.\n")
+	sb.WriteString("       • S3 bucket policies allowing `Principal: \"*\"` without a strong condition (or any `aws:PrincipalAccount` restriction).\n")
+	sb.WriteString("       • Load balancers with HTTP-only listeners on port 80 and no HTTPS sibling; missing WAF association on internet-facing ALBs.\n")
+	sb.WriteString("       • Databases / cache clusters with `PubliclyAccessible: true`.\n")
+	sb.WriteString("       • Secrets without rotation (`RotationEnabled: false` or unset).\n")
+	sb.WriteString("       • DynamoDB tables without point-in-time recovery, or without CMK encryption when storing sensitive data.\n")
+	sb.WriteString("       • Unattached / orphaned resources accruing cost: EBS volumes (`State: available`), EIPs (no `AssociationId`), unused KMS keys.\n")
+	sb.WriteString("       • Account-level gaps from the ACCOUNT POSTURE block: missing CloudTrail in a region, default EBS encryption disabled, no S3 account-level public-access-block.\n")
+	sb.WriteString("       • EC2 instances effectively exposed via attached wide-open security groups (cross-reference SG ingress with instance SG list).\n")
+	sb.WriteString("     This list is NOT exhaustive — use AWS-baseline judgement.\n")
+	sb.WriteString("  2. Use the CB knowledge bundle as authoritative context for CB's RECOMMENDED posture. When a finding aligns with CB-authored guidance, quote the relevant phrase in `cb_source.snippet` and set `cb_source.tool` to the bundle section (`aws_lookup_primitive` / `aws_best_practices_for` / `aws_composition_for`) with `key` set to the primitive id / workload slug / \"composition\".\n")
+	sb.WriteString("  3. When a finding has no exact CB-authored anchor (baseline AWS hygiene), set `cb_source` to {tool: \"aws_baseline\", key: \"<short-rule-name>\", snippet: \"<the AWS-baseline rule you applied>\"} so the report still carries a justification.\n")
+	sb.WriteString("  4. Use the resource's URN as `resource` for resource-scoped findings, and `account:<accountId>` for account-posture findings.\n")
+	sb.WriteString("  5. Don't invent file/line fields — set `file: \"\"` and `line: 0` for live-AWS findings.\n\n")
+	sb.WriteString("Return a single JSON object:\n")
+	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"","line":0,"cb_source":{"tool":"…","key":"…","snippet":"…"}}]}`)
 	sb.WriteString("\n\nOnly emit JSON. No commentary, no code fences. If you find nothing return {\"findings\":[]}.\n\n")
 
+	writeAccountPosture(&sb, posture)
 	writeGroundingBundle(&sb, bundle)
 	writeResourceTable(&sb, resources)
 
@@ -561,8 +585,13 @@ func writeChunks(sb *strings.Builder, chunks []knowledge.Chunk) {
 
 // writeResourceTable lists discovered resources in stable order so two
 // audits over the same account produce the same prompt. Resources are
-// sorted by (URN, Region, Type) — URN is globally unique when present,
-// and the fallback compound key handles legacy resources without one.
+// sorted by (URN, Region, Type). For each resource it emits a header
+// line plus the full Inputs map serialised as deterministic JSON
+// (sorted keys) — that includes raw CFN Properties from CloudControl,
+// per-service describer enrichment (cb_describer_* keys), and tag
+// extraction. The LLM gets to see ingress rules, bucket policies,
+// rotation configs, PITR settings, etc. directly rather than via a
+// curated subset.
 func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 	if len(resources) == 0 {
 		return
@@ -577,14 +606,13 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 		}
 		return sorted[i].Type < sorted[j].Type
 	})
-	sb.WriteString("Discovered resources (type / urn / region / primitive / describer enrichment):\n")
+	sb.WriteString("==== DISCOVERED RESOURCES ====\n")
 	for _, r := range sorted {
-		sb.WriteString("  ")
+		sb.WriteString("---- ")
 		sb.WriteString(r.Type)
 		if r.URN != "" {
-			sb.WriteString(" (")
+			sb.WriteString(" :: ")
 			sb.WriteString(r.URN)
-			sb.WriteString(")")
 		}
 		if r.Region != "" {
 			sb.WriteString(" [")
@@ -596,13 +624,56 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 			sb.WriteString(" → ")
 			sb.WriteString(pid)
 		}
-		if enrich := formatDescriberEnrichment(r.Inputs); enrich != "" {
-			sb.WriteString("\n    ")
-			sb.WriteString(enrich)
+		sb.WriteString(" ----\n")
+		if payload := serialiseInputs(r.Inputs); payload != "" {
+			sb.WriteString(payload)
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
 	}
-	sb.WriteString("\n")
+	sb.WriteString("==== END DISCOVERED RESOURCES ====\n\n")
+}
+
+// serialiseInputs renders a resource's Inputs map as deterministic
+// indented JSON. Keys are sorted at every level so two runs over the
+// same account yield byte-identical prompts. Returns "" for nil/empty
+// inputs (the header line alone is enough for resources CloudControl
+// returned no properties for).
+func serialiseInputs(in map[string]any) string {
+	if len(in) == 0 {
+		return ""
+	}
+	// json.Marshal already produces sorted keys for map[string]T at the
+	// top level (since Go 1.12); MarshalIndent traverses nested maps the
+	// same way. That's the determinism we need.
+	raw, err := json.MarshalIndent(deterministicValue(in), "", "  ")
+	if err != nil {
+		return fmt.Sprintf("(failed to serialise inputs: %v)", err)
+	}
+	return string(raw)
+}
+
+// deterministicValue normalises a value tree so json.Marshal yields a
+// stable byte sequence: maps stay map[string]any (Marshal sorts keys),
+// slices keep their existing order (CloudControl already returns them
+// in a stable order), and scalars pass through. Returns the input
+// unchanged when it's not a map/slice — cheap recursion.
+func deterministicValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = deterministicValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = deterministicValue(val)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // formatDescriberEnrichment serializes only the cb_describer_* keys

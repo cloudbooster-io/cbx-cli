@@ -14,6 +14,20 @@ import (
 // invoked directly can still signal the condition unambiguously.
 var ErrSourceModeUnsupported = errors.New("provider does not support source-mode scanning")
 
+// AccountPosture is the cross-package shape of the AWS account-level
+// configuration probes (default EBS encryption per region, IAM
+// account summary, password policy presence). Owned here rather than
+// in internal/audit/discover/aws so internal/audit can render it into
+// the LLM prompt without an import cycle — discover/aws populates the
+// struct, the LLM analyzer reads it. See discover/aws/account_posture.go
+// for the probe implementations.
+type AccountPosture struct {
+	EBSEncryptionByDefault map[string]bool  `json:"ebs_encryption_by_default,omitempty"`
+	IAMSummary             map[string]int32 `json:"iam_summary,omitempty"`
+	PasswordPolicyPresent  *bool            `json:"password_policy_present,omitempty"`
+	Errors                 []string         `json:"errors,omitempty"`
+}
+
 // IaC type constants used by Options.IaCType.
 const (
 	IaCTypeAuto           = "auto"
@@ -169,4 +183,11 @@ type Options struct {
 	// so downstream rendering (default report path, header lines) can
 	// reference the audited account without re-querying.
 	AWSAccountID string
+
+	// AWSAccountPosture carries the pre-fetched account-level
+	// configuration probes (see discover/aws/account_posture.go).
+	// Threaded through Options so the LLM analyzer can fold posture
+	// into its prompt without changing the FindingProvider interface.
+	// Only meaningful for AWS audits.
+	AWSAccountPosture *AccountPosture
 }

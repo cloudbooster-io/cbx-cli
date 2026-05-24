@@ -168,7 +168,7 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 			{Workload: "static-site", Missing: true},
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle, nil)
 	for _, want := range []string{
 		"CB KNOWLEDGE BUNDLE",
 		"aws_lookup_primitive",
