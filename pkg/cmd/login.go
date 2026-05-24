@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
+	v1 "gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"

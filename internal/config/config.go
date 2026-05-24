@@ -34,9 +34,9 @@ type AWSConfig struct {
 // reports and usage metrics. Default is "not prompted yet, disabled" —
 // nothing is sent until the user explicitly opts in.
 type TelemetryConfig struct {
-	Enabled     bool   `json:"enabled"`
-	Prompted    bool   `json:"prompted"`
-	PromptedAt  string `json:"prompted_at,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Prompted   bool   `json:"prompted"`
+	PromptedAt string `json:"prompted_at,omitempty"`
 }
 
 // AuthConfig holds CloudBooster authentication metadata.

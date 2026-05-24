@@ -289,13 +289,13 @@ available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00
 
 			if output.JSON() {
 				payload := map[string]any{
-					"identity":                  discResult.Identity,
-					"regions":                   discResult.Regions,
-					"resources_count":           len(discResult.Resources),
+					"identity":                   discResult.Identity,
+					"regions":                    discResult.Regions,
+					"resources_count":            len(discResult.Resources),
 					"cloudtrail_events_estimate": discResult.EventCount,
-					"findings":                  result.Findings,
-					"components":        result.Components,
-					"permission_errors": permErrsToJSON(discResult.PermissionErr),
+					"findings":                   result.Findings,
+					"components":                 result.Components,
+					"permission_errors":          permErrsToJSON(discResult.PermissionErr),
 				}
 				return output.PrintJSON(payload, nil)
 			}
