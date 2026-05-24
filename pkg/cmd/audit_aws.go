@@ -327,7 +327,8 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 				}
 				model := audittui.NewModel(result.Findings).
 					WithContext(ctxLine).
-					WithReportPath(result.ReportPath)
+					WithReportPath(result.ReportPath).
+					WithHTMLReportPath(result.HTMLReportPath)
 				p := tea.NewProgram(model, tea.WithAltScreen())
 				if _, err := p.Run(); err != nil {
 					// TUI failure shouldn't fail the audit — the static

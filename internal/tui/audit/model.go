@@ -34,14 +34,16 @@ const (
 	listMode viewMode = iota
 	detailMode
 	helpMode
+	openMode
 )
 
 // Model is the Bubble Tea model for the interactive audit TUI.
 type Model struct {
 	// Immutable inputs
-	findings    []auditcore.Finding
-	contextLine string
-	reportPath  string
+	findings        []auditcore.Finding
+	contextLine     string
+	reportPath      string // markdown report (.md)
+	htmlReportPath  string // browser report (.html), optional
 
 	// Derived view state
 	filtered []int
@@ -105,9 +107,17 @@ func (m Model) WithContext(line string) Model {
 	return m
 }
 
-// WithReportPath sets the path opened by the `o` key.
+// WithReportPath sets the markdown report path opened by the `o` key.
 func (m Model) WithReportPath(p string) Model {
 	m.reportPath = p
+	return m
+}
+
+// WithHTMLReportPath sets the optional HTML report path. When both
+// paths are present, `o` opens a small modal that lets the user pick
+// markdown or browser.
+func (m Model) WithHTMLReportPath(p string) Model {
+	m.htmlReportPath = p
 	return m
 }
 
@@ -194,6 +204,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC {
 		m.quitting = true
 		return m, tea.Quit
+	}
+
+	// Open-report modal: only m / b / esc / q matter.
+	if m.mode == openMode {
+		switch {
+		case key.Matches(msg, m.keymap.Quit):
+			m.quitting = true
+			return m, tea.Quit
+		case key.Matches(msg, m.keymap.Back):
+			m.mode = listMode
+			return m, nil
+		case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'm':
+			m.openReport(m.reportPath, "markdown")
+			m.mode = listMode
+			return m, nil
+		case msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == 'b':
+			m.openReport(m.htmlReportPath, "browser")
+			m.mode = listMode
+			return m, nil
+		}
+		return m, nil
 	}
 
 	// Help overlay: any key dismisses, except help-toggle itself.
@@ -374,13 +405,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keymap.Open):
-		if m.reportPath != "" {
-			if err := openInOS(m.reportPath); err == nil {
-				m.setFlash("opened " + m.reportPath)
-			} else {
-				m.setFlash("could not open report")
-			}
-		}
+		m = m.handleOpenKey()
 		return m, nil
 	}
 
@@ -426,17 +451,14 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) visibleCount() int {
-	// Unselected rows take 1 line; the selected row takes 2 (title +
-	// expanded resource sub-line). Reserve 1 line for that expansion.
+	// Every row is one line; severity dividers add a handful of extras
+	// across the pane. Approximate (-3) is fine for PageUp/PageDown
+	// arithmetic — the renderer clips anyway.
 	mainH := m.mainHeight() - 2 // panel borders
-	if mainH < 2 {
+	if mainH < 4 {
 		return 1
 	}
-	vc := mainH - 1
-	if vc < 1 {
-		vc = 1
-	}
-	return vc
+	return mainH - 3
 }
 
 func (m *Model) ensureCursorVisible() {
@@ -460,6 +482,41 @@ func (m *Model) refreshDetail() {
 func (m *Model) setFlash(s string) {
 	m.flash = s
 	m.flashTTL = 12 // ~clear after a handful of key presses
+}
+
+// handleOpenKey decides what happens when `o` is pressed. When both
+// the markdown and the HTML reports exist, pop a small modal so the
+// user can pick. When only one is available, open it directly without
+// the extra keystroke.
+func (m Model) handleOpenKey() Model {
+	hasMD := m.reportPath != ""
+	hasHTML := m.htmlReportPath != ""
+	switch {
+	case hasMD && hasHTML:
+		m.mode = openMode
+	case hasMD:
+		m.openReport(m.reportPath, "markdown")
+	case hasHTML:
+		m.openReport(m.htmlReportPath, "browser")
+	default:
+		m.setFlash("no saved report to open")
+	}
+	return m
+}
+
+// openReport hands a path off to the OS opener and flashes the user
+// either way so the action feels responded-to even when the launched
+// app takes a beat.
+func (m *Model) openReport(path, label string) {
+	if path == "" {
+		m.setFlash("no " + label + " report to open")
+		return
+	}
+	if err := openInOS(path); err == nil {
+		m.setFlash("opened " + label + " · " + path)
+	} else {
+		m.setFlash("could not open " + label + ": " + err.Error())
+	}
 }
 
 // ---- filter wiring ----
@@ -532,6 +589,8 @@ func (m Model) View() string {
 	switch m.mode {
 	case helpMode:
 		main = m.renderHelpOverlay()
+	case openMode:
+		main = m.renderOpenModal()
 	case detailMode:
 		main = m.renderDetailFullscreen()
 	default:
@@ -594,6 +653,36 @@ func (m Model) renderHelpOverlay() string {
 		BorderForeground(colAccent).
 		Padding(1, 2).
 		Render(body)
+	return lipgloss.Place(m.width, m.mainHeight(), lipgloss.Center, lipgloss.Center, box)
+}
+
+// renderOpenModal draws the centered "open as…" picker shown when both
+// the markdown and HTML reports exist for an audit.
+func (m Model) renderOpenModal() string {
+	var sb strings.Builder
+	sb.WriteString(detailHeading.Render("Open audit report"))
+	sb.WriteString("\n\n")
+
+	option := func(k, label, path string) string {
+		keyChip := footerKeyStyle.Render("  " + k + "  ")
+		ln := keyChip + "  " + detailBody.Render(label)
+		if path != "" {
+			ln += "\n" + strings.Repeat(" ", 9) + footerStyle.Render(path)
+		}
+		return ln
+	}
+	sb.WriteString(option("m", "Markdown (.md)", m.reportPath))
+	sb.WriteString("\n\n")
+	sb.WriteString(option("b", "Browser (.html)", m.htmlReportPath))
+	sb.WriteString("\n\n")
+	sb.WriteString(footerStyle.Render("esc cancel"))
+
+	w := minInt(78, m.width-4)
+	box := panelBorder.
+		Width(w).
+		BorderForeground(colAccent).
+		Padding(1, 2).
+		Render(sb.String())
 	return lipgloss.Place(m.width, m.mainHeight(), lipgloss.Center, lipgloss.Center, box)
 }
 
