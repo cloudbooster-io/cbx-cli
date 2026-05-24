@@ -9,32 +9,33 @@ import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
-// renderListBody returns the inner contents of the list panel, sized to
-// fit within (width, height). Each finding renders as two lines: a title
-// line with severity bar + chip + rule ID + title, then a dim resource·
-// service sub-line.
+// renderListBody returns the inner contents of the list panel, sized
+// to fit within (width, height). Unselected rows render as a single
+// title line so the user can scan twice as many findings at once; the
+// selected row expands to show the resource sub-line in place. The
+// full finding (description, remediation, citations) is always one
+// drilldown away in the detail pane.
 func (m Model) renderListBody(width, height int) string {
 	if len(m.filtered) == 0 {
 		return emptyHintStyle.Render("No findings match the current filters. Press r to reset.")
 	}
-	vc := height / 2
-	if vc < 1 {
-		vc = 1
-	}
-	end := m.offset + vc
-	if end > len(m.filtered) {
-		end = len(m.filtered)
-	}
 
 	var sb strings.Builder
-	for i := m.offset; i < end; i++ {
+	used := 0
+	for i := m.offset; i < len(m.filtered); i++ {
 		idx := m.filtered[i]
 		f := m.findings[idx]
 		selected := i == m.cursor && m.focus == focusList
-		sb.WriteString(renderListItem(f, selected, width))
-		if i < end-1 {
+		item := renderListItem(f, selected, width)
+		rows := strings.Count(item, "\n") + 1
+		if used+rows > height {
+			break
+		}
+		if used > 0 {
 			sb.WriteString("\n")
 		}
+		sb.WriteString(item)
+		used += rows
 	}
 	return sb.String()
 }
@@ -56,19 +57,18 @@ func renderListItem(f auditcore.Finding, selected bool, width int) string {
 	}
 	titleLine := bar + " " + chip + "  " + titleRendered
 
-	// Sub line: "    kind · name · region" parsed from the URN so we
-	// drop the redundant `aws://region/AWS::Service::Type/` prefix.
+	if !selected {
+		return titleLine
+	}
+
+	// Selected only: append the resource sub-line and paint the whole
+	// row with the selection background.
 	subRoom := width - 5
 	if subRoom < 8 {
 		subRoom = 8
 	}
 	subLine := "    " + listItemDim.Render(compactResource(f, subRoom))
-
-	combined := titleLine + "\n" + subLine
-	if selected {
-		combined = listItemSelBG.Width(width).Render(combined)
-	}
-	return combined
+	return listItemSelBG.Width(width).Render(titleLine + "\n" + subLine)
 }
 
 // compactResource turns a raw URN into a short, scannable description

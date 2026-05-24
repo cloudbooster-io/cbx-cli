@@ -426,12 +426,17 @@ func (m *Model) moveCursor(delta int) {
 }
 
 func (m *Model) visibleCount() int {
-	// Each list row takes 2 lines (title + dim sub-line); subtract chrome.
+	// Unselected rows take 1 line; the selected row takes 2 (title +
+	// expanded resource sub-line). Reserve 1 line for that expansion.
 	mainH := m.mainHeight() - 2 // panel borders
 	if mainH < 2 {
 		return 1
 	}
-	return mainH / 2
+	vc := mainH - 1
+	if vc < 1 {
+		vc = 1
+	}
+	return vc
 }
 
 func (m *Model) ensureCursorVisible() {
