@@ -2,8 +2,10 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -140,12 +142,22 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketEncryption")
 	}
 
-	// Bucket policy presence — coarse signal. We don't parse the
-	// document here; the grounded analyzer can do that downstream.
+	// Bucket policy — presence + raw JSON document. The document is
+	// the load-bearing signal for the most critical S3 finding
+	// (Principal: "*" with no condition restricting the principal); a
+	// bare "policy_present: true" wasn't enough for the LLM to flag
+	// public-access policies. We surface the decoded JSON so the
+	// grounded analyzer can reason about Principal / Condition
+	// without re-parsing escape-encoded forms.
 	pol, err := client.GetBucketPolicy(ctx, &s3.GetBucketPolicyInput{Bucket: &bucket})
 	switch {
 	case err == nil:
-		r.Inputs["cb_describer_bucket_policy_present"] = pol.Policy != nil && *pol.Policy != ""
+		present := pol.Policy != nil && *pol.Policy != ""
+		r.Inputs["cb_describer_bucket_policy_present"] = present
+		if present {
+			r.Inputs["cb_describer_bucket_policy_document"] = *pol.Policy
+			r.Inputs["cb_describer_bucket_policy_has_wildcard_principal"] = bucketPolicyHasWildcardPrincipal(*pol.Policy)
+		}
 	case isS3NotFound(err):
 		r.Inputs["cb_describer_bucket_policy_present"] = false
 	default:
@@ -227,3 +239,90 @@ func classifyS3Error(err error, bucket, region, action string) error {
 // _ asserts s3 types is referenced so future field types resolve;
 // remove when a concrete reference replaces it.
 var _ = types.ObjectStorageClassStandard
+
+// bucketPolicyHasWildcardPrincipal returns true when any Statement
+// with Effect=Allow has Principal `*` or `{"AWS":"*"}` AND no
+// Condition restricting `aws:PrincipalAccount` / `aws:PrincipalOrgID`
+// / `aws:PrincipalArn` / `aws:SourceVpc` / `aws:SourceIp`. The
+// classic "open to the entire internet" S3 policy — surfaced as a
+// crisp boolean so the LLM doesn't need to parse the policy JSON.
+//
+// This is intentionally a conservative match: the absence of any
+// scoping condition under an `Effect: Allow` + `Principal: *`
+// statement is treated as the public-access pattern. False positives
+// (e.g. an `aws:SourceIp` allowlist of every IP under the sun) are
+// the user's problem to refute on the finding card.
+func bucketPolicyHasWildcardPrincipal(doc string) bool {
+	var parsed struct {
+		Statement []struct {
+			Effect    string         `json:"Effect"`
+			Principal any            `json:"Principal"`
+			Condition map[string]any `json:"Condition"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+		return false
+	}
+	for _, s := range parsed.Statement {
+		if !strings.EqualFold(s.Effect, "Allow") {
+			continue
+		}
+		if !principalIsWildcard(s.Principal) {
+			continue
+		}
+		if hasScopingCondition(s.Condition) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func principalIsWildcard(p any) bool {
+	switch t := p.(type) {
+	case string:
+		return t == "*"
+	case map[string]any:
+		// {"AWS": "*"} or {"AWS": ["*"]}
+		for _, v := range t {
+			switch vv := v.(type) {
+			case string:
+				if vv == "*" {
+					return true
+				}
+			case []any:
+				for _, item := range vv {
+					if s, ok := item.(string); ok && s == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasScopingCondition(cond map[string]any) bool {
+	if len(cond) == 0 {
+		return false
+	}
+	// Any of these condition keys narrows the wildcard principal to a
+	// scoped set, so the statement isn't unconditionally public.
+	scopingKeys := []string{
+		"aws:PrincipalAccount", "aws:PrincipalOrgID", "aws:PrincipalOrgPaths",
+		"aws:PrincipalArn", "aws:SourceVpc", "aws:SourceVpce", "aws:SourceIp",
+		"aws:SourceArn", "aws:SourceAccount", "aws:UserId",
+	}
+	for _, op := range cond {
+		opMap, ok := op.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, k := range scopingKeys {
+			if _, present := opMap[k]; present {
+				return true
+			}
+		}
+	}
+	return false
+}

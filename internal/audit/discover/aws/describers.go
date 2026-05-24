@@ -28,10 +28,15 @@ type Describer interface {
 var allDescribers = []Describer{
 	&s3BucketDescriber{},
 	&iamRoleDescriber{},
+	&iamUserDescriber{},
+	&iamManagedPolicyDescriber{},
 	&rdsInstanceDescriber{},
 	&rdsClusterDescriber{},
 	&lambdaFunctionDescriber{},
 	&ec2InstanceDescriber{},
+	&securityGroupDescriber{},
+	&ebsVolumeDescriber{},
+	&ebsSnapshotDescriber{},
 }
 
 // describerFor returns the Describer registered for cfnType, or nil if

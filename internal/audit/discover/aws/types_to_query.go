@@ -94,6 +94,11 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::Logs::LogGroup"},
 	{Type: "AWS::CloudWatch::Alarm"},
 	{Type: "AWS::SecretsManager::Secret"},
+	// RotationSchedule is a sibling CFN resource — a secret with no
+	// matching RotationSchedule entry has no rotation configured. The
+	// LLM cross-references the two lists rather than us standing up a
+	// separate describer just for rotation state.
+	{Type: "AWS::SecretsManager::RotationSchedule"},
 	{Type: "AWS::KMS::Key"},
 	{Type: "AWS::CloudTrail::Trail"},
 }
