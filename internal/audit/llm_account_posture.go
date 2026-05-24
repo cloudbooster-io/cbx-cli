@@ -44,6 +44,19 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 		fmt.Fprintf(sb, "IAM password policy configured: %t\n\n", *p.PasswordPolicyPresent)
 	}
 
+	if len(p.TrailCoverageByRegion) > 0 {
+		sb.WriteString("CloudTrail coverage (per audited region; false = no trail covers this region):\n")
+		regions := make([]string, 0, len(p.TrailCoverageByRegion))
+		for r := range p.TrailCoverageByRegion {
+			regions = append(regions, r)
+		}
+		sort.Strings(regions)
+		for _, r := range regions {
+			fmt.Fprintf(sb, "  %s: %t\n", r, p.TrailCoverageByRegion[r])
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(p.IAMSummary) > 0 {
 		sb.WriteString("IAM account summary (selected keys from iam:GetAccountSummary):\n")
 		keys := make([]string, 0, len(p.IAMSummary))

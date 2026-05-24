@@ -37,6 +37,7 @@ var allDescribers = []Describer{
 	&securityGroupDescriber{},
 	&ebsVolumeDescriber{},
 	&ebsSnapshotDescriber{},
+	&eipDescriber{},
 }
 
 // describerFor returns the Describer registered for cfnType, or nil if

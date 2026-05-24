@@ -184,6 +184,13 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	// and parallel with itself; doesn't gate the discovery result.
 	posture := gatherAccountPosture(ctx, cfg, regions)
 
+	// Trail coverage is computed from the already-discovered
+	// CloudTrail::Trail resources — no extra API call needed.
+	// Surfaces per-region "is any trail covering this region?" so
+	// the LLM has a deterministic signal for the account-level
+	// "no trail in <region>" finding.
+	computeTrailCoverage(deduped, regions, posture)
+
 	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
 
 	return &DiscoverResult{
@@ -374,7 +381,13 @@ func runJob(ctx context.Context, c awsCfg, region string, spec cfnTypeSpec, onPr
 
 	emitProgress(onProgress, ProgressEvent{Phase: ProgressPhaseJobStart, Region: region, Type: spec.Type})
 
-	raws, lerr := listAndGet(ctx, c, region, spec)
+	var raws []rawResource
+	var lerr error
+	if spec.CustomLister != nil {
+		raws, lerr = spec.CustomLister(ctx, c, region)
+	} else {
+		raws, lerr = listAndGet(ctx, c, region, spec)
+	}
 	if lerr != nil {
 		r.listErr = lerr
 	}

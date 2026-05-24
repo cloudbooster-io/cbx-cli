@@ -25,7 +25,17 @@ type AccountPosture struct {
 	EBSEncryptionByDefault map[string]bool  `json:"ebs_encryption_by_default,omitempty"`
 	IAMSummary             map[string]int32 `json:"iam_summary,omitempty"`
 	PasswordPolicyPresent  *bool            `json:"password_policy_present,omitempty"`
-	Errors                 []string         `json:"errors,omitempty"`
+
+	// TrailCoverageByRegion maps each audited region → whether at
+	// least one CloudTrail trail covers it (a multi-region trail in
+	// the account, or a region-local trail homed in that region).
+	// Computed post-discovery from the AWS::CloudTrail::Trail resources
+	// — see discover/aws/crossref_cloudtrail.go. A region missing from
+	// the map means the probe wasn't computed (e.g. no trails
+	// discovered at all); a region with value=false is a finding.
+	TrailCoverageByRegion map[string]bool `json:"trail_coverage_by_region,omitempty"`
+
+	Errors []string `json:"errors,omitempty"`
 }
 
 // IaC type constants used by Options.IaCType.

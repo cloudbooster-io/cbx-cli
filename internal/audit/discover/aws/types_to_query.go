@@ -1,6 +1,9 @@
 package aws
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // DiscoverableTypeCount returns the number of curated CFN types the
 // discovery loop will probe. Exposed for `cbx audit aws --dry-run` so
@@ -38,7 +41,13 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// --- regional storage ---
 	{Type: "AWS::S3::Bucket"}, // S3 is regional but listable globally; treat as regional and dedupe by ARN
 	{Type: "AWS::EC2::Volume"},
-	{Type: "AWS::EC2::Snapshot", KeepIdentifier: keepOwnedSnapshot},
+	// CloudControl's AWS::EC2::Snapshot ListResources is unreliable —
+	// in some accounts it returns no results, in others it dumps tens
+	// of thousands of public AMI snapshots and times out. We bypass
+	// it entirely and call ec2:DescribeSnapshots(OwnerIds=["self"])
+	// directly via listOwnedSnapshots, which returns only the
+	// customer's snapshots and is the same API the AWS console uses.
+	{Type: "AWS::EC2::Snapshot", CustomLister: listOwnedSnapshots},
 	{Type: "AWS::EFS::FileSystem"},
 
 	// --- regional compute ---
@@ -120,6 +129,16 @@ type cfnTypeSpec struct {
 	// list includes resources outside the customer's posture (IAM
 	// managed policies, AWS service-linked roles).
 	KeepIdentifier func(identifier string) bool
+
+	// CustomLister, when non-nil, replaces the CloudControl
+	// List+Get path entirely for this type. Used for types where
+	// CloudControl is unreliable or returns the wrong set — e.g.
+	// AWS::EC2::Snapshot, where CloudControl historically returned
+	// too many results (or none) depending on the account's snapshot
+	// share posture. The custom lister synthesises rawResource records
+	// that flow through the same mapToDiscovered + describer path as
+	// CloudControl-listed types, so downstream code is identical.
+	CustomLister func(ctx context.Context, c awsCfg, region string) ([]rawResource, error)
 }
 
 // keepCustomerIAMPolicy returns false for AWS-managed policy ARNs
@@ -132,18 +151,6 @@ func keepCustomerIAMPolicy(identifier string) bool {
 		!strings.HasPrefix(identifier, "arn:aws-cn:iam::aws:policy/") &&
 		!strings.HasPrefix(identifier, "arn:aws-us-gov:iam::aws:policy/")
 }
-
-// keepOwnedSnapshot filters EC2 EBS snapshots to the account's own
-// snapshots. CloudControl's AWS::EC2::Snapshot ListResources returns
-// every snapshot the account can see — including AWS-shared public
-// AMI snapshots (tens of thousands). The identifier is the snapshot
-// id ("snap-…"); the ownership filter needs the actual API response,
-// so the cheap fallback here is to let everything through and rely on
-// the describer (when added) to drop non-owned ones. For now the list
-// is acceptable as-is because audits scoped to a single account rarely
-// see more than a few hundred snapshots; revisit if account scans
-// start blowing the budget.
-func keepOwnedSnapshot(_ string) bool { return true }
 
 // keepCustomerIAMRole filters out AWS service-linked roles, which the
 // customer can neither modify nor delete and which clutter the role
