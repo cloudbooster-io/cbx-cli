@@ -79,6 +79,24 @@ type CBSource struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
+// LLMConnection is one architectural data-flow edge inferred by the
+// grounded analyzer. These complement the deterministic Inputs-based
+// edges (Instance→SG, IGW→VPC, etc.) the diagram renderer always
+// draws — LLM edges add the semantic flows that aren't visible in
+// raw CloudControl fields:
+//   - CloudFront → S3 origin (from Origins.S3OriginConfig.DomainName)
+//   - API Gateway → Lambda integration (from method URI ARNs)
+//   - Lambda → DynamoDB / S3 / Secrets (from IAM policy actions)
+//   - AppSync → Lambda resolvers / DynamoDB data sources
+//
+// From / To are resource URNs from the discovered set; the renderer
+// silently drops edges whose endpoints aren't on the diagram.
+type LLMConnection struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label,omitempty"`
+}
+
 // DiscoveredResource is an alias for the shared shape defined in the parsers
 // sub-package so that scanner code and CLI code can refer to it without
 // importing parsers directly everywhere.

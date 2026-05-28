@@ -44,9 +44,9 @@ func TestEstimateEventCount_DominantTerms(t *testing.T) {
 			types:   []cfnTypeSpec{{Type: "AWS::IAM::Role", Global: true}},
 			regions: []string{"us-east-1", "eu-west-1"},
 			resources: []DiscoveredResource{
-				{Type: "AWS::IAM::Role"}, // IAM describer adds 2 calls
+				{Type: "AWS::IAM::Role"}, // IAM describer adds 3 calls (GetRole + ListAttached + ListInline)
 			},
-			want: 1 /* sts */ + 1 /* one list (global) */ + 1 /* one get */ + 2, /* iam describer */
+			want: 1 /* sts */ + 1 /* one list (global) */ + 1 /* one get */ + 3, /* iam describer */
 		},
 		{
 			name:    "one S3 bucket triggers describer (5) + shared list-buckets (1)",

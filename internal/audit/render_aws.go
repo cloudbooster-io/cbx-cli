@@ -55,7 +55,7 @@ func RenderAWSMarkdown(result *Result, ctx AWSAuditContext) string {
 
 	writeReportHeader(&sb, ctx, result)
 	writeExecutiveBrief(&sb, ctx, result)
-	writeArchitectureDiagram(&sb, result.Diagram)
+	writeArchitectureDiagram(&sb, result.DiagramSVGFile, result.DiagramSVG, result.Diagram)
 	writeExecutiveSummary(&sb, result.Findings)
 	writeTLDR(&sb, result.Findings)
 	writeTableOfContents(&sb, result.Findings)
@@ -175,22 +175,31 @@ func shortResourceForBrief(urn string) string {
 	return urn
 }
 
-// writeArchitectureDiagram appends the architecture diagram as a
-// fenced mermaid block so GitLab and GitHub renderers display it
-// inline. Plain-text consumers see the source — still useful as a
-// human-readable index of components. Skipped when no diagram was
-// produced (e.g. empty resource set).
-func writeArchitectureDiagram(sb *strings.Builder, diagram string) {
-	if strings.TrimSpace(diagram) == "" {
+// writeArchitectureDiagram emits the Architecture section of the
+// markdown report. The SVG is the only diagram we ship.
+//
+// Strategy: prefer a markdown image link (`![alt](file.svg)`) to a
+// sibling .svg file when one was written. That renders in every
+// viewer (GitHub, GitLab, VS Code preview, mdBook, Pandoc, …)
+// without inline-SVG sanitization issues. When no sibling file is
+// available, fall back to inline `<svg>` which works in
+// raw-HTML-aware viewers and degrades to source text in strict ones.
+//
+// Skipped entirely when no diagram was produced.
+func writeArchitectureDiagram(sb *strings.Builder, svgFile, svg, _ string) {
+	if strings.TrimSpace(svgFile) == "" && strings.TrimSpace(svg) == "" {
 		return
 	}
 	sb.WriteString("## Architecture\n\n")
-	sb.WriteString("```mermaid\n")
-	sb.WriteString(diagram)
-	if !strings.HasSuffix(diagram, "\n") {
-		sb.WriteString("\n")
+	switch {
+	case strings.TrimSpace(svgFile) != "":
+		sb.WriteString("![CloudBooster architecture diagram](")
+		sb.WriteString(svgFile)
+		sb.WriteString(")\n\n")
+	case strings.TrimSpace(svg) != "":
+		sb.WriteString(svg)
+		sb.WriteString("\n\n")
 	}
-	sb.WriteString("```\n\n")
 }
 
 // writeReportHeader writes the title plus a GitHub-style NOTE block

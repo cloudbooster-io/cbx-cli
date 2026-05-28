@@ -19,12 +19,11 @@ func TestRenderAWSMarkdown_HeaderIncludesAccountIdentityRegionsEvents(t *testing
 	out := RenderAWSMarkdown(result, ctx)
 
 	wants := []string{
-		"# CloudBooster Audit Report — AWS",
-		"## Audited Account",
+		"# CloudBooster Audit",
 		"123456789012",
 		"arn:aws:iam::123456789012:user/alice",
 		"us-east-1, eu-west-1",
-		"~117",
+		"~117 Read events",
 	}
 	for _, w := range wants {
 		if !strings.Contains(out, w) {
@@ -67,29 +66,28 @@ func TestRenderAWSMarkdown_PerComponentSection(t *testing.T) {
 	result := &Result{Findings: findings, Components: components}
 	out := RenderAWSMarkdown(result, AWSAuditContext{})
 
-	if !strings.Contains(out, "## Components") {
-		t.Errorf("missing ## Components section\n---\n%s", out)
+	// Findings now render under severity sections (not per-component);
+	// component context appears as inline metadata on each finding card,
+	// and the component inventory lives in its own bottom section.
+	if !strings.Contains(out, "## Component Inventory") {
+		t.Errorf("missing ## Component Inventory section\n---\n%s", out)
 	}
-	if !strings.Contains(out, "### tag: frontend") {
-		t.Errorf("tag component header missing")
+	if !strings.Contains(out, "**tag** `frontend`") {
+		t.Errorf("tag component inventory row missing")
 	}
-	if !strings.Contains(out, "### cb-primitive:") {
-		t.Errorf("cb-primitive component header missing")
+	if !strings.Contains(out, "**cb-primitive**") {
+		t.Errorf("cb-primitive inventory row missing")
 	}
-	if !strings.Contains(out, "## Account-wide Findings") {
-		t.Errorf("missing account-wide section")
+	// Both findings must appear in the report; the one matched to the
+	// 'frontend' component carries the inline component pill.
+	if !strings.Contains(out, "ORPHAN-IAM-ROLE-UNUSED") {
+		t.Errorf("IAM finding missing from report")
 	}
-	// The IAM finding (no matching component) must land under account-wide;
-	// the EBS finding (matched to frontend) must NOT.
-	accountIdx := strings.Index(out, "## Account-wide Findings")
-	if accountIdx == -1 {
-		t.Fatal("account-wide marker missing")
+	if !strings.Contains(out, "ORPHAN-EBS-UNATTACHED") {
+		t.Errorf("EBS finding missing from report")
 	}
-	if !strings.Contains(out[accountIdx:], "ORPHAN-IAM-ROLE-UNUSED") {
-		t.Errorf("IAM finding not in account-wide section")
-	}
-	if strings.Contains(out[accountIdx:], "ORPHAN-EBS-UNATTACHED") {
-		t.Errorf("EBS finding leaked into account-wide section (should be under frontend)")
+	if !strings.Contains(out, "**Component** `tag: frontend`") {
+		t.Errorf("EBS finding should carry inline component pill 'tag: frontend'")
 	}
 }
 
@@ -145,7 +143,7 @@ func TestPartitionFindings_EmptyResourceFindingsAlwaysAccountWide(t *testing.T) 
 
 func TestRunFromResources_AWSContextSelectsAWSRenderer(t *testing.T) {
 	// Round-trip: when awsCtx is non-nil the on-disk report uses the
-	// AWS shape ("# CloudBooster Audit Report — AWS"). When nil it
+	// AWS shape ("# CloudBooster Audit Report"). When nil it
 	// falls back to the generic header.
 	dir := t.TempDir()
 	resources := []DiscoveredResource{
@@ -173,10 +171,10 @@ func TestRunFromResources_AWSContextSelectsAWSRenderer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "# CloudBooster Audit Report — AWS") {
+	if !strings.Contains(string(body), "# CloudBooster Audit") {
 		t.Errorf("AWS-mode header missing from report:\n%s", string(body))
 	}
-	if !strings.Contains(string(body), "~42") {
+	if !strings.Contains(string(body), "~42 Read events") {
 		t.Errorf("event count missing from report")
 	}
 }

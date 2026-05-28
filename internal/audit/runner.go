@@ -18,6 +18,13 @@ type Result struct {
 	Findings   []Finding
 	ReportPath string
 
+	// HTMLReportPath is the path to the self-contained HTML report
+	// written alongside the markdown report for `cbx audit aws`. Empty
+	// for source/state-mode runs (HTML is AWS-only for now). The HTML
+	// file embeds the markdown source so the in-browser "Download
+	// Markdown" button works without the .md sibling on disk.
+	HTMLReportPath string `json:"html_report_path,omitempty"`
+
 	// MockOnly is true when a source-mode run produced findings only from the
 	// built-in static (mock) scanner — i.e. no real scanner binary was
 	// configured. The CLI renders a banner in that case so users don't mistake
@@ -31,6 +38,36 @@ type Result struct {
 	// proprietary edition can render the same component sections without
 	// re-importing internal/audit/group.
 	Components []group.Component `json:"components,omitempty"`
+
+	// Diagram is a Mermaid `flowchart` source representing the audited
+	// infrastructure, organized by Components (with a per-service
+	// fallback bucket for unassigned resources). Embedded as a fenced
+	// ```mermaid block in the markdown report so GitLab/GitHub
+	// renders it inline. Empty for non-AWS audit paths.
+	Diagram string `json:"diagram,omitempty"`
+
+	// DiagramSVG is a fully styled, self-contained SVG of the
+	// audited infrastructure intended for the HTML report (and for
+	// sharing on social). Uses an AWS-Architecture-Center palette
+	// with branded monogram badges per service. Populated alongside
+	// Diagram for live-AWS runs; empty otherwise.
+	DiagramSVG string `json:"-"`
+
+	// DiagramSVGFile is the basename of the sibling SVG file the
+	// markdown report should link to (e.g. "839000215051_audit_report.svg").
+	// When non-empty, RenderAWSMarkdown emits an
+	// `![Architecture](file.svg)` image tag at the Architecture
+	// section; markdown viewers that sanitize inline <svg> still
+	// see the diagram. Empty -> markdown falls back to inline SVG.
+	DiagramSVGFile string `json:"-"`
+
+	// LLMConnections lists the architecture data-flow edges the
+	// grounded analyzer inferred (CloudFront → S3 origin, API
+	// Gateway → Lambda, Lambda → DynamoDB via IAM policies, etc.).
+	// Drawn as labelled arrows in the SVG alongside the
+	// deterministic Inputs-based edges. Nil when the run wasn't
+	// grounded.
+	LLMConnections []LLMConnection `json:"llm_connections,omitempty"`
 }
 
 // Collect executes the audit pipeline and returns findings without writing a
@@ -57,19 +94,33 @@ func Collect(opts Options) ([]Finding, error) {
 // source-mode entry point ScanSource is irrelevant here since AWS
 // audits have no IaC tree).
 func CollectFromResources(opts Options, resources []DiscoveredResource) ([]Finding, error) {
+	findings, _, err := CollectFromResourcesWithDiagram(opts, resources)
+	return findings, err
+}
+
+// CollectFromResourcesWithDiagram is the richer-return sibling of
+// CollectFromResources: it surfaces the LLM-inferred architecture
+// connections (CloudFront → S3 origin, API Gateway → Lambda, etc.)
+// alongside the security findings so the report renderer can draw
+// labelled arrows between resources. Non-LLM paths return a nil
+// connections slice — those audits rely solely on the deterministic
+// Inputs-based edge inference in BuildArchitectureSVG.
+func CollectFromResourcesWithDiagram(opts Options, resources []DiscoveredResource) ([]Finding, []LLMConnection, error) {
 	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
 	defer cancel()
 
 	if opts.LLMProvider != "" {
 		analyzer, err := newLLMAnalyzer(opts, IaCTypeCloudFormation)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return analyzer.ScanResources(ctx, resources)
+		findings, scanErr := analyzer.ScanResources(ctx, resources)
+		return findings, analyzer.LastConnections(), scanErr
 	}
 
 	providers := selectProviders(opts)
-	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
+	findings, err := collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
+	return findings, nil, err
 }
 
 func collectFromState(opts Options) ([]Finding, error) {
@@ -292,7 +343,7 @@ func validateSourceDir(dir string) error {
 // RenderMarkdown so testing callers without account metadata still
 // get a sensible report.
 func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSAuditContext) (*Result, error) {
-	findings, scanErr := CollectFromResources(opts, resources)
+	findings, llmConns, scanErr := CollectFromResourcesWithDiagram(opts, resources)
 	if scanErr != nil && findings == nil {
 		return nil, scanErr
 	}
@@ -307,9 +358,22 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 	}
 
 	result := &Result{
-		Findings:   findings,
-		ReportPath: reportPath,
-		Components: components,
+		Findings:       findings,
+		ReportPath:     reportPath,
+		Components:     components,
+		Diagram:        BuildArchitectureDiagram(resources, components),
+		LLMConnections: llmConns,
+	}
+	if awsCtx != nil {
+		result.DiagramSVG = BuildArchitectureSVG(resources, components, *awsCtx, llmConns, findings)
+		// Sibling SVG file alongside the .md/.html — markdown viewers
+		// that sanitize inline <svg> link to this asset instead.
+		if result.DiagramSVG != "" {
+			svgPath := strings.TrimSuffix(reportPath, ".md") + ".svg"
+			if err := os.WriteFile(svgPath, []byte(result.DiagramSVG), 0o644); err == nil {
+				result.DiagramSVGFile = filepath.Base(svgPath)
+			}
+		}
 	}
 
 	var report string
@@ -320,6 +384,36 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 	}
 	if writeErr := os.WriteFile(reportPath, []byte(report), 0o644); writeErr != nil {
 		return nil, fmt.Errorf("writing report: %w", writeErr)
+	}
+
+	// Companion HTML report — AWS-only because it's the only path with
+	// the rich AWSAuditContext the HTML header expects (account ID,
+	// regions, identity). The markdown source is embedded inline so
+	// the in-browser "Download Markdown" button is self-sufficient
+	// even if the .md sibling is deleted or moved.
+	if awsCtx != nil {
+		htmlPath := strings.TrimSuffix(reportPath, ".md") + ".html"
+		html := RenderAWSHTML(result, *awsCtx, report)
+		if writeErr := os.WriteFile(htmlPath, []byte(html), 0o644); writeErr != nil {
+			return nil, fmt.Errorf("writing html report: %w", writeErr)
+		}
+		result.HTMLReportPath = htmlPath
+
+		// Sidecar state JSON — captures every input the renderer
+		// needs so dev iteration (tools/diagram-replay) can rebuild
+		// the diagram in <1s without re-running discovery / LLM.
+		// Write failures don't break the report — they're a
+		// convenience for the dev loop, not a correctness signal.
+		statePath := strings.TrimSuffix(reportPath, ".md") + ".state.json"
+		state := AuditState{
+			Version:        1,
+			Context:        *awsCtx,
+			Resources:      resources,
+			Components:     components,
+			Findings:       findings,
+			LLMConnections: llmConns,
+		}
+		_ = SaveAuditState(statePath, state)
 	}
 
 	if scanErr != nil {

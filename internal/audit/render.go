@@ -7,50 +7,194 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
-// RenderPlain returns a severity-grouped plain text representation of
-// findings with a summary table followed by per-finding three-line
-// blocks (what / why / what-to-do).
+// RenderPlain returns the human-friendly terminal rendering of an audit
+// run: a severity overview row, severity-grouped finding cards (chip +
+// title + resource chip + reflowed remediation), a buffered advisories
+// block, and a "what next" footer. The signature is preserved because
+// pkg/audit re-exports it as a semver-public symbol.
 func RenderPlain(findings []Finding, stateFile string) string {
 	if len(findings) == 0 {
-		return "No findings.\n"
+		return renderNoFindings(stateFile)
 	}
 
 	var sb strings.Builder
 
-	// Summary table
-	severityCounts := countBySeverity(findings)
-	sb.WriteString("Severity  Count\n")
-	sb.WriteString("--------  -----\n")
-	for _, sev := range []string{SeverityCritical, SeverityHigh, SeverityWarning, SeverityInfo} {
-		if c := severityCounts[sev]; c > 0 {
-			sb.WriteString(fmt.Sprintf("%-8s  %d\n", strings.ToUpper(sev), c))
-		}
-	}
+	// Severity overview — replaces the old `Severity  Count` ASCII table.
+	sb.WriteString(renderSeverityOverview(findings))
 	sb.WriteString("\n")
 
-	// Per-finding blocks grouped by severity (high → info)
+	// Per-finding blocks grouped by severity (critical → info)
 	grouped := groupBySeverity(findings)
+	width := output.TerminalWidth()
 	for _, sev := range []string{SeverityCritical, SeverityHigh, SeverityWarning, SeverityInfo} {
 		list := grouped[sev]
 		if len(list) == 0 {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("=== %s ===\n\n", strings.ToUpper(sev)))
+		// Section heading: small dim banner above each severity cluster.
+		sb.WriteString(renderSeverityHeading(sev, len(list), width))
+		sb.WriteString("\n")
 		for _, f := range list {
-			sb.WriteString(fmt.Sprintf("[%s] %s — %s\n", strings.ToUpper(f.Severity), f.RuleID, f.Title))
-			sb.WriteString(fmt.Sprintf("  Resource: %s (%s)\n", f.Resource, f.Service))
-			sb.WriteString(fmt.Sprintf("  Remediation: %s\n\n", f.Remediation))
+			block := output.FindingBlock{
+				Severity:    f.Severity,
+				Title:       f.Title,
+				ResourceURN: f.Resource,
+				Remediation: f.Remediation,
+				RuleID:      f.RuleID,
+				Width:       width,
+			}
+			sb.WriteString(block.Render())
+			sb.WriteString("\n")
 		}
 	}
 
-	// Report path
-	base := strings.TrimSuffix(filepath.Base(stateFile), filepath.Ext(stateFile))
-	reportFile := base + "_audit_report.md"
-	sb.WriteString(fmt.Sprintf("Report written to: %s\n", reportFile))
+	// Advisories block (legacy config dir, post-scan warnings, etc).
+	// Drain so the root Execute hook doesn't re-render them.
+	if adv := output.FlushAdvisories(); adv != "" {
+		sb.WriteString(adv)
+		sb.WriteString("\n")
+	}
+
+	// Footer: report link + suggested follow-ups.
+	sb.WriteString(renderFooter(stateFile, findings, width))
 
 	return sb.String()
+}
+
+// renderNoFindings is the happy-path message: a single celebratory line
+// rather than the bare "No findings." of the prior implementation.
+func renderNoFindings(stateFile string) string {
+	headline := output.Success.Render(output.Symbol("check") + " no findings")
+	sub := output.Dim.Render("clean audit — nothing to act on.")
+	report := reportFileFor(stateFile)
+	link := output.Hyperlink(report, fileURL(report))
+	return fmt.Sprintf("%s\n%s\n\n%s %s\n",
+		headline, sub,
+		output.Dim.Render("report"), link,
+	)
+}
+
+// renderSeverityOverview prints a single-line summary of the severity mix
+// using coloured chip pills. Counts are right-padded so they read like
+// a microsummary, not a table.
+func renderSeverityOverview(findings []Finding) string {
+	counts := countBySeverity(findings)
+	total := len(findings)
+
+	headline := output.Dim.Render(fmt.Sprintf("%d findings", total))
+	parts := []string{headline}
+	for _, sev := range []string{SeverityCritical, SeverityHigh, SeverityWarning, SeverityInfo} {
+		c := counts[sev]
+		if c == 0 {
+			continue
+		}
+		chip := output.SeverityChip(sev)
+		parts = append(parts, fmt.Sprintf("%s %s", chip, output.Dim.Render(fmt.Sprintf("× %d", c))))
+	}
+	sep := output.Dim.Render("    ")
+	return strings.Join(parts, sep) + "\n"
+}
+
+// renderSeverityHeading emits a thin dim divider with the severity name
+// and its count — replaces the loud `=== CRITICAL ===` banner.
+func renderSeverityHeading(sev string, count, width int) string {
+	label := fmt.Sprintf("%s · %d", strings.ToUpper(sev), count)
+	style := output.SeverityBarStyle(sev)
+	if !output.Enabled() {
+		return label + "\n"
+	}
+	dash := "─"
+	// 4 = leading space + label space + space + trailing margin
+	fill := width - lipgloss.Width(label) - 4
+	if fill < 4 {
+		fill = 4
+	}
+	left := style.Render(strings.Repeat(dash, 2))
+	right := output.Dim.Render(strings.Repeat(dash, fill))
+	return fmt.Sprintf("%s %s %s\n",
+		left,
+		lipgloss.NewStyle().Bold(true).Render(label),
+		right,
+	)
+}
+
+// renderFooter assembles the closing block: a report link plus suggested
+// follow-up cbx commands. The commands surfaced are tuned to whatever
+// findings are present (e.g. only mention --severity critical when there
+// are critical findings).
+func renderFooter(stateFile string, findings []Finding, _ int) string {
+	report := reportFileFor(stateFile)
+	link := output.Hyperlink(report, fileURL(report))
+
+	var sb strings.Builder
+	sb.WriteString(output.Symbol("check") + " " + output.Success.Render("report") + " " + link + "\n")
+
+	// HTML companion (AWS audits only — written alongside the .md). We
+	// re-derive the path from the same base rather than threading it
+	// through the function signature; the renderer should stay
+	// stateless w.r.t. Result.
+	htmlReport := strings.TrimSuffix(report, ".md") + ".html"
+	if _, err := os.Stat(htmlReport); err == nil {
+		htmlLink := output.Hyperlink(htmlReport, fileURL(htmlReport))
+		sb.WriteString(output.Dim.Render("  open in browser ") + htmlLink + "\n")
+	}
+
+	suggestions := suggestedFollowups(findings, stateFile)
+	if len(suggestions) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(output.Dim.Render("what next") + "\n")
+		for _, s := range suggestions {
+			sb.WriteString("  " + output.Dim.Render(output.Symbol("arrow")) + " " + s + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// suggestedFollowups returns up to three context-sensitive cbx command
+// suggestions. Only emits commands the CLI actually supports — the
+// previous --severity hint pointed at a flag that doesn't exist on
+// `cbx audit aws`, so it was removed entirely. cbx plan is the only
+// real follow-up surface available today.
+func suggestedFollowups(findings []Finding, _ string) []string {
+	counts := countBySeverity(findings)
+	out := []string{}
+	switch {
+	case counts[SeverityCritical] > 0:
+		out = append(out, fmt.Sprintf("cbx plan \"address the %d critical findings\"    %s",
+			counts[SeverityCritical],
+			output.Dim.Render("# turn findings into an ADR")))
+	case counts[SeverityHigh] > 0:
+		out = append(out, fmt.Sprintf("cbx plan \"address the %d high-severity findings\"    %s",
+			counts[SeverityHigh],
+			output.Dim.Render("# turn findings into an ADR")))
+	}
+	return out
+}
+
+// reportFileFor mirrors the previous behaviour: <base>_audit_report.md
+// relative to wherever the runner wrote it. Caller passes the same
+// stateFile string used in the older RenderPlain.
+func reportFileFor(stateFile string) string {
+	base := strings.TrimSuffix(filepath.Base(stateFile), filepath.Ext(stateFile))
+	return base + "_audit_report.md"
+}
+
+// fileURL returns a file:// URL for a relative report path. For absolute
+// paths it's identity; for relative ones it joins to cwd so OSC-8 clicks
+// land on the right file in Finder / iTerm2.
+func fileURL(p string) string {
+	if filepath.IsAbs(p) {
+		return "file://" + p
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return "file://" + filepath.Join(cwd, p)
+	}
+	return ""
 }
 
 // RenderJSON returns findings as indented JSON.

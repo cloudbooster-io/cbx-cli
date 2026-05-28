@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -48,10 +49,31 @@ func Preflight(ctx context.Context, c awsCfg) (Identity, error) {
 		}
 	}
 	return Identity{
-		AccountID: deref(out.Account),
-		ARN:       deref(out.Arn),
-		UserID:    deref(out.UserId),
+		AccountID:    deref(out.Account),
+		AccountAlias: fetchAccountAlias(ctx, c),
+		ARN:          deref(out.Arn),
+		UserID:       deref(out.UserId),
 	}, nil
+}
+
+// fetchAccountAlias returns the IAM account alias if one is set on the
+// audited account, or "" otherwise. The call is cosmetic — used only
+// in the report header — so any error (missing permission, throttling,
+// no alias configured) is swallowed silently. Most accounts have no
+// alias; the empty result is the common case, not a failure mode.
+func fetchAccountAlias(ctx context.Context, c awsCfg) string {
+	// IAM is global. If the loaded config has no region (common when
+	// the user passes --regions explicitly), pin a known-good region
+	// for this one call so the SDK can resolve the endpoint.
+	if c.region() == "" {
+		c = c.withRegion("us-east-1")
+	}
+	client := iam.NewFromConfig(c.cfg)
+	out, err := client.ListAccountAliases(ctx, &iam.ListAccountAliasesInput{})
+	if err != nil || out == nil || len(out.AccountAliases) == 0 {
+		return ""
+	}
+	return out.AccountAliases[0]
 }
 
 // deref returns the dereferenced value of p, or the zero value when p

@@ -20,8 +20,8 @@ func TestRenderPlain(t *testing.T) {
 	if !strings.Contains(out, "S3-002") {
 		t.Fatal("expected S3-002 in plain output")
 	}
-	if !strings.Contains(out, "Report written to:") {
-		t.Fatal("expected report path in plain output")
+	if !strings.Contains(out, "report") {
+		t.Fatal("expected report link in plain output")
 	}
 }
 
@@ -87,7 +87,7 @@ func TestRenderGitHubAction(t *testing.T) {
 
 func TestRenderPlainNoFindings(t *testing.T) {
 	out := RenderPlain([]Finding{}, "state.json")
-	if !strings.Contains(out, "No findings") {
-		t.Fatal("expected 'No findings' message")
+	if !strings.Contains(strings.ToLower(out), "no findings") {
+		t.Fatal("expected 'no findings' message")
 	}
 }

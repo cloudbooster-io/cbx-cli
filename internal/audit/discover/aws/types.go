@@ -26,15 +26,23 @@ type DiscoveredResource = parsers.DiscoveredResource
 
 // Identity is the result of an STS GetCallerIdentity probe. Surfaced in
 // the audit report header so the user can see which AWS account + ARN
-// the run actually used.
+// the run actually used. AccountAlias is the best-effort friendly name
+// from iam:ListAccountAliases — empty when no alias is configured, when
+// the role lacks the permission, or when the call otherwise fails (we
+// don't want a missing alias to be a hard error since it's purely
+// cosmetic).
 type Identity struct {
-	AccountID string
-	ARN       string
-	UserID    string
+	AccountID    string
+	AccountAlias string
+	ARN          string
+	UserID       string
 }
 
 // String renders an Identity for the report header.
 func (i Identity) String() string {
+	if i.AccountAlias != "" {
+		return fmt.Sprintf("account=%s (%s) arn=%s", i.AccountID, i.AccountAlias, i.ARN)
+	}
 	return fmt.Sprintf("account=%s arn=%s", i.AccountID, i.ARN)
 }
 
