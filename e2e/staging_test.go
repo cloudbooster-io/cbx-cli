@@ -68,8 +68,8 @@ func TestStagingConnectivity(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("cbx status exited %d before login; stderr:\n%s", code, stderr)
 		}
-		if !strings.Contains(stdout, "Not logged in") {
-			t.Fatalf("expected 'Not logged in' before login, got:\n%s", stdout)
+		if !strings.Contains(stdout, "not logged in") {
+			t.Fatalf("expected 'not logged in' before login, got:\n%s", stdout)
 		}
 
 		// Login via device-code flow against staging.
@@ -100,8 +100,8 @@ func TestStagingConnectivity(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("cbx status exited %d after logout; stderr:\n%s", code, stderr)
 		}
-		if !strings.Contains(stdout, "Not logged in") {
-			t.Fatalf("expected 'Not logged in' after logout, got:\n%s", stdout)
+		if !strings.Contains(stdout, "not logged in") {
+			t.Fatalf("expected 'not logged in' after logout, got:\n%s", stdout)
 		}
 	})
 

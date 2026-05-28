@@ -15,7 +15,7 @@ func TestUpgrade(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("upgrade exited %d", code)
 		}
-		if !strings.Contains(stdout, "Cannot upgrade development build") {
+		if !strings.Contains(stdout, "cannot upgrade development build") {
 			t.Fatalf("expected dev build message, got: %s", stdout)
 		}
 	})
@@ -42,7 +42,7 @@ func TestUpgrade(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("upgrade exited %d", code)
 		}
-		if !strings.Contains(stdout, "Cannot upgrade development build") {
+		if !strings.Contains(stdout, "cannot upgrade development build") {
 			t.Fatalf("expected dev build message for dry-run, got: %s", stdout)
 		}
 	})
