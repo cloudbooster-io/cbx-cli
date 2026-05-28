@@ -268,14 +268,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detail.PageUp()
 		case key.Matches(msg, m.keymap.PageDown):
 			m.detail.PageDown()
-		case key.Matches(msg, m.keymap.Yank):
-			if f := m.SelectedFinding(); f != nil {
-				if err := copyToClipboard(f.RuleID); err == nil {
-					m.setFlash("copied " + f.RuleID)
-				} else {
-					m.setFlash("copy unavailable on this system")
-				}
-			}
 		case key.Matches(msg, m.keymap.Open):
 			if m.reportPath != "" {
 				if err := openInOS(m.reportPath); err == nil {
@@ -392,16 +384,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter = FilterState{}
 		m.searchIn.SetValue("")
 		m.applyFilter()
-		return m, nil
-
-	case key.Matches(msg, m.keymap.Yank):
-		if f := m.SelectedFinding(); f != nil {
-			if err := copyToClipboard(f.RuleID); err == nil {
-				m.setFlash("copied " + f.RuleID)
-			} else {
-				m.setFlash("copy unavailable on this system")
-			}
-		}
 		return m, nil
 
 	case key.Matches(msg, m.keymap.Open):
@@ -628,7 +610,6 @@ func (m Model) renderHelpOverlay() string {
 		{"s", "cycle severity filter"},
 		{"v", "cycle service filter"},
 		{"r", "reset all filters"},
-		{"y", "copy the rule ID to the clipboard"},
 		{"o", "open the saved report.md in your OS"},
 		{"?", "toggle this help"},
 		{"q · ctrl+c", "quit"},
@@ -852,7 +833,6 @@ func (m Model) renderKeymap() string {
 		m.keymap.CycleSev,
 		m.keymap.CycleSvc,
 		m.keymap.Reset,
-		m.keymap.Yank,
 	}
 	if m.reportPath != "" {
 		binds = append(binds, m.keymap.Open)
@@ -871,30 +851,6 @@ func (m Model) renderKeymap() string {
 }
 
 // ---- platform shims ----
-
-func copyToClipboard(s string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbcopy")
-	case "linux":
-		if _, err := exec.LookPath("wl-copy"); err == nil {
-			cmd = exec.Command("wl-copy")
-		} else if _, err := exec.LookPath("xclip"); err == nil {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
-		} else if _, err := exec.LookPath("xsel"); err == nil {
-			cmd = exec.Command("xsel", "--clipboard", "--input")
-		} else {
-			return fmt.Errorf("no clipboard utility on PATH")
-		}
-	case "windows":
-		cmd = exec.Command("clip")
-	default:
-		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
-	}
-	cmd.Stdin = strings.NewReader(s)
-	return cmd.Run()
-}
 
 func openInOS(path string) error {
 	var cmd *exec.Cmd

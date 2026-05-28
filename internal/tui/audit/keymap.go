@@ -17,7 +17,6 @@ type KeyMap struct {
 	CycleSev key.Binding
 	CycleSvc key.Binding
 	Reset    key.Binding
-	Yank     key.Binding
 	Open     key.Binding
 	Help     key.Binding
 	Quit     key.Binding
@@ -39,7 +38,6 @@ func DefaultKeyMap() KeyMap {
 		CycleSev: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "severity")),
 		CycleSvc: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "service")),
 		Reset:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reset")),
-		Yank:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy rule")),
 		Open:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open report")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
