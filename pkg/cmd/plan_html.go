@@ -2,13 +2,11 @@ package cmd
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"html/template"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +19,7 @@ import (
 
 	"github.com/pkg/browser"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/assets"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
@@ -48,7 +47,7 @@ func generatePlanHTML(intent, adrMarkdown string, mermaidSource template.HTML) (
 		return nil, fmt.Errorf("rendering markdown: %w", err)
 	}
 
-	mermaidJS, err := decompressMermaidJS()
+	mermaidJS, err := assets.MermaidJS()
 	if err != nil {
 		return nil, fmt.Errorf("decompressing mermaid runtime: %w", err)
 	}
@@ -315,19 +314,6 @@ var keywords = map[string]bool{
 
 func isKeyword(word string) bool {
 	return keywords[word]
-}
-
-func decompressMermaidJS() (string, error) {
-	r, err := gzip.NewReader(bytes.NewReader(mermaidJSGz))
-	if err != nil {
-		return "", err
-	}
-	defer r.Close()
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }
 
 func generateRandomPath() (string, error) {

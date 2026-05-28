@@ -4,6 +4,8 @@ import (
 	"html/template"
 	"strings"
 	"testing"
+
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/assets"
 )
 
 func TestMarkdownToHTML(t *testing.T) {
@@ -92,8 +94,8 @@ func TestGeneratePlanHTML(t *testing.T) {
 	}
 }
 
-func TestDecompressMermaidJS(t *testing.T) {
-	js, err := decompressMermaidJS()
+func TestMermaidJSAsset(t *testing.T) {
+	js, err := assets.MermaidJS()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
