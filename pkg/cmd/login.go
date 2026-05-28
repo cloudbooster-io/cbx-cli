@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
+	v1 "gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
@@ -255,6 +255,8 @@ func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Log out of CloudBooster",
+		Example: `  # Log out of the CloudBooster platform
+  cbx logout`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogout(cmd)
 		},

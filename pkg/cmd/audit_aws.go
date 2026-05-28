@@ -60,7 +60,7 @@ still win.
 Region resolution: if --region is omitted, the profile's configured
 region is used. If the profile has no region and you're on a TTY, an
 interactive picker shows enabled regions. In non-interactive mode
-(--output json, --quiet, --yes, or no TTY) you must pass --region.
+(--output json, --quiet, or no TTY) you must pass --region.
 
 Use --region all to fan out across every enabled region in the account.
 
@@ -75,7 +75,7 @@ not optional: the audit ships discovered resources (plus
 cb_describer_* enrichment from the per-service describers) to the
 model as context, then matches each finding to a specific CB
 knowledge entry. Claude Code must be on PATH and cbx-mcp must be
-available on disk. Use --llm-max-cost to cap the per-run cost.`,
+available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00).`,
 		Example: `  # Audit the default AWS profile in its configured region
   cbx audit aws
 
@@ -291,13 +291,13 @@ available on disk. Use --llm-max-cost to cap the per-run cost.`,
 
 			if output.JSON() {
 				payload := map[string]any{
-					"identity":                  discResult.Identity,
-					"regions":                   discResult.Regions,
-					"resources_count":           len(discResult.Resources),
+					"identity":                   discResult.Identity,
+					"regions":                    discResult.Regions,
+					"resources_count":            len(discResult.Resources),
 					"cloudtrail_events_estimate": discResult.EventCount,
-					"findings":                  result.Findings,
-					"components":        result.Components,
-					"permission_errors": permErrsToJSON(discResult.PermissionErr),
+					"findings":                   result.Findings,
+					"components":                 result.Components,
+					"permission_errors":          permErrsToJSON(discResult.PermissionErr),
 				}
 				return output.PrintJSON(payload, nil)
 			}

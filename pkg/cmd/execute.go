@@ -17,6 +17,14 @@ import (
 // Execute builds the root command, runs the background update check, executes
 // the CLI, and displays the update banner if applicable.
 func Execute() error {
+	// Suppress the legacy-config nudge for commands where it would be noise
+	// (version/help/completion/--json/--quiet/-o json). Done before any
+	// config.Dir() call by swapping the configurable nudge sink. The
+	// sentinel-once guard still protects everything else.
+	if !shouldNudgeLegacyConfig() {
+		config.LegacyConfigNudge = func(legacy, modern string) {}
+	}
+
 	root := NewRootCmd()
 
 	// Start background update check so it runs in parallel with the command.
@@ -109,6 +117,41 @@ func shouldRunUpdateCheck() bool {
 		}
 		switch a {
 		case "version", "upgrade", "completion", "help":
+			return false
+		}
+		break
+	}
+	return true
+}
+
+// shouldNudgeLegacyConfig decides whether the one-time legacy-config-dir
+// nudge is appropriate for the current invocation. Mirrors the heuristic
+// used by shouldRunUpdateCheck: skip for version/help/completion, and for
+// machine-output / quiet modes where the message would just be noise on
+// stderr that the user did not opt into.
+func shouldNudgeLegacyConfig() bool {
+	args := os.Args
+	if len(args) < 2 {
+		return true
+	}
+	for _, a := range args[1:] {
+		switch a {
+		case "--json", "-q", "--quiet", "--version", "-v", "-h", "--help":
+			return false
+		}
+		if a == "-o" || a == "--output" {
+			return false
+		}
+		if strings.HasPrefix(a, "--output=") || strings.HasPrefix(a, "-o=") {
+			return false
+		}
+	}
+	for _, a := range args[1:] {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		switch a {
+		case "version", "help", "completion":
 			return false
 		}
 		break

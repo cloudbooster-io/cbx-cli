@@ -28,7 +28,9 @@ func NewRootCmd() *cobra.Command {
 		Use:   "cbx",
 		Short: "CloudBooster CLI — plan, audit, and manage cloud infrastructure",
 		Long: `cbx is the CloudBooster CLI for planning cloud infrastructure,
-auditing existing deployments, and interacting with the CloudBooster platform.`,
+auditing existing deployments, and interacting with the CloudBooster platform.
+
+Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx doctor to check your setup.`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -51,14 +53,14 @@ auditing existing deployments, and interacting with the CloudBooster platform.`,
 				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
 					What: fmt.Sprintf("output format %q is not yet supported", outputFormat),
 					Why:  "only json (and the human-readable default) are implemented today",
-					Fix:  "drop the --output flag or pass --output json",
+					Fix:  "pass --output json or omit the flag for human-readable output",
 					Code: "E_UNSUPPORTED_FORMAT",
 				}))
 			default:
 				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
 					What: fmt.Sprintf("output format %q is not recognized", outputFormat),
 					Why:  "supported formats: json (and the human-readable default)",
-					Fix:  "pass --output json or omit the flag",
+					Fix:  "pass --output json or omit the flag for human-readable output",
 					Code: "E_UNSUPPORTED_FORMAT",
 				}))
 			}

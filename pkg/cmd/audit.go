@@ -17,12 +17,8 @@ import (
 func newAuditCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "Audit live cloud infrastructure for security and compliance issues",
-		Long: `Audit live cloud infrastructure.
-
-Only live-account audit is exposed at the CLI surface — see
-'cbx audit aws' for AWS. IaC source / state-file scanning is not
-available through this command.`,
+		Short: "Audit live cloud infrastructure",
+		Long:  `Audit live cloud infrastructure. The only target shipped today is AWS (see 'cbx audit aws').`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("no audit target selected — run 'cbx audit aws' to audit a live AWS account")
 		},

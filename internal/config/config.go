@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // Config holds the CLI configuration.
@@ -33,9 +34,9 @@ type AWSConfig struct {
 // reports and usage metrics. Default is "not prompted yet, disabled" —
 // nothing is sent until the user explicitly opts in.
 type TelemetryConfig struct {
-	Enabled     bool   `json:"enabled"`
-	Prompted    bool   `json:"prompted"`
-	PromptedAt  string `json:"prompted_at,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Prompted   bool   `json:"prompted"`
+	PromptedAt string `json:"prompted_at,omitempty"`
 }
 
 // AuthConfig holds CloudBooster authentication metadata.
@@ -72,8 +73,19 @@ const (
 )
 
 // legacyNudgeOnce ensures we only emit the "move ~/.cbx to ~/.config/cbx"
-// nudge a single time per process.
+// nudge a single time per process. Combined with the on-disk sentinel
+// (see legacyNudgeSentinelName) this also keeps the nudge from firing
+// across processes — without that, every cbx invocation would re-emit it
+// because each process is fresh.
 var legacyNudgeOnce sync.Once
+
+// legacyNudgeSentinelName is the marker file written inside the legacy
+// config dir after the first nudge. Subsequent processes that find the
+// sentinel skip the nudge entirely. We park it inside the legacy dir
+// (not the XDG newDir) on purpose: creating newDir as an empty directory
+// would flip Dir()'s "prefer legacy" branch and silently orphan the
+// user's existing config.json.
+const legacyNudgeSentinelName = ".legacy-nudged"
 
 // LegacyConfigNudge is the sink for the one-time migration suggestion when
 // only the legacy ~/.cbx directory exists. Override in tests or to route
@@ -85,10 +97,18 @@ var LegacyConfigNudge = func(legacy, modern string) {
 }
 
 func nudgeLegacyConfigOnce(legacy, modern string) {
+	sentinel := filepath.Join(legacy, legacyNudgeSentinelName)
+	if _, err := os.Stat(sentinel); err == nil {
+		// Already nudged in a prior process — stay silent.
+		return
+	}
 	legacyNudgeOnce.Do(func() {
 		if LegacyConfigNudge != nil {
 			LegacyConfigNudge(legacy, modern)
 		}
+		// Best-effort sentinel write; failure to persist just means the
+		// next process re-nudges (annoying but not broken).
+		_ = os.WriteFile(sentinel, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 	})
 }
 

@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
 	"runtime"
 	"time"
 
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
@@ -31,6 +33,11 @@ func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Check the health of your cbx installation",
+		Example: `  # Run all health checks
+  cbx doctor
+
+  # Machine-readable output
+  cbx doctor --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -118,15 +125,26 @@ func runChecks(cfg *config.Config) []doctorCheck {
 		Info: llmInfo,
 	})
 
-	// 6. Scanner binaries on PATH
-	scannerOK, scannerInfo := checkScannerBinaries()
+	// 6. claude CLI on PATH — required by `cbx audit aws` (always-grounded
+	//    via Claude Code).
+	claudeOK, claudeInfo := checkClaudeBinary()
 	checks = append(checks, doctorCheck{
-		Name: "Scanner binaries",
-		OK:   scannerOK,
-		Info: scannerInfo,
+		Name: "claude CLI",
+		OK:   claudeOK,
+		Info: claudeInfo,
 	})
 
-	// 7. Version current
+	// 7. cbx-mcp checkout discoverable — required by `cbx audit aws` for
+	//    the grounded MCP tool calls. Reuses the same resolver the audit
+	//    path uses, so what doctor reports matches what audit will see.
+	mcpOK, mcpInfo := checkCBXMCPCheckout()
+	checks = append(checks, doctorCheck{
+		Name: "cbx-mcp checkout",
+		OK:   mcpOK,
+		Info: mcpInfo,
+	})
+
+	// 8. Version current
 	versionOK, versionInfo := checkVersionCurrent()
 	checks = append(checks, doctorCheck{
 		Name: "Version current",
@@ -134,7 +152,7 @@ func runChecks(cfg *config.Config) []doctorCheck {
 		Info: versionInfo,
 	})
 
-	// 8. Keychain accessible
+	// 9. Keychain accessible
 	keychainOK, keychainInfo := checkKeychain()
 	checks = append(checks, doctorCheck{
 		Name: "Keychain accessible",
@@ -177,32 +195,42 @@ func checkLLMAuth(cfg *config.Config) (bool, string) {
 	return true, fmt.Sprintf("%d provider(s) configured", len(loggedIn))
 }
 
-func checkScannerBinaries() (bool, string) {
-	scanners := []string{"prowler", "trivy", "checkov", "tfsec"}
-	var found []string
-	var missing []string
-	for _, name := range scanners {
-		if _, err := exec.LookPath(name); err == nil {
-			found = append(found, name)
-		} else {
-			missing = append(missing, name)
-		}
+// checkClaudeBinary verifies the `claude` (Claude Code) CLI is on PATH.
+// `cbx audit aws` is always grounded through this binary, so without it
+// the live-AWS audit cannot run. The legacy scanner-binary check
+// (prowler/trivy/checkov/tfsec) was removed: the CLI no longer shells
+// out to those tools.
+func checkClaudeBinary() (bool, string) {
+	p, err := exec.LookPath("claude")
+	if err != nil {
+		return false, "not found on PATH (install Claude Code from https://claude.com/code)"
 	}
-	if len(found) == 0 {
-		return false, "none found on PATH"
+	return true, p
+}
+
+// checkCBXMCPCheckout verifies a cbx-mcp working tree is discoverable
+// (via CBX_MCP_PATH or a sibling checkout). Required by `cbx audit aws`
+// for the grounded MCP tool calls. Reuses audit.HasCBXMCPCheckout so
+// doctor and the audit path agree on what counts as "available."
+func checkCBXMCPCheckout() (bool, string) {
+	if audit.HasCBXMCPCheckout() {
+		return true, "discoverable on disk"
 	}
-	return true, fmt.Sprintf("found: %v", found)
+	return false, "not found (set CBX_MCP_PATH to a cbx-mcp checkout, or clone it as a sibling of cbx-cli)"
 }
 
 func checkVersionCurrent() (bool, string) {
 	if Version == "dev" || Version == "unknown" || Version == "" {
-		return false, "development build (no version info)"
+		return true, "running dev build"
 	}
 	checker := update.NewChecker(Version)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	result, err := checker.Check(ctx)
 	if err != nil {
+		if errors.Is(err, update.ErrNoReleases) {
+			return true, "no releases yet"
+		}
 		return false, fmt.Sprintf("unable to check: %v", err)
 	}
 	if result.HasUpdate {

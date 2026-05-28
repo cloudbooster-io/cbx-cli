@@ -5,6 +5,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,12 @@ import (
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 )
+
+// ErrNoReleases is returned by Check when the upstream project has no
+// releases published yet (HTTP 404 on the releases permalink endpoint).
+// Callers can treat this as a non-failure — there is simply nothing to
+// compare against.
+var ErrNoReleases = errors.New("no releases published yet")
 
 const (
 	// gitlabProjectPath is the URL-encoded namespace/path of the cbx-cli
@@ -191,6 +198,9 @@ func (c *Checker) fetchLatest(ctx context.Context) (*release, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNoReleases
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("GitLab API returned %d: %s", resp.StatusCode, string(body))
