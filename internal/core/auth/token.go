@@ -68,6 +68,13 @@ func IsAuthenticated(kr Keyring) (bool, error) {
 	return true, nil
 }
 
+// HasToken reports whether a token is present in the keyring without
+// reading its contents. Used by `cbx auth status` to avoid a macOS
+// Keychain access prompt when the user is logged out.
+func HasToken(kr Keyring) (bool, error) {
+	return kr.Has(tokenKey)
+}
+
 // AuthenticatedClient returns an HTTP client that adds Bearer tokens and
 // refreshes them automatically when expired.
 func AuthenticatedClient(ctx context.Context, apiURL string, kr Keyring) (*http.Client, error) {

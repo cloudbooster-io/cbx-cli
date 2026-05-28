@@ -409,3 +409,8 @@ func (m *mockKeyring) Delete(key string) error {
 	delete(m.data, key)
 	return nil
 }
+
+func (m *mockKeyring) Has(key string) (bool, error) {
+	_, ok := m.data[key]
+	return ok, nil
+}

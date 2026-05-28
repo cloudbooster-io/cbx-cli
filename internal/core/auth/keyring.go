@@ -13,6 +13,10 @@ type Keyring interface {
 	Store(key, secret string) error
 	Retrieve(key string) (string, error)
 	Delete(key string) error
+	// Has reports whether a key exists without reading its secret data.
+	// On macOS this queries Keychain metadata only, which does not trigger
+	// the user-authorization prompt that Retrieve would.
+	Has(key string) (bool, error)
 }
 
 // osKeyring wraps 99designs/keyring.
@@ -92,8 +96,10 @@ func openBackend(name string) (Keyring, error) {
 
 func (k *osKeyring) Store(key, secret string) error {
 	return k.kr.Set(keyring.Item{
-		Key:  key,
-		Data: []byte(secret),
+		Key:         key,
+		Data:        []byte(secret),
+		Label:       "CloudBooster CLI (" + key + ")",
+		Description: "OAuth credentials for cbx",
 	})
 }
 
@@ -107,4 +113,21 @@ func (k *osKeyring) Retrieve(key string) (string, error) {
 
 func (k *osKeyring) Delete(key string) error {
 	return k.kr.Remove(key)
+}
+
+func (k *osKeyring) Has(key string) (bool, error) {
+	// Use Keys() rather than Get/GetMetadata: on macOS, Keys() only
+	// requests kSecReturnAttributes (no item ref, no data), which does
+	// not trigger the per-item ACL prompt. GetMetadata sets ReturnRef,
+	// which does.
+	keys, err := k.kr.Keys()
+	if err != nil {
+		return false, err
+	}
+	for _, k := range keys {
+		if k == key {
+			return true, nil
+		}
+	}
+	return false, nil
 }

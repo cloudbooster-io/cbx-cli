@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,37 @@ const (
 	clientID    = "cbx-cli"
 	serviceName = "cloudbooster-cbx"
 )
+
+// UserAgent is sent on every auth-flow HTTP request so the platform can
+// render a friendly device label on the Devices panel (e.g.
+// ``cbx-cli/1.26.2 (darwin/arm64)``). Defaults to a runtime-derived value;
+// ``main`` overrides it at startup with the ldflags-baked version so
+// release builds report their real version instead of the dev placeholder.
+var UserAgent = defaultUserAgent("dev")
+
+// SetVersion lets ``main`` inject the ldflags-baked CLI version into the
+// User-Agent. Call once at startup before any auth call.
+func SetVersion(v string) {
+	if v == "" {
+		return
+	}
+	UserAgent = defaultUserAgent(v)
+}
+
+func defaultUserAgent(version string) string {
+	v := strings.TrimPrefix(version, "v")
+	if v == "" || v == "(devel)" {
+		if bi, ok := debug.ReadBuildInfo(); ok {
+			if bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+				v = strings.TrimPrefix(bi.Main.Version, "v")
+			}
+		}
+	}
+	if v == "" {
+		v = "dev"
+	}
+	return fmt.Sprintf("cbx-cli/%s (%s/%s)", v, runtime.GOOS, runtime.GOARCH)
+}
 
 // Config holds OAuth endpoint configuration derived from the CLI config.
 type Config struct {
@@ -212,7 +244,7 @@ func startCallbackServer(ctx context.Context, state string) (callbackURL string,
 		once.Do(func() {
 			q := r.URL.Query()
 			if q.Get("state") != state {
-				http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+				writeCallbackPage(w, http.StatusBadRequest, false, "Invalid state parameter", "Your session may have expired or been tampered with. Run cbx login again from your terminal.")
 				select {
 				case errCh <- fmt.Errorf("invalid state parameter"):
 				default:
@@ -220,7 +252,7 @@ func startCallbackServer(ctx context.Context, state string) (callbackURL string,
 				return
 			}
 			if errParam := q.Get("error"); errParam != "" {
-				http.Error(w, fmt.Sprintf("Authorization error: %s", errParam), http.StatusBadRequest)
+				writeCallbackPage(w, http.StatusBadRequest, false, "Authorization denied", fmt.Sprintf("The identity provider returned: %s", errParam))
 				select {
 				case errCh <- fmt.Errorf("authorization error: %s", errParam):
 				default:
@@ -229,7 +261,7 @@ func startCallbackServer(ctx context.Context, state string) (callbackURL string,
 			}
 			code := q.Get("code")
 			if code == "" {
-				http.Error(w, "Missing authorization code", http.StatusBadRequest)
+				writeCallbackPage(w, http.StatusBadRequest, false, "Missing authorization code", "The callback did not include an authorization code. Run cbx login again to retry.")
 				select {
 				case errCh <- fmt.Errorf("missing authorization code"):
 				default:
@@ -237,7 +269,7 @@ func startCallbackServer(ctx context.Context, state string) (callbackURL string,
 				return
 			}
 			codeCh <- code
-			fmt.Fprint(w, "<html><body><h1>Authorization successful</h1><p>You can close this window.</p></body></html>")
+			writeCallbackPage(w, http.StatusOK, true, "You're signed in", "Return to your terminal to continue. This window can be closed.")
 			go func() {
 				time.Sleep(100 * time.Millisecond)
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -278,9 +310,36 @@ func exchangeCode(ctx context.Context, tokenURL, code, verifier, redirectURL str
 	return doTokenRequest(ctx, tokenURL, data)
 }
 
-// httpClient returns an HTTP client with a reasonable timeout for auth requests.
+// httpClient returns an HTTP client with a reasonable timeout for auth
+// requests AND a User-Agent-injecting transport. The transport ensures
+// every subsequent call (including the ones made by oauth2.NewClient's
+// token-source wrapper for /v1/me and similar) carries the cbx-cli UA
+// so the platform can surface a friendly device label.
 func httpClient() *http.Client {
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &userAgentTransport{base: http.DefaultTransport},
+	}
+}
+
+// userAgentTransport stamps User-Agent on outgoing requests when the
+// caller hasn't already set one. Wraps an underlying RoundTripper so it
+// composes cleanly with oauth2.Transport (which only adds Authorization).
+type userAgentTransport struct {
+	base http.RoundTripper
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("User-Agent") == "" {
+		// Clone so we don't mutate the caller's request when retried.
+		req = req.Clone(req.Context())
+		req.Header.Set("User-Agent", UserAgent)
+	}
+	rt := t.base
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	return rt.RoundTrip(req)
 }
 
 // doTokenRequest posts form data to the token endpoint and parses the response.
@@ -291,6 +350,7 @@ func doTokenRequest(ctx context.Context, tokenURL string, data url.Values) (*Exc
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := httpClient().Do(req)
 	if err != nil {
@@ -338,6 +398,7 @@ func fetchEmail(ctx context.Context, apiURL string, token *oauth2.Token) (string
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := httpClient().Do(req)
 	if err != nil {
@@ -356,4 +417,107 @@ func fetchEmail(ctx context.Context, apiURL string, token *oauth2.Token) (string
 		return "", err
 	}
 	return body.Email, nil
+}
+
+// writeCallbackPage renders the OAuth landing page shown in the user's
+// browser after they return from the identity provider. Both success and
+// error paths share the same shell so the experience feels intentional.
+func writeCallbackPage(w http.ResponseWriter, status int, ok bool, title, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+
+	accent := "#22d3ee"
+	icon := `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`
+	if !ok {
+		accent = "#f87171"
+		icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>`
+	}
+
+	esc := func(s string) string {
+		r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;")
+		return r.Replace(s)
+	}
+
+	fmt.Fprintf(w, `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>%s · CloudBooster</title>
+<style>
+  :root { color-scheme: dark light; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: radial-gradient(1200px 600px at 50%% -10%%, rgba(34,211,238,0.18), transparent 60%%),
+                radial-gradient(900px 500px at 80%% 110%%, rgba(99,102,241,0.18), transparent 60%%),
+                #0b0f17;
+    color: #e6edf3;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%%;
+    max-width: 440px;
+    background: rgba(17, 24, 39, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 16px;
+    padding: 36px 32px 28px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,0.6);
+    text-align: center;
+  }
+  .icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    background: color-mix(in srgb, %s 18%%, transparent);
+    color: %s;
+    margin-bottom: 18px;
+  }
+  .icon svg { width: 28px; height: 28px; }
+  h1 {
+    font-size: 22px;
+    line-height: 1.25;
+    margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  p {
+    margin: 0;
+    color: #9ca3af;
+    font-size: 14.5px;
+    line-height: 1.55;
+  }
+  .brand {
+    margin-top: 28px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #6b7280;
+  }
+  .brand span { color: #e6edf3; font-weight: 600; letter-spacing: 0.06em; }
+  @media (prefers-color-scheme: light) {
+    body { background: #f8fafc; color: #0f172a; }
+    .card { background: #ffffff; border-color: rgba(15,23,42,0.08); box-shadow: 0 20px 50px -20px rgba(15,23,42,0.15); }
+    p { color: #475569; }
+    .brand { color: #94a3b8; }
+    .brand span { color: #0f172a; }
+  }
+</style>
+</head>
+<body>
+  <main class="card" role="status" aria-live="polite">
+    <div class="icon" style="color: %s; background: color-mix(in srgb, %s 18%%, transparent);">%s</div>
+    <h1>%s</h1>
+    <p>%s</p>
+    <div class="brand"><span>CloudBooster</span> &middot; cbx CLI</div>
+  </main>
+</body>
+</html>`, esc(title), accent, accent, accent, accent, icon, esc(title), esc(message))
 }
