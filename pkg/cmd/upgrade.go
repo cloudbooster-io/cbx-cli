@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 
@@ -38,8 +39,16 @@ func newUpgradeCmd() *cobra.Command {
 						Message:        "cannot upgrade development build",
 					}, nil)
 				}
-				fmt.Println("Cannot upgrade development build. Install a release build from:")
-				fmt.Println("  https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases")
+				card := output.Card{
+					Label: output.Chip("UPGRADE", lipgloss.Color("231"), lipgloss.Color("236")),
+					Title: "cannot upgrade development build",
+					Rows: []output.CardRow{
+						{Key: "current", Value: output.Dim.Render(Version)},
+					},
+					Footer: output.Dim.Render(output.Symbol("arrow") + " install a release build from ") +
+						"https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases",
+				}
+				fmt.Print(card.Render())
 				return nil
 			}
 
@@ -88,9 +97,7 @@ func newUpgradeCmd() *cobra.Command {
 						Message:        fmt.Sprintf("would run: %s", update.UpgradeCommand(result)),
 					}, nil)
 				}
-				output.Infof("Update available: %s -> %s", Version, result.LatestVersion)
-				output.Infof("Install method: %s", result.InstallMethod)
-				output.Infof("Would run: %s", update.UpgradeCommand(result))
+				fmt.Print(renderUpgradePlanCard(Version, result, false))
 				return nil
 			}
 
@@ -106,11 +113,18 @@ func newUpgradeCmd() *cobra.Command {
 				}, nil)
 			}
 
-			fmt.Printf("Upgrading cbx %s → %s (%s)\n", Version, result.LatestVersion, result.InstallMethod)
+			fmt.Print(renderUpgradePlanCard(Version, result, true))
 			if result.InstallMethod == update.InstallDirect {
-				fmt.Printf("Direct download upgrade is not automated.\n")
-				fmt.Printf("Download the latest release from:\n  %s\n", result.ReleaseURL)
-				fmt.Printf("Or run:\n  %s\n", update.UpgradeCommand(result))
+				directCard := output.Card{
+					Label: output.Chip("UPGRADE", lipgloss.Color("231"), lipgloss.Color("166")),
+					Title: "direct-download upgrade is not automated",
+					Rows: []output.CardRow{
+						{Key: "release", Value: result.ReleaseURL},
+						{Key: "command", Value: update.UpgradeCommand(result)},
+					},
+					Footer: output.Dim.Render(output.Symbol("arrow") + " run the command above or open the release URL"),
+				}
+				fmt.Print(directCard.Render())
 				return nil
 			}
 			if err := update.Upgrade(ctx, result); err != nil {
@@ -122,4 +136,32 @@ func newUpgradeCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without upgrading")
 	return cmd
+}
+
+// renderUpgradePlanCard composes the "update available" card. inProgress
+// flips the verb from "would run" to "running" so the same card serves
+// both --dry-run and the real upgrade path.
+func renderUpgradePlanCard(current string, r *update.Result, inProgress bool) string {
+	from := output.Dim.Render(current)
+	arrow := output.Dim.Render(" " + output.Symbol("arrow") + " ")
+	to := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")).Render(r.LatestVersion)
+	if !output.Enabled() {
+		to = r.LatestVersion
+	}
+	verb := "would run"
+	title := "upgrade plan"
+	if inProgress {
+		verb = "running"
+		title = "upgrading cbx"
+	}
+	card := output.Card{
+		Label: output.Chip("UPGRADE", lipgloss.Color("231"), lipgloss.Color("22")),
+		Title: title,
+		Rows: []output.CardRow{
+			{Key: "version", Value: from + arrow + to},
+			{Key: "via", Value: string(r.InstallMethod)},
+			{Key: verb, Value: update.UpgradeCommand(r)},
+		},
+	}
+	return card.Render()
 }

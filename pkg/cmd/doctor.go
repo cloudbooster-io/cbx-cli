@@ -7,9 +7,10 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
@@ -64,21 +65,62 @@ func newDoctorCmd() *cobra.Command {
 				return output.PrintJSON(report, nil)
 			}
 
-			for _, c := range checks {
-				status := output.Symbol("check")
-				if !c.OK {
-					status = output.Symbol("cross")
-				}
-				fmt.Printf("%s %s: %s\n", status, c.Name, c.Info)
-			}
+			fmt.Print(renderDoctorCard(checks, allOK))
 
 			if !allOK {
 				return fmt.Errorf("some health checks failed")
 			}
-			fmt.Println("\nYour cbx installation is healthy.")
 			return nil
 		},
 	}
+}
+
+// renderDoctorCard composes the health-check output as a framed card so
+// every cbx surface shares the same visual language. Per-row layout is
+// ✓/✗ chip + bold name + dim detail; the footer summarises the run with
+// a green "healthy" or red "N failed" + a one-command "what next" hint.
+func renderDoctorCard(checks []doctorCheck, allOK bool) string {
+	// Compute name column width so all detail strings start at the same
+	// indent regardless of which check name is longest.
+	nameW := 0
+	for _, c := range checks {
+		if w := lipgloss.Width(c.Name); w > nameW {
+			nameW = w
+		}
+	}
+
+	card := output.Card{
+		Label: output.Chip("HEALTH", lipgloss.Color("231"), lipgloss.Color("236")),
+		Title: "cbx · doctor",
+	}
+	for _, c := range checks {
+		symbol := output.Success.Render(output.Symbol("check"))
+		if !c.OK {
+			symbol = output.Error.Render(output.Symbol("cross"))
+		}
+		// Pad the name in its plain form so styled widths line up.
+		name := c.Name + strings.Repeat(" ", nameW-lipgloss.Width(c.Name))
+		nameStyled := lipgloss.NewStyle().Bold(true).Render(name)
+		if !output.Enabled() {
+			nameStyled = name
+		}
+		row := fmt.Sprintf("%s  %s  %s", symbol, nameStyled, output.Dim.Render(c.Info))
+		card.Rows = append(card.Rows, output.CardRow{Key: "", Value: row})
+	}
+	if allOK {
+		card.Footer = output.Success.Render(output.Symbol("check")+" all systems healthy") +
+			"  " + output.Dim.Render("· run `cbx audit aws` or `cbx plan \"…\"` to get going")
+	} else {
+		failed := 0
+		for _, c := range checks {
+			if !c.OK {
+				failed++
+			}
+		}
+		card.Footer = output.Error.Render(fmt.Sprintf("%s %d check(s) failed", output.Symbol("cross"), failed)) +
+			"  " + output.Dim.Render("· rerun cbx doctor after addressing the items above")
+	}
+	return card.Render()
 }
 
 func runChecks(cfg *config.Config) []doctorCheck {
@@ -134,17 +176,7 @@ func runChecks(cfg *config.Config) []doctorCheck {
 		Info: claudeInfo,
 	})
 
-	// 7. cbx-mcp checkout discoverable — required by `cbx audit aws` for
-	//    the grounded MCP tool calls. Reuses the same resolver the audit
-	//    path uses, so what doctor reports matches what audit will see.
-	mcpOK, mcpInfo := checkCBXMCPCheckout()
-	checks = append(checks, doctorCheck{
-		Name: "cbx-mcp checkout",
-		OK:   mcpOK,
-		Info: mcpInfo,
-	})
-
-	// 8. Version current
+	// 7. Version current
 	versionOK, versionInfo := checkVersionCurrent()
 	checks = append(checks, doctorCheck{
 		Name: "Version current",
@@ -152,7 +184,7 @@ func runChecks(cfg *config.Config) []doctorCheck {
 		Info: versionInfo,
 	})
 
-	// 9. Keychain accessible
+	// 8. Keychain accessible
 	keychainOK, keychainInfo := checkKeychain()
 	checks = append(checks, doctorCheck{
 		Name: "Keychain accessible",
@@ -206,17 +238,6 @@ func checkClaudeBinary() (bool, string) {
 		return false, "not found on PATH (install Claude Code from https://claude.com/code)"
 	}
 	return true, p
-}
-
-// checkCBXMCPCheckout verifies a cbx-mcp working tree is discoverable
-// (via CBX_MCP_PATH or a sibling checkout). Required by `cbx audit aws`
-// for the grounded MCP tool calls. Reuses audit.HasCBXMCPCheckout so
-// doctor and the audit path agree on what counts as "available."
-func checkCBXMCPCheckout() (bool, string) {
-	if audit.HasCBXMCPCheckout() {
-		return true, "discoverable on disk"
-	}
-	return false, "not found (set CBX_MCP_PATH to a cbx-mcp checkout, or clone it as a sibling of cbx-cli)"
 }
 
 func checkVersionCurrent() (bool, string) {

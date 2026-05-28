@@ -7,12 +7,93 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/cobra"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 )
+
+// beautifyCobraError rewrites the bare cobra error strings (unknown
+// command, unknown flag) into a structured ErrorDetail so the user
+// sees the same red-gutter error block as everywhere else. Unknown
+// commands gain a list of suggested closest matches when cobra
+// computed any. Errors that don't match either pattern fall through
+// unchanged.
+func beautifyCobraError(root *cobra.Command, err error) error {
+	if err == nil || output.JSON() {
+		return err
+	}
+	msg := err.Error()
+
+	// "unknown command \"X\" for \"cbx ...\""
+	if strings.HasPrefix(msg, "unknown command ") {
+		name := extractQuoted(msg)
+		suggestions := root.SuggestionsFor(name)
+		fix := "run `cbx --help` to see available commands"
+		if len(suggestions) > 0 {
+			fix = "did you mean: " + strings.Join(suggestions, ", ") + "? (or run `cbx --help`)"
+		}
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: fmt.Sprintf("%s is not a cbx command", quote(name)),
+			Why:  "no command, alias, or subcommand matches that name",
+			Fix:  fix,
+			Code: "E_UNKNOWN_COMMAND",
+		}))
+	}
+	// "unknown flag: --bogus" / "unknown shorthand flag: 'x' in -x"
+	if strings.HasPrefix(msg, "unknown flag:") || strings.HasPrefix(msg, "unknown shorthand flag:") {
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: msg,
+			Why:  "cbx didn't recognise that flag for the command you ran",
+			Fix:  "run the command with --help to see its flags (e.g. `cbx audit aws --help`)",
+			Code: "E_UNKNOWN_FLAG",
+		}))
+	}
+	return err
+}
+
+// extractQuoted pulls the first double-quoted segment out of s, used to
+// extract the offending command name from cobra's error messages.
+func extractQuoted(s string) string {
+	i := strings.Index(s, "\"")
+	if i < 0 {
+		return s
+	}
+	j := strings.Index(s[i+1:], "\"")
+	if j < 0 {
+		return s[i+1:]
+	}
+	return s[i+1 : i+1+j]
+}
+
+func quote(s string) string { return "\"" + s + "\"" }
+
+// renderUpdateBanner builds the end-of-run "update available" card. Goes
+// to stderr, suppressed under quiet/JSON/CI by shouldShowUpdateBanner.
+// The chip + dim arrow + accent on the new version reads at a glance,
+// and the footer suggests the exact command to run.
+func renderUpdateBanner(current, latest string) string {
+	from := output.Dim.Render(current)
+	arrow := output.Dim.Render(" " + output.Symbol("arrow") + " ")
+	to := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42")).Render(latest)
+	if !output.Enabled() {
+		to = latest
+	}
+	card := output.Card{
+		Label: output.Chip("UPDATE", lipgloss.Color("231"), lipgloss.Color("22")),
+		Title: "new cbx release available",
+		Rows: []output.CardRow{
+			{Key: "version", Value: from + arrow + to},
+		},
+		Footer: output.Dim.Render(output.Symbol("arrow") + " run ") +
+			"cbx upgrade" +
+			output.Dim.Render(" to install"),
+	}
+	return card.Render()
+}
 
 // Execute builds the root command, runs the background update check, executes
 // the CLI, and displays the update banner if applicable.
@@ -46,6 +127,17 @@ func Execute() error {
 	}()
 
 	err := root.Execute()
+	err = beautifyCobraError(root, err)
+
+	// Flush any advisories the run accumulated but didn't render inline.
+	// Audit's RenderPlain drains its own; this catches notices buffered
+	// by other commands (cbx config / cbx llm / cbx plan) so they still
+	// surface to the user instead of vanishing at process exit.
+	if !quietFlag && !output.JSON() {
+		if adv := output.FlushAdvisories(); adv != "" {
+			fmt.Fprint(os.Stderr, "\n"+adv)
+		}
+	}
 
 	// Report the error to Sentry (no-op when telemetry is disabled).
 	// Exit-code carriers (--llm cost warning, severity-based exits)
@@ -63,7 +155,7 @@ func Execute() error {
 	select {
 	case result := <-updateResult:
 		if result != nil && result.HasUpdate && shouldShowUpdateBanner() {
-			fmt.Fprintf(os.Stderr, "\nA new version of cbx is available: %s → %s\nRun `cbx upgrade` to update.\n", Version, result.LatestVersion)
+			fmt.Fprint(os.Stderr, "\n"+renderUpdateBanner(Version, result.LatestVersion))
 		}
 	default:
 		// Check hasn't completed yet; don't wait.

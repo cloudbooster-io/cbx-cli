@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
@@ -176,15 +177,23 @@ func newConfigListCmd() *cobra.Command {
 				}
 				return output.PrintJSON(rows, nil)
 			}
-			tbl := output.NewTable([]string{"Key", "Value"})
+			card := output.Card{
+				Label: output.Chip("CONFIG", lipgloss.Color("231"), lipgloss.Color("236")),
+				Title: "cbx settings",
+			}
 			for _, k := range names {
 				v := keys[k].get(cfg)
 				if v == "" {
-					v = "—"
+					v = output.Dim.Render("—")
+				} else if output.Enabled() {
+					v = lipgloss.NewStyle().Bold(true).Render(v)
 				}
-				tbl.AddRow(k, v)
+				card.AddRow(k, v)
 			}
-			fmt.Fprint(cmd.OutOrStdout(), tbl.Render())
+			card.Footer = output.Dim.Render(output.Symbol("arrow") + " ") +
+				"cbx config set <key> <value>" +
+				output.Dim.Render(" to change a setting · `cbx config get <key>` for raw stdout")
+			fmt.Fprint(cmd.OutOrStdout(), card.Render())
 			return nil
 		},
 	}

@@ -9,12 +9,87 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
+
+// llmRow is the shared shape across the three `llm list` surfaces (api,
+// cli, combined). We collect rows first, then hand them to the same card
+// renderer so the visual treatment is identical regardless of which list
+// the user asked for.
+type llmRow struct {
+	Kind    string // "api" | "cli"
+	Name    string
+	Detail  string
+	Default bool
+	OK      bool // for cli executors: detected on PATH; for api: implicit true
+}
+
+// renderLLMProvidersCard renders the providers/executors list using the
+// shared Card layout — kind chip + name (bold) + status chip + dim
+// detail. Empty list returns a "no providers" card with a one-command
+// hint. Kind chips use distinct colors so api/cli rows are scannable.
+func renderLLMProvidersCard(rows []llmRow, title string, emptyHint string) string {
+	if len(rows) == 0 {
+		card := output.Card{
+			Label: output.Chip("LLM", lipgloss.Color("231"), lipgloss.Color("236")),
+			Title: title,
+			Rows: []output.CardRow{
+				{Key: "", Value: output.Dim.Render("no providers configured")},
+			},
+			Footer: output.Dim.Render(output.Symbol("arrow") + " ") + emptyHint,
+		}
+		return card.Render()
+	}
+
+	// Compute the name column width so detail strings align.
+	nameW := 0
+	for _, r := range rows {
+		if w := lipgloss.Width(r.Name); w > nameW {
+			nameW = w
+		}
+	}
+
+	card := output.Card{
+		Label: output.Chip("LLM", lipgloss.Color("231"), lipgloss.Color("236")),
+		Title: title,
+	}
+	for _, r := range rows {
+		kindChip := llmKindChip(r.Kind)
+		name := r.Name + strings.Repeat(" ", nameW-lipgloss.Width(r.Name))
+		nameStyled := lipgloss.NewStyle().Bold(true).Render(name)
+		if !output.Enabled() {
+			nameStyled = name
+		}
+		status := ""
+		switch {
+		case r.Default:
+			status = " " + output.Chip("DEFAULT", lipgloss.Color("231"), lipgloss.Color("22"))
+		case r.Kind == "cli" && !r.OK:
+			status = " " + output.Chip("NOT FOUND", lipgloss.Color("231"), lipgloss.Color("124"))
+		}
+		row := fmt.Sprintf("%s  %s%s  %s", kindChip, nameStyled, status, output.Dim.Render(r.Detail))
+		card.Rows = append(card.Rows, output.CardRow{Key: "", Value: row})
+	}
+	return card.Render()
+}
+
+// llmKindChip returns the small "api" / "cli" tag with distinct hues so
+// the two row types are immediately separable when scanning the list.
+func llmKindChip(kind string) string {
+	switch kind {
+	case "api":
+		return output.Chip("API", lipgloss.Color("231"), lipgloss.Color("25")) // blue
+	case "cli":
+		return output.Chip("CLI", lipgloss.Color("231"), lipgloss.Color("57")) // purple
+	default:
+		return output.Chip(strings.ToUpper(kind), lipgloss.Color("231"), lipgloss.Color("240"))
+	}
+}
 
 // cliExecutor describes a known local LLM CLI that cbx can shell out to.
 // Adding a new executor here makes it visible to 'cbx llm cli list/test' and
@@ -263,17 +338,15 @@ func newLLMAPIListCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"providers": rows}, nil)
 			}
-			if len(rows) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No api providers configured. Use: cbx llm api login <provider>")
-				return nil
-			}
+			cardRows := make([]llmRow, 0, len(rows))
 			for _, r := range rows {
-				marker := ""
-				if r.Default {
-					marker = " (default)"
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s%s — %s\n", r.Name, marker, r.Model)
+				cardRows = append(cardRows, llmRow{
+					Kind: "api", Name: r.Name, Detail: r.Model, Default: r.Default, OK: true,
+				})
 			}
+			fmt.Fprint(cmd.OutOrStdout(),
+				renderLLMProvidersCard(cardRows, "api providers",
+					"run `cbx llm api login <provider>` (e.g. claude, openai) to configure one"))
 			return nil
 		},
 	}
@@ -360,13 +433,19 @@ func newLLMCLIListCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"executors": rows}, nil)
 			}
+			cardRows := make([]llmRow, 0, len(rows))
 			for _, r := range rows {
-				status := "not installed"
-				if r.Detected {
-					status = r.Path
+				detail := r.Vendor + " · " + r.Path
+				if !r.Detected {
+					detail = r.Vendor + " · not on PATH"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%-12s — %s [%s]\n", r.Name, r.Vendor, status)
+				cardRows = append(cardRows, llmRow{
+					Kind: "cli", Name: r.Name, Detail: detail, OK: r.Detected,
+				})
 			}
+			fmt.Fprint(cmd.OutOrStdout(),
+				renderLLMProvidersCard(cardRows, "cli executors",
+					"install Claude Code or OpenAI Codex CLI and re-run `cbx llm cli list`"))
 			return nil
 		},
 	}
@@ -475,17 +554,21 @@ func newLLMListCmd() *cobra.Command {
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"providers": entries, "default": cfg.LLM.Default}, nil)
 			}
-			if len(entries) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No LLM providers configured.")
-				return nil
-			}
+			cardRows := make([]llmRow, 0, len(entries))
 			for _, e := range entries {
-				marker := ""
-				if e.Default {
-					marker = " (default)"
+				ok := true
+				if e.Kind == "cli" {
+					// "not installed" detail signals PATH miss; flip the OK
+					// bit so the row gets the red NOT FOUND chip.
+					ok = e.Detail != "not installed"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%-4s %s%s — %s\n", e.Kind, e.Name, marker, e.Detail)
+				cardRows = append(cardRows, llmRow{
+					Kind: e.Kind, Name: e.Name, Detail: e.Detail, Default: e.Default, OK: ok,
+				})
 			}
+			fmt.Fprint(cmd.OutOrStdout(),
+				renderLLMProvidersCard(cardRows, "providers",
+					"run `cbx llm api login <name>` for an API key or install a CLI executor (see `cbx llm cli list`)"))
 			return nil
 		},
 	}

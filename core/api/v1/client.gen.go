@@ -66,8 +66,19 @@ type Project struct {
 
 // User defines model for User.
 type User struct {
-	Email *string `json:"email,omitempty"`
-	Id    *string `json:"id,omitempty"`
+	Email *string  `json:"email,omitempty"`
+	Id    *string  `json:"id,omitempty"`
+	Name  *string  `json:"name,omitempty"`
+	Org   *UserOrg `json:"org,omitempty"`
+}
+
+// UserOrg is the organisation the presented API key is bound to.
+// Surfaced inline on GET /v1/me so `cbx auth status` can render it
+// without a second call to /v1/me/orgs.
+type UserOrg struct {
+	Id   *string `json:"id,omitempty"`
+	Name *string `json:"name,omitempty"`
+	Slug *string `json:"slug,omitempty"`
 }
 
 // GetEnvironmentLogsParams defines parameters for GetEnvironmentLogs.

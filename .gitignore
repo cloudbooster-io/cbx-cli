@@ -28,6 +28,18 @@ coverage.*
 .direnv/
 .envrc.local
 
-# Audit report scratch — `cbx audit` writes <basename>_audit_report.md to CWD;
-# these are command outputs, not source. Keep nested ones (testdata, fixtures).
-/*_audit_report.md
+# Audit report scratch — `cbx audit` writes <basename>_audit_report.{md,html,svg,json}
+# (plus .replay.* and .state.json variants) to CWD; these are command outputs,
+# not source. Keep nested ones (testdata, fixtures).
+/*_audit_report.*
+
+# Diagram / blueprint scratch — iterative screenshots from local UX work.
+/bp-*.png
+/real-diagram*.png
+/REPO_TOUR.html
+
+# Browser-automation session logs (playwright-mcp).
+/.playwright-mcp/
+
+# Editor / scratch backups.
+*.bak

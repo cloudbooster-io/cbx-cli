@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
@@ -62,19 +63,42 @@ func newTelemetryStatusCmd() *cobra.Command {
 					"prompted_at": cfg.Telemetry.PromptedAt,
 				}, nil)
 			}
-			state := "disabled"
-			if cfg.Telemetry.Enabled {
-				state = "enabled"
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Telemetry: %s\n", state)
-			if cfg.Telemetry.PromptedAt != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Last asked: %s\n", cfg.Telemetry.PromptedAt)
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Last asked: never (will prompt on next interactive run)")
-			}
+			fmt.Fprint(cmd.OutOrStdout(), renderTelemetryStatusCard(cfg.Telemetry.Enabled, cfg.Telemetry.PromptedAt))
 			return nil
 		},
 	}
+}
+
+// renderTelemetryStatusCard draws the current telemetry state as a card
+// with a green/red status chip + the last-prompted timestamp + a hint
+// for the toggle command. Mirrors the auth/version/doctor surfaces so
+// the user reads the same visual pattern.
+func renderTelemetryStatusCard(enabled bool, promptedAt string) string {
+	var stateChip, toggleCmd string
+	if enabled {
+		stateChip = output.Chip("ENABLED", lipgloss.Color("231"), lipgloss.Color("22"))
+		toggleCmd = "cbx telemetry disable"
+	} else {
+		stateChip = output.Chip("DISABLED", lipgloss.Color("231"), lipgloss.Color("124"))
+		toggleCmd = "cbx telemetry enable"
+	}
+	asked := promptedAt
+	if asked == "" {
+		asked = output.Dim.Render("never · will prompt on next interactive run")
+	} else {
+		asked = output.Dim.Render(asked)
+	}
+	card := output.Card{
+		Label: output.Chip("TELEMETRY", lipgloss.Color("231"), lipgloss.Color("236")),
+		Title: "anonymous error reports & usage metrics",
+		Rows: []output.CardRow{
+			{Key: "state", Value: stateChip},
+			{Key: "last asked", Value: asked},
+		},
+		Footer: output.Dim.Render(output.Symbol("arrow") + " ") + toggleCmd +
+			output.Dim.Render(" to change · `cbx telemetry` for what's sent and what isn't"),
+	}
+	return card.Render()
 }
 
 func newTelemetryEnableCmd() *cobra.Command {

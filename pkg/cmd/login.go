@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	v1 "gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
@@ -119,12 +120,23 @@ func runStatus(cmd *cobra.Command) error {
 		return fmt.Errorf("keyring: %w", err)
 	}
 
+	// Check for token presence via Keychain metadata first. On macOS this
+	// does not trigger the Keychain access prompt that a full Retrieve
+	// would, so logged-out users see "not logged in" without a dialog.
+	if present, _ := auth.HasToken(kr); !present {
+		if output.JSON() {
+			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
+		}
+		fmt.Print(renderNotLoggedInCard())
+		return nil
+	}
+
 	token, err := auth.LoadToken(kr)
 	if err != nil {
 		if output.JSON() {
 			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
 		}
-		fmt.Println("Not logged in.")
+		fmt.Print(renderNotLoggedInCard())
 		return nil
 	}
 
@@ -133,7 +145,7 @@ func runStatus(cmd *cobra.Command) error {
 		if output.JSON() {
 			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
 		}
-		fmt.Println("Not logged in.")
+		fmt.Print(renderNotLoggedInCard())
 		return nil
 	}
 
@@ -203,7 +215,20 @@ func runStatus(cmd *cobra.Command) error {
 		expiry = token.Expiry.Format(time.RFC3339)
 	}
 
-	org := cfg.DefaultOrg
+	// Prefer the org returned by the server (always reflects the token's
+	// current default_organisation_id), then fall back to the local
+	// default-org config, then a dash for "not selected yet".
+	org := ""
+	if resp.JSON200 != nil && resp.JSON200.Org != nil {
+		if resp.JSON200.Org.Slug != nil && *resp.JSON200.Org.Slug != "" {
+			org = *resp.JSON200.Org.Slug
+		} else if resp.JSON200.Org.Name != nil {
+			org = *resp.JSON200.Org.Name
+		}
+	}
+	if org == "" {
+		org = cfg.DefaultOrg
+	}
 	if org == "" {
 		org = "—"
 	}
@@ -218,14 +243,47 @@ func runStatus(cmd *cobra.Command) error {
 		}, nil)
 	}
 
-	tbl := output.NewTable([]string{"Field", "Value"})
-	tbl.AddRow("Account", email)
-	tbl.AddRow("Org", org)
-	tbl.AddRow("Project", "—")
-	tbl.AddRow("API key fingerprint", fingerprint)
-	tbl.AddRow("Expiry", expiry)
-	fmt.Print(tbl.Render())
+	fmt.Print(renderLoggedInCard(email, org, fingerprint, expiry))
 	return nil
+}
+
+// renderNotLoggedInCard is the friendly "not logged in" surface. Two
+// lines: a status chip + headline, then a dim hint pointing at the
+// login command. Stays small so it doesn't dwarf the absence of state.
+func renderNotLoggedInCard() string {
+	card := output.Card{
+		Label: output.Chip("AUTH", lipgloss.Color("231"), lipgloss.Color("236")),
+		Title: "not logged in",
+		Rows: []output.CardRow{
+			{Key: "account", Value: output.Dim.Render("—")},
+		},
+		Footer: output.Dim.Render(output.Symbol("arrow") + " run ") +
+			"cbx login" +
+			output.Dim.Render(" to authenticate (or `cbx login --device-code` for headless / SSH)"),
+	}
+	return card.Render()
+}
+
+// renderLoggedInCard replaces the old two-column Field/Value table with a
+// framed identity card. Account/org are the headline; token fingerprint
+// and expiry are dim metadata. Mirrors the audit-aws header so the user
+// learns one design pattern.
+func renderLoggedInCard(email, org, fingerprint, expiry string) string {
+	if email == "" {
+		email = output.Dim.Render("—")
+	}
+	card := output.Card{
+		Label: output.Chip("AUTH", lipgloss.Color("231"), lipgloss.Color("22")),
+		Title: "logged in",
+		Rows: []output.CardRow{
+			{Key: "account", Value: email},
+			{Key: "org", Value: org},
+			{Key: "project", Value: output.Dim.Render("—")},
+			{Key: "token", Value: output.Dim.Render(fingerprint)},
+			{Key: "expires", Value: output.Dim.Render(expiry)},
+		},
+	}
+	return card.Render()
 }
 
 func newLoginCmd() *cobra.Command {

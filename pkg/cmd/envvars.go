@@ -8,11 +8,11 @@ import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
 
-// init wires the config-package deprecation warnings to go through the
-// shared output writer, so they respect --quiet and don't get tangled
-// up with JSON output. The default sink in internal/config writes to
-// stderr directly; here we replace it with one that does the same but
-// is silent in --quiet and JSON modes.
+// init wires the config-package notices through the shared output writer.
+// The deprecation warning still streams to stderr (it's environment-level
+// and useful to see early). The legacy-config-dir nudge moves into the
+// advisory buffer so the run finishes with a clean advisories card
+// instead of a leading "notice: ..." line above everything else.
 func init() {
 	config.DeprecatedEnvWarn = func(oldName, newName string) {
 		if output.IsQuiet() || output.JSON() {
@@ -26,8 +26,10 @@ func init() {
 		if output.IsQuiet() || output.JSON() {
 			return
 		}
-		fmt.Fprintf(os.Stderr,
-			"notice: using legacy config dir %s; consider moving it to %s (XDG-compliant)\n",
-			legacy, modern)
+		output.Advise(output.Advisory{
+			Code:  "legacy-config-dir",
+			Title: fmt.Sprintf("using legacy config dir %s", legacy),
+			Hint:  fmt.Sprintf("mv %s %s", legacy, modern),
+		})
 	}
 }
