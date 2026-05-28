@@ -3,6 +3,8 @@ package output
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ErrorDetail holds the pieces of a structured error message.
@@ -14,23 +16,49 @@ type ErrorDetail struct {
 	DocURL string // Optional link to documentation
 }
 
-// RenderError returns the three-line formatted error string.
-//   Line 1: Error: <What>  (with optional code in parens)
-//   Line 2:   → <Why>
-//   Line 3:   ▸ <Fix>
-//   Line 4:   Learn more: <DocURL>  (optional)
+// RenderError builds the structured error block: a red left-rule gutter
+// + ERROR chip + bold What headline, dim "why" line with arrow, and a
+// success-coloured fix line. Mirrors the design language of finding
+// cards so users learn one visual pattern across the CLI.
 func RenderError(e ErrorDetail) string {
 	var sb strings.Builder
 
-	prefix := Error.Render("Error")
-	if e.Code != "" {
-		prefix = fmt.Sprintf("%s %s", prefix, Dim.Render(fmt.Sprintf("(%s)", e.Code)))
+	red := lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	gutter := red.Render("▎ ")
+	if !Enabled() {
+		gutter = "  "
 	}
-	sb.WriteString(fmt.Sprintf("%s: %s\n", prefix, e.What))
-	sb.WriteString(fmt.Sprintf("  %s %s\n", Symbol("arrow"), e.Why))
-	sb.WriteString(fmt.Sprintf("  %s %s\n", Symbol("bullet"), e.Fix))
+
+	// Title row: gutter + chip + bold "What"
+	chip := Chip("ERROR", lipgloss.Color("231"), lipgloss.Color("124"))
+	what := e.What
+	if Enabled() {
+		what = lipgloss.NewStyle().Bold(true).Render(what)
+	}
+	sb.WriteString(gutter + chip + "  " + what + "\n")
+
+	// Optional code on its own dim row, indented under the title.
+	if e.Code != "" {
+		sb.WriteString(gutter + "  " + Dim.Render(e.Code) + "\n")
+	}
+
+	// Blank separator line keeps the block from feeling crammed.
+	sb.WriteString(gutter + "\n")
+
+	if e.Why != "" {
+		sb.WriteString(gutter + "  " + Dim.Render(Symbol("arrow")+" ") + e.Why + "\n")
+	}
+	if e.Fix != "" {
+		green := lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+		marker := Symbol("bullet")
+		if Enabled() {
+			marker = green.Render(marker)
+		}
+		sb.WriteString(gutter + "  " + marker + " " + e.Fix + "\n")
+	}
 	if e.DocURL != "" {
-		sb.WriteString(fmt.Sprintf("\n  %s %s\n", Dim.Render("Learn more:"), e.DocURL))
+		sb.WriteString(gutter + "\n")
+		sb.WriteString(gutter + "  " + Dim.Render("learn more · ") + Hyperlink(e.DocURL, e.DocURL) + "\n")
 	}
 
 	return sb.String()

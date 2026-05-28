@@ -32,8 +32,8 @@ func TestHelpTemplate(t *testing.T) {
 	if !strings.Contains(out, "Usage:") {
 		t.Fatal("missing Usage section")
 	}
-	if !strings.Contains(out, "Learn more: https://docs.cloudbooster.io") {
-		t.Fatal("missing Learn more footer")
+	if !strings.Contains(out, "https://docs.cloudbooster.io") {
+		t.Fatal("missing docs URL footer")
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // AWSDiscoveryUI renders a live multi-line progress display for the
@@ -280,7 +282,7 @@ func (u *AWSDiscoveryUI) renderDiscover() {
 	bar := renderBar(u.jobsDone, u.jobsTotal, 28)
 	eta := renderETA(u.startTime, u.jobsDone, u.jobsTotal)
 
-	headline := fmt.Sprintf("%s %s", frame, u.phase)
+	headline := fmt.Sprintf("%s %s %s", Info.Render(frame), phaseChip(u.phase), Dim.Render(u.phase))
 	if u.identity != "" {
 		headline += "  " + Dim.Render("· "+shortARN(u.identity))
 	}
@@ -382,8 +384,10 @@ func (u *AWSDiscoveryUI) renderDiscover() {
 func (u *AWSDiscoveryUI) renderScout() {
 	frame := defaultFrames[u.spinIdx%len(defaultFrames)]
 
-	headline := fmt.Sprintf("%s scouting %d regions for activity  %s",
-		frame, u.scoutTotal,
+	headline := fmt.Sprintf("%s %s  %s  %s",
+		Info.Render(frame),
+		phaseChip("scout"),
+		Dim.Render(fmt.Sprintf("scouting %d regions for activity", u.scoutTotal)),
 		Dim.Render(fmt.Sprintf("(%d/%d)", u.scoutDone, max1(u.scoutTotal))),
 	)
 	if u.identity != "" {
@@ -497,10 +501,11 @@ func (u *AWSDiscoveryUI) maybeNonStyledLine() {
 }
 
 // renderBar builds a fixed-width filled/empty bar. Total ≤ 0 renders
-// an indeterminate placeholder.
+// an indeterminate placeholder. Filled segments use the success colour
+// so the bar reads as a positive accumulator instead of pure ASCII.
 func renderBar(done, total, width int) string {
 	if total <= 0 {
-		return "[" + strings.Repeat("·", width) + "]"
+		return Dim.Render(strings.Repeat("·", width))
 	}
 	pct := float64(done) / float64(total)
 	if pct > 1 {
@@ -510,7 +515,33 @@ func renderBar(done, total, width int) string {
 	if filled > width {
 		filled = width
 	}
-	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
+	filledSeg := strings.Repeat("▰", filled)
+	emptySeg := strings.Repeat("▱", width-filled)
+	if Enabled() {
+		filledSeg = Success.Render(filledSeg)
+		emptySeg = Dim.Render(emptySeg)
+	}
+	return filledSeg + emptySeg
+}
+
+// phaseChip returns a small coloured tag for the named discovery phase.
+// Distinct hues let scout / discover / done read at a glance even before
+// the user parses the rest of the headline.
+func phaseChip(phase string) string {
+	switch {
+	case strings.Contains(phase, "auth"):
+		return Chip("AUTH", chipInfoFG, chipInfoBG)
+	case strings.Contains(phase, "scout"):
+		return Chip("SCOUT", chipInfoFG, lipgloss.Color("57")) // purple
+	case strings.Contains(phase, "region"):
+		return Chip("REGIONS", chipInfoFG, chipInfoBG)
+	case strings.Contains(phase, "discover"):
+		return Chip("DISCOVER", chipInfoFG, lipgloss.Color("25")) // deep blue
+	case strings.Contains(phase, "done"):
+		return Chip("DONE", chipInfoFG, lipgloss.Color("22")) // green
+	default:
+		return Chip(strings.ToUpper(phase), chipInfoFG, lipgloss.Color("240"))
+	}
 }
 
 // renderETA returns a mm:ss string of estimated time remaining, or

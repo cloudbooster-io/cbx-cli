@@ -33,6 +33,17 @@ func Configure(noColor, quiet bool) {
 	refreshStyles()
 }
 
+// ForceStyledForTesting bypasses TTY detection and pretends stdout is a
+// terminal so styled output renders even from go test. Reserved for the
+// design showcase and a handful of golden tests — production code paths
+// must not call it.
+func ForceStyledForTesting() {
+	isTerminalFn = func() bool { return true }
+	cfgNoColor = false
+	cfgQuiet = false
+	refreshStyles()
+}
+
 // Enabled reports whether styled (color/ANSI) output should be emitted.
 // It returns false when any of the following are true:
 //   - --no-color was passed

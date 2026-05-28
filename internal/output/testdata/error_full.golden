@@ -1,5 +1,7 @@
-Error (E_CONFIG): config file not found
-  -> expected ~/.cbx/config.json
-  > run 'cbx login' to create one
-
-  Learn more: https://docs.cloudbooster.io/errors/E_CONFIG
+  [ERROR]  config file not found
+    E_CONFIG
+  
+    -> expected ~/.cbx/config.json
+    > run 'cbx login' to create one
+  
+    learn more · https://docs.cloudbooster.io/errors/E_CONFIG
