@@ -16,15 +16,15 @@ brew install cbx-cli
 ## Quick start
 
 ```bash
-# Log in to CloudBooster
+# (optional) Log in to CloudBooster — not required for `cbx plan`
 cbx login
 
-# Log in to your LLM provider
-cbx llm login claude
+# Configure an LLM provider (bring your own API key)
+cbx llm api login claude        # or: codex
 
 # Generate an architecture plan
 cbx plan "static site with auth"
-# → writes plan.md and plan.d2 to the current directory
+# → writes plan.md + plan.mermaid to the current directory (--diagram d2 for D2)
 
 # Audit a live AWS account (read-only, via the AWS SDK)
 cbx audit aws
@@ -43,10 +43,10 @@ cbx audit aws prod --region us-east-1 --region us-west-2
 | `cbx login` | Log in to CloudBooster |
 | `cbx logout` | Log out of CloudBooster |
 | `cbx status` | Show authentication status |
-| `cbx llm login <provider>` | Log in to an LLM provider (claude, openai, ollama) |
-| `cbx llm logout <provider>` | Log out of an LLM provider |
-| `cbx llm list` | List configured LLM providers |
-| `cbx llm default <provider>` | Set the default LLM provider |
+| `cbx llm api login <claude\|codex>` | Store an API key for an LLM provider (bring your own key) |
+| `cbx llm cli list` | List local CLI executors (Claude Code, Codex CLI) detected on PATH |
+| `cbx llm list` | Show all configured API providers and CLI executors |
+| `cbx llm default <name>` | Set the default LLM provider for plan/audit |
 | `cbx plan "<intent>"` | Generate an architecture plan |
 | `cbx audit aws [profile]` | Audit a live AWS account (read-only, via the AWS SDK; grounded in CloudBooster's AWS knowledge) |
 | `cbx version` | Print version |

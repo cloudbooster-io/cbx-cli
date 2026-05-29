@@ -7,8 +7,8 @@ It bundles the following third-party components:
 
 - Mermaid (https://github.com/mermaid-js/mermaid) — MIT License.
   A minified runtime is embedded as internal/assets/mermaid.min.js.gz and
-  inlined into generated HTML diagram previews. License text accompanies the
-  upstream distribution (mermaid.min.js.LICENSE.txt).
+  inlined into generated HTML diagram previews. Mermaid is distributed under
+  the MIT License: https://github.com/mermaid-js/mermaid/blob/develop/LICENSE
 
 - AWS Architecture Icons (https://aws.amazon.com/architecture/icons/) —
   used for visualization in accordance with AWS's icon terms (attribution

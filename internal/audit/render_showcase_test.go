@@ -159,7 +159,7 @@ func TestRenderPlainShowcase(t *testing.T) {
 		Label: output.Chip("AWS", lipgloss.Color("231"), lipgloss.Color("236")),
 		Title: "audit · 123456789012",
 		Rows: []output.CardRow{
-			{Key: "identity", Value: "…/AWSReservedSSO_AdministratorAccess_…/radek.forgac"},
+			{Key: "identity", Value: "…/AWSReservedSSO_AdministratorAccess_…/jane.doe"},
 			{Key: "regions", Value: "eu-central-1"},
 			{Key: "resources", Value: "33"},
 			{Key: "components", Value: "31  " + output.Dim.Render("(1 tag · 30 cb-primitive)")},
