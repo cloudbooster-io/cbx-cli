@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
 )
 
 // Progress receives progress updates from Runner.
@@ -22,11 +21,26 @@ type Progress interface {
 type Runner struct {
 	cfg            *config.Config
 	activeProvider string
+	// token is the CloudBooster bearer token used for compose API calls.
+	// It is injected by the caller (resolved at the CLI composition root via
+	// auth.AccessToken()); an empty token falls back to mock/anonymous mode.
+	token string
+	// llmToken resolves the LLM provider credential for a given provider name.
+	// It too is injected by the composition root, as a resolver (not a fixed
+	// string) so the active provider can change mid-session — e.g. via the
+	// REPL's /llm command — and still resolve the right credential. A nil
+	// resolver yields an empty token: fine for offline providers, and the rest
+	// degrade to the "stream unavailable" path. Together with token, this is
+	// what keeps the runner from ever reading the OS keyring itself.
+	llmToken func(provider string) string
 }
 
-// NewRunner creates a new runner.
-func NewRunner(cfg *config.Config, activeProvider string) *Runner {
-	return &Runner{cfg: cfg, activeProvider: activeProvider}
+// NewRunner creates a new runner. token is the CloudBooster bearer token
+// (empty = anonymous/mock) and llmToken resolves the per-provider LLM
+// credential; both are resolved at the composition root rather than having the
+// runner reach into the OS keyring. A nil llmToken resolves to an empty token.
+func NewRunner(cfg *config.Config, activeProvider, token string, llmToken func(provider string) string) *Runner {
+	return &Runner{cfg: cfg, activeProvider: activeProvider, token: token, llmToken: llmToken}
 }
 
 // Run executes the full pipeline once and returns the resulting plan.
@@ -46,7 +60,7 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	progress.Token("**Proposing components...**\n\n")
 	progress.Commit()
 
-	proposer := NewComposeClient(r.cfg.APIURL, loadCBToken())
+	proposer := NewComposeClient(r.cfg.APIURL, r.token)
 	components, err := proposer.Propose(ctx, intent)
 	if err != nil {
 		components = defaultComponents()
@@ -62,7 +76,11 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	progress.PhaseStart(2, 3, "Thinking")
 	progress.SetStatus(fmt.Sprintf("thinking | %s", provider), "")
 
-	llm := NewLLMCaller(provCfg)
+	var llmToken string
+	if r.llmToken != nil {
+		llmToken = r.llmToken(provider)
+	}
+	llm := NewLLMCaller(provCfg, llmToken)
 	prompt := buildLLMPrompt(intent, components)
 
 	if err := llm.Stream(ctx, prompt, func(token string) {
@@ -90,20 +108,6 @@ func GetProvider(session *Session, cfg *config.Config) string {
 		return session.ActiveProvider
 	}
 	return cfg.LLM.Default
-}
-
-// loadCBToken returns the user's CloudBooster access token from the keyring,
-// or empty string if not authenticated. Empty token falls back to mock mode.
-func loadCBToken() string {
-	kr, err := auth.NewKeyring()
-	if err != nil {
-		return ""
-	}
-	tok, err := auth.LoadToken(kr)
-	if err != nil || tok == nil {
-		return ""
-	}
-	return tok.AccessToken
 }
 
 func buildLLMPrompt(intent string, components []Component) string {

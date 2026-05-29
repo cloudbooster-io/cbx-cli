@@ -15,7 +15,7 @@ import (
 )
 
 // REPL runs the interactive planning TUI.
-func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, initialIntent string, noTUI bool) error {
+func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, initialIntent string, noTUI bool, token string, llmToken func(provider string) string) error {
 	m := chat.NewModel()
 	m.SetStreamRenderer(chat.NewStreamRenderer())
 
@@ -84,7 +84,7 @@ func REPL(session *Session, cfg *config.Config, in io.Reader, out io.Writer, ini
 	m.SetContent(sb.String())
 
 	var p *tea.Program
-	pipeline := NewPipeline(nil, cfg, session)
+	pipeline := NewPipeline(nil, cfg, session, token, llmToken)
 
 	// Submit handler for natural-language input.
 	// In TUI mode we run the async streaming pipeline; in pipe mode we fall

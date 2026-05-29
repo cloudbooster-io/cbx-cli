@@ -80,7 +80,7 @@ func TestPipelineFullFlow(t *testing.T) {
 
 	sender := &testSender{}
 	session := NewSession(".")
-	pipeline := NewPipeline(sender, cfg, session)
+	pipeline := NewPipeline(sender, cfg, session, "", nil)
 	pipeline.Start("static site")
 
 	// Wait for pipeline to finish.
@@ -177,7 +177,7 @@ func TestPipelineCancel(t *testing.T) {
 
 	sender := &testSender{}
 	session := NewSession(".")
-	pipeline := NewPipeline(sender, cfg, session)
+	pipeline := NewPipeline(sender, cfg, session, "", nil)
 	pipeline.Start("test intent")
 
 	// Cancel almost immediately.
@@ -213,7 +213,7 @@ func TestPipelineFallbackWhenAPIUnreachable(t *testing.T) {
 
 	sender := &testSender{}
 	session := NewSession(".")
-	pipeline := NewPipeline(sender, cfg, session)
+	pipeline := NewPipeline(sender, cfg, session, "", nil)
 	pipeline.Start("static site with auth")
 
 	time.Sleep(200 * time.Millisecond)

@@ -241,6 +241,23 @@ components:
           type: string
         email:
           type: string
+        name:
+          type: string
+        org:
+          $ref: '#/components/schemas/UserOrg'
+    UserOrg:
+      type: object
+      description: |-
+        is the organisation the presented API key is bound to.
+        Surfaced inline on GET /v1/me so `cbx auth status` can render it
+        without a second call to /v1/me/orgs.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
     Project:
       type: object
       properties:

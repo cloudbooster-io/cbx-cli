@@ -60,8 +60,10 @@ func envClient() (*v1.APIClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
+	token := auth.AccessToken()
 	client, err := v1.NewAPIClient(cfg, func(o *v1.ClientOptions) {
 		o.Quiet = quietFlag
+		o.Token = token
 	})
 	if err != nil {
 		return nil, fmt.Errorf("creating API client: %w", err)

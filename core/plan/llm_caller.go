@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
 )
 
 // LLMCaller streams prompts to the user's configured LLM provider.
@@ -20,15 +20,23 @@ type LLMCaller struct {
 	client   *http.Client
 }
 
-// NewLLMCaller creates a new LLM streaming caller. Token is fetched from the
-// keychain for the given provider; an empty token is acceptable for offline
-// providers like ollama.
-func NewLLMCaller(provider config.LLMProvider) *LLMCaller {
-	token, _ := llm.GetToken(provider.Name)
+// NewLLMCaller creates a new LLM streaming caller. token is the provider
+// credential, resolved and injected by the caller (the CLI composition root)
+// instead of being read from the OS keychain here. Keeping the keychain read
+// out of core/plan is what lets library consumers and unit tests construct the
+// plan stack without triggering a keychain authorization prompt. An empty
+// token is acceptable for offline providers like ollama.
+func NewLLMCaller(provider config.LLMProvider, token string) *LLMCaller {
 	return &LLMCaller{
 		Provider: provider,
 		Token:    token,
-		client:   &http.Client{},
+		// ResponseHeaderTimeout bounds how long we wait for the provider to
+		// start responding (the hang case: an unresponsive endpoint with a
+		// background context), without capping the total duration of a
+		// legitimately long token stream the way http.Client.Timeout would.
+		client: &http.Client{
+			Transport: &http.Transport{ResponseHeaderTimeout: 60 * time.Second},
+		},
 	}
 }
 
@@ -48,10 +56,10 @@ func (c *LLMCaller) Stream(ctx context.Context, prompt string, onToken func(stri
 
 func (c *LLMCaller) streamClaude(ctx context.Context, prompt string, onToken func(string)) error {
 	body, err := json.Marshal(map[string]any{
-		"model":       c.Provider.Model,
-		"max_tokens":  1024,
-		"messages":    []map[string]string{{"role": "user", "content": prompt}},
-		"stream":      true,
+		"model":      c.Provider.Model,
+		"max_tokens": 1024,
+		"messages":   []map[string]string{{"role": "user", "content": prompt}},
+		"stream":     true,
 	})
 	if err != nil {
 		return fmt.Errorf("marshalling request: %w", err)

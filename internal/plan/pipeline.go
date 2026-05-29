@@ -20,18 +20,25 @@ type MessageSender interface {
 
 // Pipeline orchestrates the propose → LLM → resolve flow.
 type Pipeline struct {
-	sender  MessageSender
-	cfg     *config.Config
-	session *Session
-	cancel  context.CancelFunc
+	sender   MessageSender
+	cfg      *config.Config
+	session  *Session
+	token    string
+	llmToken func(provider string) string
+	cancel   context.CancelFunc
 }
 
-// NewPipeline creates a pipeline bound to a message sender.
-func NewPipeline(sender MessageSender, cfg *config.Config, session *Session) *Pipeline {
+// NewPipeline creates a pipeline bound to a message sender. token is the
+// CloudBooster bearer token (empty = anonymous/mock) and llmToken resolves the
+// per-provider LLM credential; both are resolved at the composition root and
+// injected here so the pipeline never reads the OS keyring.
+func NewPipeline(sender MessageSender, cfg *config.Config, session *Session, token string, llmToken func(provider string) string) *Pipeline {
 	return &Pipeline{
-		sender:  sender,
-		cfg:     cfg,
-		session: session,
+		sender:   sender,
+		cfg:      cfg,
+		session:  session,
+		token:    token,
+		llmToken: llmToken,
 	}
 }
 
@@ -82,7 +89,7 @@ func (pp *pipelineProgress) Commit() {
 }
 
 func (p *Pipeline) run(ctx context.Context, intent string) {
-	runner := coreplan.NewRunner(p.cfg, p.session.ActiveProvider)
+	runner := coreplan.NewRunner(p.cfg, p.session.ActiveProvider, p.token, p.llmToken)
 	plan, err := runner.Run(ctx, intent, &pipelineProgress{sender: p.sender})
 	if err != nil {
 		p.sendError(err)

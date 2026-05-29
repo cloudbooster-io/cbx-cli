@@ -16,5 +16,11 @@ var NewKeyring = auth.NewKeyring
 // LoadToken reads an OAuth2 token from the keyring.
 var LoadToken = auth.LoadToken
 
+// AccessToken returns the access token from the keyring, or "" if
+// unauthenticated. Composition roots (e.g. cb-cli) call this and inject the
+// result into NewAPIClient via ClientOptions.Token, so library construction
+// never touches the OS keychain directly.
+var AccessToken = auth.AccessToken
+
 // IsAuthenticated reports whether a token exists in the keyring.
 var IsAuthenticated = auth.IsAuthenticated

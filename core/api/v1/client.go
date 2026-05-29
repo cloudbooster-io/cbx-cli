@@ -6,23 +6,8 @@ import (
 	"time"
 
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 )
-
-// loadCBToken returns the user's CloudBooster access token from the keyring,
-// or empty string if not authenticated.
-func loadCBToken() string {
-	kr, err := auth.NewKeyring()
-	if err != nil {
-		return ""
-	}
-	tok, err := auth.LoadToken(kr)
-	if err != nil || tok == nil {
-		return ""
-	}
-	return tok.AccessToken
-}
 
 // ClientOptions configures the behaviour of the wrapped API client.
 type ClientOptions struct {
@@ -30,6 +15,14 @@ type ClientOptions struct {
 	MaxRetries  int
 	Timeout     time.Duration
 	OnRateLimit func(remaining int)
+
+	// Token is the CloudBooster bearer token injected into every request.
+	// It is the caller's responsibility (the CLI composition root) to
+	// resolve it — typically via auth.AccessToken(). Left empty, requests
+	// go out unauthenticated. Keeping the keyring read out of this
+	// constructor is deliberate: it stops unit tests and library consumers
+	// from triggering the OS keychain authorization prompt.
+	Token string
 }
 
 // APIClient wraps the generated oapi-codegen client with auth, retry, and
@@ -40,9 +33,10 @@ type APIClient struct {
 
 // NewAPIClient builds an APIClient from configuration.
 //
-// The returned client injects the bearer token from cfg.Auth.Token, retries
-// transient 5xx and 429 responses with exponential backoff, and warns when
-// X-RateLimit-Remaining drops below 10.
+// The returned client injects the bearer token from opts.Token (resolve it
+// at the composition root via auth.AccessToken()), retries transient 5xx and
+// 429 responses with exponential backoff, and warns when X-RateLimit-Remaining
+// drops below 10.
 func NewAPIClient(cfg *config.Config, optFns ...func(*ClientOptions)) (*APIClient, error) {
 	opts := &ClientOptions{
 		MaxRetries: 3,
@@ -62,7 +56,7 @@ func NewAPIClient(cfg *config.Config, optFns ...func(*ClientOptions)) (*APIClien
 
 	rt = &AuthTransport{
 		Base:  rt,
-		Token: loadCBToken(),
+		Token: opts.Token,
 	}
 
 	rt = &RetryTransport{

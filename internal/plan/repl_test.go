@@ -59,7 +59,7 @@ func TestReplStreamingTUIFullFlow(t *testing.T) {
 	m.SetStreamRenderer(chat.NewStreamRenderer())
 
 	session := NewSession(".")
-	pipeline := NewPipeline(nil, cfg, session)
+	pipeline := NewPipeline(nil, cfg, session, "", nil)
 
 	var p *tea.Program
 	m.OnSubmit = func(input string) (string, error) {

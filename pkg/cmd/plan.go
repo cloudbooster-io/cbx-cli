@@ -12,6 +12,8 @@ import (
 
 	coreplan "gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan"
 )
@@ -79,15 +81,27 @@ side by side.`,
 				intent = args[0]
 			}
 
+			// Resolve credentials once, here at the composition root, and
+			// inject them downstream. Library code (the runner/pipeline) never
+			// reads the OS keyring itself, so unit tests don't trigger a
+			// Keychain authorization prompt. The CloudBooster bearer token is
+			// resolved eagerly; the LLM credential is resolved lazily per
+			// provider so a mid-session /llm switch picks up the right one.
+			token := auth.AccessToken()
+			llmToken := func(provider string) string {
+				tok, _ := llm.GetToken(provider)
+				return tok
+			}
+
 			isHeadless := noTUI || output.JSON() || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
 			if isHeadless {
 				if intent == "" {
 					return fmt.Errorf("intent required in non-interactive mode")
 				}
-				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort, llmProvider, variants)
+				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort, llmProvider, variants, token, llmToken)
 			}
 
-			return runInteractive(cfg, intent, dir, diagramFormat, noTUI, llmProvider)
+			return runInteractive(cfg, intent, dir, diagramFormat, noTUI, llmProvider, token, llmToken)
 		},
 	}
 	cmd.Flags().StringVarP(&outputDir, "output-dir", "d", "", "Output directory for plan files (default: cwd)")
@@ -120,7 +134,7 @@ func (p *headlessProgress) Candidate(name, description string) {}
 
 func (p *headlessProgress) Commit() {}
 
-func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int, llmProvider string, variants int) error {
+func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int, llmProvider string, variants int, token string, llmToken func(provider string) string) error {
 	if variants < 1 {
 		return fmt.Errorf("variants must be at least 1")
 	}
@@ -128,7 +142,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 		return fmt.Errorf("free tier capped at 2 variants")
 	}
 
-	runner := coreplan.NewRunner(cfg, llmProvider)
+	runner := coreplan.NewRunner(cfg, llmProvider, token, llmToken)
 	ctx := context.Background()
 
 	var plans []*coreplan.Plan
@@ -206,9 +220,9 @@ func planFilePath(dir, base string, idx int) string {
 	return filepath.Join(dir, fmt.Sprintf("%s-v%d%s", name, idx+1, ext))
 }
 
-func runInteractive(cfg *config.Config, intent, dir, diagramFormat string, noTUI bool, llmProvider string) error {
+func runInteractive(cfg *config.Config, intent, dir, diagramFormat string, noTUI bool, llmProvider, token string, llmToken func(provider string) string) error {
 	session := plan.NewSession(dir)
 	session.DiagramFormat = diagramFormat
 	session.ActiveProvider = llmProvider
-	return plan.REPL(session, cfg, os.Stdin, os.Stdout, intent, noTUI)
+	return plan.REPL(session, cfg, os.Stdin, os.Stdout, intent, noTUI, token, llmToken)
 }

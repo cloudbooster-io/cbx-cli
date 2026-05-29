@@ -15,6 +15,7 @@ import (
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
 	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
 )
 
 // llmStreamer is the minimal subset of core/plan.LLMCaller that the analyzer
@@ -28,12 +29,12 @@ type llmStreamer interface {
 // configured LLM provider and parses the structured response back into
 // audit findings. It is selected by --llm <provider>; never auto-enabled.
 type llmAnalyzer struct {
-	provider           string
-	streamer           llmStreamer
-	maxFiles           int
-	maxBytesPerFile    int
-	iacType            string
-	providerForRuleID  string // short label used in rule_id (e.g. "claude")
+	provider          string
+	streamer          llmStreamer
+	maxFiles          int
+	maxBytesPerFile   int
+	iacType           string
+	providerForRuleID string // short label used in rule_id (e.g. "claude")
 
 	// cbKnowledge selects the Phase F grounded prompt + post-processing. The
 	// streamer is expected to implement groundingTrailer when this is set;
@@ -131,9 +132,13 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 		return nil, fmt.Errorf("llm provider %q is not configured; run 'cbx llm login %s' first", opts.LLMProvider, opts.LLMProvider)
 	}
 
+	// Resolve the provider credential here at the audit composition root and
+	// inject it; core/plan.NewLLMCaller no longer reads the keychain itself.
+	llmToken, _ := llm.GetToken(opts.LLMProvider)
+
 	return &llmAnalyzer{
 		provider:          opts.LLMProvider,
-		streamer:          plan.NewLLMCaller(provCfg),
+		streamer:          plan.NewLLMCaller(provCfg, llmToken),
 		maxFiles:          opts.LLMMaxFiles,
 		maxBytesPerFile:   opts.LLMMaxBytesPerFile,
 		iacType:           iacType,

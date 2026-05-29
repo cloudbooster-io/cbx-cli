@@ -31,8 +31,7 @@ func TestLLMCallerStreamClaude(t *testing.T) {
 		Name:    "claude",
 		BaseURL: srv.URL,
 		Model:   "claude-test",
-	})
-	caller.Token = "sk-test"
+	}, "sk-test")
 
 	var tokens []string
 	err := caller.Stream(context.Background(), "test prompt", func(token string) {
@@ -63,8 +62,7 @@ func TestLLMCallerStreamOpenAI(t *testing.T) {
 		Name:    "openai",
 		BaseURL: srv.URL,
 		Model:   "gpt-4o",
-	})
-	caller.Token = "sk-openai"
+	}, "sk-openai")
 
 	var tokens []string
 	err := caller.Stream(context.Background(), "test", func(token string) {
@@ -94,7 +92,7 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 		Name:    "ollama",
 		BaseURL: srv.URL,
 		Model:   "llama3",
-	})
+	}, "")
 
 	var tokens []string
 	err := caller.Stream(context.Background(), "test", func(token string) {
@@ -110,7 +108,7 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 }
 
 func TestLLMCallerUnsupportedProvider(t *testing.T) {
-	caller := NewLLMCaller(config.LLMProvider{Name: "unknown"})
+	caller := NewLLMCaller(config.LLMProvider{Name: "unknown"}, "")
 	err := caller.Stream(context.Background(), "test", func(string) {})
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")

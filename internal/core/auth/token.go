@@ -59,6 +59,26 @@ func DeleteToken(kr Keyring) error {
 	return kr.Delete(tokenKey)
 }
 
+// AccessToken returns the user's CloudBooster access token from the OS
+// keyring, or "" if unauthenticated or the keyring is unavailable.
+//
+// This is the composition-root entry point for resolving the bearer token:
+// CLI commands call it and inject the result into library constructors
+// (NewAPIClient, NewRunner, …). Library code must NOT call it — accepting the
+// token via injection is what keeps unit tests (and other library consumers
+// such as cb-cli) from triggering the OS keychain authorization prompt.
+func AccessToken() string {
+	kr, err := NewKeyring()
+	if err != nil {
+		return ""
+	}
+	tok, err := LoadToken(kr)
+	if err != nil || tok == nil {
+		return ""
+	}
+	return tok.AccessToken
+}
+
 // IsAuthenticated reports whether a token exists in the keyring.
 func IsAuthenticated(kr Keyring) (bool, error) {
 	_, err := LoadToken(kr)
