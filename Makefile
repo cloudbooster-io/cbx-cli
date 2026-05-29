@@ -12,11 +12,11 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Sentry DSN injected into the binary at build time. Override with
-# `make build SENTRY_DSN=https://...` for a fork (e.g. downstream consumers), or set
-# SENTRY_DSN= (empty) for a build that disables telemetry transport
-# regardless of user opt-in. Goreleaser passes the cbx-cli DSN here.
-SENTRY_DSN ?= https://0a2aad426c5b03f26e243da64d2f5965@o4508150475390976.ingest.de.sentry.io/4511441278074960
+# Sentry DSN injected into the binary at build time. Empty by default, so a
+# source build ships no telemetry endpoint; release builds receive the real
+# DSN from CI / GoReleaser (which sets SENTRY_DSN here). Override locally with
+# `make build SENTRY_DSN=https://...`.
+SENTRY_DSN ?=
 
 LDFLAGS := -ldflags "\
   -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Version=$(VERSION) \
