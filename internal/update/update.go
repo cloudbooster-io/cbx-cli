@@ -1,4 +1,4 @@
-// Package update checks for newer versions of cbx on GitLab Releases,
+// Package update checks for newer versions of cbx on GitHub Releases,
 // caches the result, and detects the current install method.
 package update
 
@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // ErrNoReleases is returned by Check when the upstream project has no
@@ -28,15 +27,16 @@ import (
 var ErrNoReleases = errors.New("no releases published yet")
 
 const (
-	// gitlabProjectPath is the URL-encoded namespace/path of the cbx-cli
-	// project on gitlab.com. Used as <id> in /api/v4/projects/<id>/releases.
-	gitlabProjectPath = "cloudbooster.io/platform/cbx-cli"
-	// defaultReleasesAPI is the public GitLab releases endpoint. Override
-	// via $CBX_RELEASES_URL (no /releases suffix) for self-hosted instances.
-	defaultReleasesAPI = "https://gitlab.com/api/v4/projects"
+	// githubRepo is the owner/repo of the cbx-cli project on github.com.
+	// Used as <owner>/<repo> in /repos/<owner>/<repo>/releases/latest.
+	githubRepo = "cloudbooster-io/cbx-cli"
+	// defaultReleasesAPI is the public GitHub REST releases endpoint base.
+	// Override via $CBX_RELEASES_URL (no trailing slash) for tests or a
+	// GitHub Enterprise host.
+	defaultReleasesAPI = "https://api.github.com/repos"
 	// fallbackHTMLURL is shown when we don't have a release-specific URL
 	// (e.g. in upgrade hints).
-	fallbackHTMLURL = "https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases"
+	fallbackHTMLURL = "https://github.com/cloudbooster-io/cbx-cli/releases"
 	cacheFile       = "update-check.json"
 	cacheDir        = "cbx"
 	cacheTTL        = 24 * time.Hour
@@ -172,8 +172,8 @@ func UpgradeCommand(result *Result) string {
 	}
 }
 
-// releasesAPIBase returns the GitLab API base for releases, respecting the
-// CBX_RELEASES_URL override (used by self-hosted GitLab installs).
+// releasesAPIBase returns the GitHub API base for releases, respecting the
+// CBX_RELEASES_URL override (used for tests or a GitHub Enterprise host).
 func releasesAPIBase() string {
 	if v := config.Env("RELEASES_URL"); v != "" {
 		return strings.TrimRight(v, "/")
@@ -182,9 +182,9 @@ func releasesAPIBase() string {
 }
 
 func (c *Checker) fetchLatest(ctx context.Context) (*release, error) {
-	endpoint := fmt.Sprintf("%s/%s/releases/permalink/latest",
+	endpoint := fmt.Sprintf("%s/%s/releases/latest",
 		releasesAPIBase(),
-		url.PathEscape(gitlabProjectPath),
+		githubRepo,
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -203,17 +203,14 @@ func (c *Checker) fetchLatest(ctx context.Context) (*release, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitLab API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var rel release
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return nil, fmt.Errorf("decoding release: %w", err)
 	}
-	// GitLab returns the human-facing release URL under _links.self.
-	if rel.HTMLURL == "" {
-		rel.HTMLURL = rel.Links.Self
-	}
+	// GitHub returns the human-facing release URL under html_url.
 	if rel.HTMLURL == "" {
 		rel.HTMLURL = fallbackHTMLURL
 	}
@@ -290,15 +287,11 @@ func writeCache(entry *cacheEntry) error {
 // GitHub types
 // ---------------------------------------------------------------------------
 
-// release matches both the GitHub and GitLab releases JSON shapes — both
-// expose tag_name; GitHub uses html_url, GitLab nests the equivalent under
-// _links.self.
+// release matches the GitHub releases JSON shape: tag_name plus the
+// human-facing html_url.
 type release struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
-	Links   struct {
-		Self string `json:"self"`
-	} `json:"_links"`
 }
 
 // ---------------------------------------------------------------------------
@@ -359,8 +352,8 @@ func upgradeDirect(ctx context.Context, result *Result) error {
 
 func directAssetURL(result *Result) string {
 	// Best-effort asset URL construction matching the GoReleaser archive
-	// naming convention. GitLab release-asset URL pattern is:
-	//   https://gitlab.com/<group>/<project>/-/releases/<tag>/downloads/<filename>
+	// naming convention. GitHub release-asset URL pattern is:
+	//   https://github.com/<owner>/<repo>/releases/download/<tag>/<filename>
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
 	if goos == "darwin" {
@@ -375,9 +368,6 @@ func directAssetURL(result *Result) string {
 	} else if goarch == "arm64" {
 		goarch = "arm64"
 	}
-	base := result.ReleaseURL
-	if base == "" {
-		base = fmt.Sprintf("%s/%s", fallbackHTMLURL, result.LatestVersion)
-	}
-	return fmt.Sprintf("%s/downloads/cbx-cli_%s_%s.tar.gz", base, goos, goarch)
+	return fmt.Sprintf("%s/download/%s/cbx-cli_%s_%s.tar.gz",
+		fallbackHTMLURL, result.LatestVersion, goos, goarch)
 }

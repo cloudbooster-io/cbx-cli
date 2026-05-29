@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
+	"github.com/cloudbooster-io/cbx-cli/internal/tui/chat"
 )
 
 func TestCmdVariantsCap(t *testing.T) {

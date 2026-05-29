@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // TestRenderPlainShowcase is the design-loop fixture: it builds the 13
@@ -33,7 +33,7 @@ func TestRenderPlainShowcase(t *testing.T) {
 	output.ForceStyledForTesting()
 	output.ResetAdvisories()
 	output.AdviseTitle("legacy-config-dir",
-		"using legacy config dir /Users/forgac/.cbx")
+		"using legacy config dir ~/.cbx")
 	output.Advise(output.Advisory{
 		Code:  "legacy-config-dir-hint",
 		Title: "future cbx releases will look in ~/.config/cbx (XDG)",
@@ -157,7 +157,7 @@ func TestRenderPlainShowcase(t *testing.T) {
 	// faster — we see the whole composition in one place.
 	header := output.Card{
 		Label: output.Chip("AWS", lipgloss.Color("231"), lipgloss.Color("236")),
-		Title: "audit · 839000215051",
+		Title: "audit · 123456789012",
 		Rows: []output.CardRow{
 			{Key: "identity", Value: "…/AWSReservedSSO_AdministratorAccess_…/radek.forgac"},
 			{Key: "regions", Value: "eu-central-1"},
@@ -169,13 +169,12 @@ func TestRenderPlainShowcase(t *testing.T) {
 	}
 	fmt.Println(header.Render())
 
-	fmt.Print(RenderPlain(findings, "aws://839000215051"))
+	fmt.Print(RenderPlain(findings, "aws://123456789012"))
 
 	// Empty-case showcase: prove the no-findings render is also pretty.
 	fmt.Println()
 	fmt.Println("--- empty-findings case ---")
 	fmt.Println()
 	output.ResetAdvisories()
-	fmt.Print(RenderPlain([]Finding{}, "aws://839000215051"))
+	fmt.Print(RenderPlain([]Finding{}, "aws://123456789012"))
 }
-

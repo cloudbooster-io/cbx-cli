@@ -11,7 +11,8 @@
 //   - POST /v1/knowledge/aws/composition  body: {"type_ids":[...]}
 //
 // All three return the same shape wrapped in the public-API envelope:
-//   {"schema_version":"1","data":{"kb_version":N,"chunks":[...]},"meta":{...}}
+//
+//	{"schema_version":"1","data":{"kb_version":N,"chunks":[...]},"meta":{...}}
 //
 // 404 is treated as "no CB entry" (returns ErrNotAuthored) — knowledge gaps
 // are normal and the grounding enumerator surfaces them as placeholders

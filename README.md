@@ -6,10 +6,11 @@ CloudBooster CLI — plan, audit, and manage cloud infrastructure from your term
 
 ```bash
 # Via Homebrew (macOS / Linux)
-brew tap cloudbooster/tap
+brew tap cloudbooster-io/tap
 brew install cbx-cli
 
-# Or download the latest release from GitHub Releases
+# Or download the latest release from GitHub Releases:
+# https://github.com/cloudbooster-io/cbx-cli/releases
 ```
 
 ## Quick start
@@ -23,17 +24,16 @@ cbx llm login claude
 
 # Generate an architecture plan
 cbx plan "static site with auth"
-# → writes plan.adr.md and plan.d2 to the current directory
+# → writes plan.md and plan.d2 to the current directory
 
-# Audit existing infrastructure (deployed: state file)
-cbx audit --pulumi-state state.json
-# → outputs JSON findings and writes a markdown report
+# Audit a live AWS account (read-only, via the AWS SDK)
+cbx audit aws
+# → audits the default AWS profile in its configured region, grounds the
+#   findings in CloudBooster's curated AWS knowledge, and writes a markdown
+#   report. Requires `claude` (Claude Code) on PATH for the grounded analysis.
 
-# Audit declared infrastructure (source: IaC tree)
-cbx audit --source ./infra
-# → auto-detects Terraform / CloudFormation / Kubernetes / Helm and runs the
-#   configured scanners offline (mock by default; --scanners=tfsec,checkov,trivy
-#   for the real binaries)
+# Audit a named profile across specific regions
+cbx audit aws prod --region us-east-1 --region us-west-2
 ```
 
 ## Commands
@@ -48,19 +48,20 @@ cbx audit --source ./infra
 | `cbx llm list` | List configured LLM providers |
 | `cbx llm default <provider>` | Set the default LLM provider |
 | `cbx plan "<intent>"` | Generate an architecture plan |
-| `cbx audit --pulumi-state <file>` | Audit a Pulumi state file (deployed infrastructure) |
-| `cbx audit --terraform-state <file>` | Audit a Terraform state file (deployed infrastructure) |
-| `cbx audit --source <dir>` | Audit an IaC source tree (Terraform / CloudFormation / Kubernetes / Helm) |
-| `cbx audit --iac-type <auto\|terraform\|cloudformation\|k8s\|helm>` | Pin the IaC flavor for source-mode auto-detection |
+| `cbx audit aws [profile]` | Audit a live AWS account (read-only, via the AWS SDK; grounded in CloudBooster's AWS knowledge) |
 | `cbx version` | Print version |
 | `cbx doctor` | Check installation health |
 | `cbx completion` | Generate shell completion |
+| `cbx upgrade` | Upgrade cbx to the latest release |
+
+Run `cbx --help` (or `cbx <command> --help`) for the full command set,
+including `cbx auth`, `cbx config`, `cbx env`, and `cbx telemetry`.
 
 ## Development
 
 ### Requirements
 
-- Go 1.24+
+- Go 1.25+
 
 ### Build
 
@@ -80,6 +81,9 @@ make test-e2e
 # Run E2E tests against staging
 make test-e2e-staging
 ```
+
+> `make test-e2e-staging` targets CloudBooster's internal staging API and is
+> for maintainers; `make test` and `make test-e2e` run for everyone.
 
 ### Lint
 

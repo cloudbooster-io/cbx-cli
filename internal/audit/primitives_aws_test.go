@@ -18,9 +18,9 @@ import (
 // New unmapped types fail the test — adding to this list is a deliberate
 // "yes, CB doesn't author this yet" acknowledgement, not a default escape.
 var knownUnmappedTF = map[string]string{
-	"aws_budgets_budget":   "no CB primitive — billing/budget out of scope for IaC audit",
-	"aws_iam_user":         "absent from KB (survey 2026-05-11 §1) — IAM users are anti-pattern at CB",
-	"aws_iam_access_key":   "follows aws_iam_user — same gap",
+	"aws_budgets_budget": "no CB primitive — billing/budget out of scope for IaC audit",
+	"aws_iam_user":       "absent from KB (survey 2026-05-11 §1) — IAM users are anti-pattern at CB",
+	"aws_iam_access_key": "follows aws_iam_user — same gap",
 }
 
 // resourceLine matches `resource "aws_<type>" "<name>" {` lines in HCL.

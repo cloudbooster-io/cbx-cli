@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 func TestRunFromResources_PopulatesResultAndWritesReport(t *testing.T) {

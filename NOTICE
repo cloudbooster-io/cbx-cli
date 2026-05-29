@@ -1,0 +1,20 @@
+cbx-cli
+Copyright 2026 Cloudbooster.io
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It bundles the following third-party components:
+
+- Mermaid (https://github.com/mermaid-js/mermaid) — MIT License.
+  A minified runtime is embedded as internal/assets/mermaid.min.js.gz and
+  inlined into generated HTML diagram previews. License text accompanies the
+  upstream distribution (mermaid.min.js.LICENSE.txt).
+
+- AWS Architecture Icons (https://aws.amazon.com/architecture/icons/) —
+  used for visualization in accordance with AWS's icon terms (attribution
+  required). A curated subset of SVGs is embedded under
+  internal/assets/aws-icons/.
+
+Go module dependencies are listed in go.mod / go.sum. Their licenses
+(Apache-2.0, MIT, BSD, MPL-2.0) are permissive and compatible with
+Apache-2.0 distribution.

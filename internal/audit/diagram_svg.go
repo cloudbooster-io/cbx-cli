@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // BuildArchitectureSVG renders the discovered AWS resources as a
@@ -171,8 +171,8 @@ type topoVPC struct {
 
 // topoAZ represents one Availability Zone column inside a VPC.
 type topoAZ struct {
-	name      string         // e.g. "us-east-1a"; "" when AZ data isn't available
-	subnets   []*topoSubnet  // subnets in this AZ, stacked vertically
+	name      string               // e.g. "us-east-1a"; "" when AZ data isn't available
+	subnets   []*topoSubnet        // subnets in this AZ, stacked vertically
 	resources []DiscoveredResource // AZ-scoped resources (e.g. RDS that match this AZ but no subnet)
 }
 
@@ -1672,13 +1672,13 @@ const (
 	subnetHeaderH = 22
 	// Resource box geometry — 200x56 horizontal box: 40px icon left,
 	// name (bold) + id (mono) on right, sev chip stack inside bottom-right.
-	boxW          = 200
-	boxH          = 56
-	boxIconSize   = 40
-	iconSize      = boxIconSize // kept for callers that reference the legacy name
-	iconLabelGap  = 4
-	iconCellW     = 220 // box + 20px horizontal gutter
-	iconCellH     = 68  // box + 12px vertical gutter
+	boxW         = 200
+	boxH         = 56
+	boxIconSize  = 40
+	iconSize     = boxIconSize // kept for callers that reference the legacy name
+	iconLabelGap = 4
+	iconCellW    = 220 // box + 20px horizontal gutter
+	iconCellH    = 68  // box + 12px vertical gutter
 )
 
 // renderAWSCloud draws the outer AWS Cloud → Account → VPC topology.

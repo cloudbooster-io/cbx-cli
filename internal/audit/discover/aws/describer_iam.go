@@ -134,9 +134,9 @@ func (iamRoleDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredResou
 // evaluates other managed policies on its own.
 func hasAdminManagedPolicy(arns []string) bool {
 	danger := map[string]bool{
-		"arn:aws:iam::aws:policy/AdministratorAccess":  true,
-		"arn:aws:iam::aws:policy/PowerUserAccess":      true,
-		"arn:aws:iam::aws:policy/IAMFullAccess":        true,
+		"arn:aws:iam::aws:policy/AdministratorAccess": true,
+		"arn:aws:iam::aws:policy/PowerUserAccess":     true,
+		"arn:aws:iam::aws:policy/IAMFullAccess":       true,
 	}
 	for _, a := range arns {
 		if danger[a] {

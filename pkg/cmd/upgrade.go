@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
 )
@@ -45,8 +45,8 @@ func newUpgradeCmd() *cobra.Command {
 					Rows: []output.CardRow{
 						{Key: "current", Value: output.Dim.Render(Version)},
 					},
-					Footer: output.Dim.Render(output.Symbol("arrow") + " install a release build from ") +
-						"https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases",
+					Footer: output.Dim.Render(output.Symbol("arrow")+" install a release build from ") +
+						"https://github.com/cloudbooster-io/cbx-cli/releases",
 				}
 				fmt.Print(card.Render())
 				return nil

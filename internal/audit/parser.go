@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 const maxStateFileSize = 100 * 1024 * 1024 // 100 MB

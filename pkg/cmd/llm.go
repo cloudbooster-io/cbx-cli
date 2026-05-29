@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -41,7 +41,7 @@ func renderLLMProvidersCard(rows []llmRow, title string, emptyHint string) strin
 			Rows: []output.CardRow{
 				{Key: "", Value: output.Dim.Render("no providers configured")},
 			},
-			Footer: output.Dim.Render(output.Symbol("arrow") + " ") + emptyHint,
+			Footer: output.Dim.Render(output.Symbol("arrow")+" ") + emptyHint,
 		}
 		return card.Render()
 	}
@@ -491,7 +491,7 @@ func newLLMCLITestCmd() *cobra.Command {
 				if output.JSON() {
 					return output.PrintJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine}, nil)
 				}
-				return fmt.Errorf("executor %s at %s failed --version: %v\n%s", name, bin, runErr, versionLine)
+				return fmt.Errorf("executor %s at %s failed --version: %w\n%s", name, bin, runErr, versionLine)
 			}
 			if output.JSON() {
 				return output.PrintJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine}, nil)

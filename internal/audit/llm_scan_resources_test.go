@@ -5,10 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 func TestScanResources_BuildsAWSModePrompt_NoSourceFiles(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
@@ -75,6 +76,7 @@ func TestScanResources_EmptyResourceSetShortCircuits(t *testing.T) {
 }
 
 func TestScanResources_GroundedPathRunsPostProcessing(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	// Mirror ScanSource's grounded soft-warn behaviour. A finding without
 	// cb_source must trigger the "ungrounded findings" info line.
 	stream := &fakeGroundedStreamer{

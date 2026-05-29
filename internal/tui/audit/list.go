@@ -5,8 +5,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	auditcore "github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // renderListBody returns the inner contents of the list panel. Every

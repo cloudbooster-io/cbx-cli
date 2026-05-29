@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/99designs/keyring"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // Keyring abstracts OS-native credential storage.
@@ -83,6 +83,12 @@ func openBackend(name string) (Keyring, error) {
 		FileDir:         dir,
 	}
 	if bt == keyring.FileBackend {
+		// SECURITY (known limitation): the file backend encrypts stored
+		// credentials with a fixed, source-published passphrase, so on-disk
+		// tokens are effectively obfuscated rather than protected. Treat
+		// CBX_KEYRING_BACKEND=file as a convenience fallback for throwaway or
+		// headless contexts, NOT for long-lived real credentials. Hardening
+		// (a user-supplied passphrase) is tracked — see SECURITY.md.
 		cfg.FilePasswordFunc = func(_ string) (string, error) {
 			return "cbx-test-passphrase", nil
 		}

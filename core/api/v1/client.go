@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // ClientOptions configures the behaviour of the wrapped API client.

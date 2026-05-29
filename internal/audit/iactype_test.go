@@ -57,8 +57,8 @@ func TestDetectIaCType(t *testing.T) {
 		{
 			name: "helm",
 			files: map[string]string{
-				"Chart.yaml":              "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
-				"templates/deploy.yaml":   "apiVersion: apps/v1\nkind: Deployment\n",
+				"Chart.yaml":            "apiVersion: v2\nname: demo\nversion: 0.1.0\n",
+				"templates/deploy.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
 			},
 			want: IaCTypeHelm,
 		},

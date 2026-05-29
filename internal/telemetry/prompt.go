@@ -10,7 +10,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // MaybePromptFirstRun shows the opt-in prompt to the user if and only if:

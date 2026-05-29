@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // configKey describes a user-facing config key, its getter from the
@@ -190,7 +190,7 @@ func newConfigListCmd() *cobra.Command {
 				}
 				card.AddRow(k, v)
 			}
-			card.Footer = output.Dim.Render(output.Symbol("arrow") + " ") +
+			card.Footer = output.Dim.Render(output.Symbol("arrow")+" ") +
 				"cbx config set <key> <value>" +
 				output.Dim.Render(" to change a setting · `cbx config get <key>` for raw stdout")
 			fmt.Fprint(cmd.OutOrStdout(), card.Render())

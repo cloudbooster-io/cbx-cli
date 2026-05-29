@@ -26,9 +26,9 @@ func TestBuildArchitectureDiagram_ArchitectureBeta(t *testing.T) {
 		"architecture-beta",
 		"group g_region",
 		"service svc_users(internet)",
-		"(internet)",      // CloudFront → network → internet
-		"(disk)",          // S3 → storage → disk
-		"(server)",        // Lambda → compute → server
+		"(internet)", // CloudFront → network → internet
+		"(disk)",     // S3 → storage → disk
+		"(server)",   // Lambda → compute → server
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
@@ -78,11 +78,11 @@ func TestBuildArchitectureDiagram_DataFlowEdges(t *testing.T) {
 
 func TestServiceFromCFNType(t *testing.T) {
 	cases := map[string]string{
-		"AWS::EC2::Instance":    "EC2",
-		"AWS::S3::Bucket":       "S3",
-		"AWS::IAM::Role":        "IAM",
-		"weird":                 "weird",
-		"":                      "Other",
+		"AWS::EC2::Instance": "EC2",
+		"AWS::S3::Bucket":    "S3",
+		"AWS::IAM::Role":     "IAM",
+		"weird":              "weird",
+		"":                   "Other",
 	}
 	for in, want := range cases {
 		if got := serviceFromCFNType(in); got != want {

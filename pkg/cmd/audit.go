@@ -11,7 +11,7 @@ import (
 // (--pulumi-state, --terraform-state, --source, --iac-type, --llm,
 // --scanners, ...) are no longer exposed at the CLI surface. The
 // underlying parsers/scanners/analyzers in internal/audit and the
-// pkg/audit facade are unchanged, so library callers (including cb-cli)
+// pkg/audit facade are unchanged, so library callers (including downstream consumers)
 // can still drive them programmatically; only the user-facing flag
 // surface is closed.
 func newAuditCmd() *cobra.Command {

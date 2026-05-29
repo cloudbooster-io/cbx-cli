@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // init wires the config-package notices through the shared output writer.

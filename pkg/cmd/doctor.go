@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/update"
 
 	"github.com/spf13/cobra"
 )

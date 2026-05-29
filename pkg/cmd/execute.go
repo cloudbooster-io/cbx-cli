@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/telemetry"
+	"github.com/cloudbooster-io/cbx-cli/internal/update"
 	"github.com/spf13/cobra"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/update"
 )
 
 // beautifyCobraError rewrites the bare cobra error strings (unknown
@@ -88,7 +88,7 @@ func renderUpdateBanner(current, latest string) string {
 		Rows: []output.CardRow{
 			{Key: "version", Value: from + arrow + to},
 		},
-		Footer: output.Dim.Render(output.Symbol("arrow") + " run ") +
+		Footer: output.Dim.Render(output.Symbol("arrow")+" run ") +
 			"cbx upgrade" +
 			output.Dim.Render(" to install"),
 	}

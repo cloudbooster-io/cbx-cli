@@ -1,10 +1,10 @@
 // Package config re-exports the CLI configuration primitives so that
-// downstream modules (e.g. cb-cli) can load and save config without
+// downstream modules (e.g. downstream consumers) can load and save config without
 // reaching into cbx-cli/internal.
 package config
 
 import (
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // Config holds the CLI configuration.

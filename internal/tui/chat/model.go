@@ -61,10 +61,10 @@ type PipelineErrorMsg struct {
 
 // Model is the generic chat TUI Bubble Tea model.
 type Model struct {
-	viewport    viewport.Model
-	textarea    textarea.Model
-	width       int
-	height      int
+	viewport viewport.Model
+	textarea textarea.Model
+	width    int
+	height   int
 
 	paletteMode bool
 	paletteIdx  int

@@ -16,17 +16,19 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // defaultDSN is the Sentry DSN baked in at build time via:
-//   go build -ldflags "-X gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry.defaultDSN=https://..."
+//
+//	go build -ldflags "-X github.com/cloudbooster-io/cbx-cli/internal/telemetry.defaultDSN=https://..."
+//
 // (the Makefile wires this up for normal `make build` invocations).
 //
 // Left empty by default so that:
 //   - `go build ./cmd/cbx` (no ldflags) produces a binary with telemetry
 //     effectively disabled even if the user opts in — useful for local
-//     development and downstream forks (cb-cli) that want their own DSN.
+//     development and downstream forks (downstream consumers) that want their own DSN.
 //   - Open-source contributors don't unknowingly ship events to our
 //     production Sentry project when building from source.
 //

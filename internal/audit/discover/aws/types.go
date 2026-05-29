@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // DiscoveredResource is the cross-mode resource shape every audit

@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/pkg/cmd"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/auth"
+	"github.com/cloudbooster-io/cbx-cli/internal/telemetry"
+	"github.com/cloudbooster-io/cbx-cli/pkg/cmd"
 )
 
 func main() {

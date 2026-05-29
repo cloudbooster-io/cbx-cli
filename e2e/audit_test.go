@@ -284,8 +284,8 @@ func TestAuditEndToEnd(t *testing.T) {
 		}
 
 		forbidden := []string{
-			"gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1",
-			"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan",
+			"github.com/cloudbooster-io/cbx-cli/core/api/v1",
+			"github.com/cloudbooster-io/cbx-cli/internal/plan",
 		}
 		lines := strings.Split(string(out), "\n")
 		for _, line := range lines {

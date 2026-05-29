@@ -563,4 +563,3 @@ func renderBottomStrip(sb *strings.Builder, resources []DiscoveredResource, x, y
 		sb.WriteString(renderResourceBox(r, bx, by, pr.chipsFor(r.URN)))
 	}
 }
-

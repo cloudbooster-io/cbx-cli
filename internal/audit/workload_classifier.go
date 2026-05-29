@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// CB-authored workload slugs surveyed 2026-05-11 (see
-// `ai_space/analyses/2026-05-11-cb-knowledge-survey.md` §2). Only these slugs
-// hit pattern-tagged chunks in /v1/knowledge/aws/practices; anything else
-// falls through to the undifferentiated catalog, which is signal-poor.
+// CB-authored workload slugs. Only these slugs hit pattern-tagged chunks
+// in /v1/knowledge/aws/practices; anything else falls through to the
+// undifferentiated catalog, which is signal-poor.
 // Defined as constants so the classifier output and the prompt copy stay in
 // lock-step.
 const (
@@ -55,44 +54,44 @@ var AuthoredWorkloadSlugs = map[string]struct{}{
 // dbTier branch hasAny()'s both aws_db_instance and aws_rds_cluster
 // already, so the simpler mapping is sufficient.
 var cfnTypeToTFEquivalent = map[string]string{
-	"AWS::S3::Bucket":                              "aws_s3_bucket",
-	"AWS::CloudFront::Distribution":                "aws_cloudfront_distribution",
-	"AWS::CloudFront::OriginAccessControl":         "aws_cloudfront_origin_access_control",
+	"AWS::S3::Bucket":                                 "aws_s3_bucket",
+	"AWS::CloudFront::Distribution":                   "aws_cloudfront_distribution",
+	"AWS::CloudFront::OriginAccessControl":            "aws_cloudfront_origin_access_control",
 	"AWS::CloudFront::CloudFrontOriginAccessIdentity": "aws_cloudfront_origin_access_identity",
-	"AWS::ApiGateway::RestApi":                     "aws_api_gateway_rest_api",
-	"AWS::ApiGateway::Stage":                       "aws_api_gateway_stage",
-	"AWS::ApiGatewayV2::Api":                       "aws_apigatewayv2_api",
-	"AWS::ApiGatewayV2::Stage":                     "aws_apigatewayv2_stage",
-	"AWS::ApiGateway::Authorizer":                  "aws_api_gateway_authorizer",
-	"AWS::ApiGatewayV2::Authorizer":                "aws_apigatewayv2_authorizer",
-	"AWS::Lambda::Function":                        "aws_lambda_function",
-	"AWS::Cognito::UserPool":                       "aws_cognito_user_pool",
+	"AWS::ApiGateway::RestApi":                        "aws_api_gateway_rest_api",
+	"AWS::ApiGateway::Stage":                          "aws_api_gateway_stage",
+	"AWS::ApiGatewayV2::Api":                          "aws_apigatewayv2_api",
+	"AWS::ApiGatewayV2::Stage":                        "aws_apigatewayv2_stage",
+	"AWS::ApiGateway::Authorizer":                     "aws_api_gateway_authorizer",
+	"AWS::ApiGatewayV2::Authorizer":                   "aws_apigatewayv2_authorizer",
+	"AWS::Lambda::Function":                           "aws_lambda_function",
+	"AWS::Cognito::UserPool":                          "aws_cognito_user_pool",
 	// ALB and NLB share AWS::ElasticLoadBalancingV2::LoadBalancer; the
 	// classifier's `lb` predicate only needs ANY load balancer, not a
 	// type split, so mapping to the canonical aws_lb is sufficient.
-	"AWS::ElasticLoadBalancingV2::LoadBalancer":    "aws_lb",
-	"AWS::ECS::Service":                            "aws_ecs_service",
-	"AWS::ECS::Cluster":                            "aws_ecs_cluster",
-	"AWS::AutoScaling::AutoScalingGroup":           "aws_autoscaling_group",
-	"AWS::EC2::Instance":                           "aws_instance",
-	"AWS::RDS::DBInstance":                         "aws_db_instance",
-	"AWS::RDS::DBCluster":                          "aws_rds_cluster",
-	"AWS::DynamoDB::Table":                         "aws_dynamodb_table",
-	"AWS::ElastiCache::CacheCluster":               "aws_elasticache_cluster",
-	"AWS::ElastiCache::ReplicationGroup":           "aws_elasticache_replication_group",
-	"AWS::SQS::Queue":                              "aws_sqs_queue",
-	"AWS::Events::Rule":                            "aws_cloudwatch_event_rule",
-	"AWS::Scheduler::Schedule":                     "aws_scheduler_schedule",
-	"AWS::Kinesis::Stream":                         "aws_kinesis_stream",
-	"AWS::KinesisFirehose::DeliveryStream":         "aws_kinesis_firehose_delivery_stream",
-	"AWS::MSK::Cluster":                            "aws_msk_cluster",
-	"AWS::EC2::VPC":                                "aws_vpc",
-	"AWS::EC2::Subnet":                             "aws_subnet",
-	"AWS::EC2::SecurityGroup":                      "aws_security_group",
-	"AWS::EC2::RouteTable":                         "aws_route_table",
-	"AWS::EC2::InternetGateway":                    "aws_internet_gateway",
-	"AWS::EC2::NatGateway":                         "aws_nat_gateway",
-	"AWS::EC2::SubnetRouteTableAssociation":        "aws_route_table_association",
+	"AWS::ElasticLoadBalancingV2::LoadBalancer": "aws_lb",
+	"AWS::ECS::Service":                         "aws_ecs_service",
+	"AWS::ECS::Cluster":                         "aws_ecs_cluster",
+	"AWS::AutoScaling::AutoScalingGroup":        "aws_autoscaling_group",
+	"AWS::EC2::Instance":                        "aws_instance",
+	"AWS::RDS::DBInstance":                      "aws_db_instance",
+	"AWS::RDS::DBCluster":                       "aws_rds_cluster",
+	"AWS::DynamoDB::Table":                      "aws_dynamodb_table",
+	"AWS::ElastiCache::CacheCluster":            "aws_elasticache_cluster",
+	"AWS::ElastiCache::ReplicationGroup":        "aws_elasticache_replication_group",
+	"AWS::SQS::Queue":                           "aws_sqs_queue",
+	"AWS::Events::Rule":                         "aws_cloudwatch_event_rule",
+	"AWS::Scheduler::Schedule":                  "aws_scheduler_schedule",
+	"AWS::Kinesis::Stream":                      "aws_kinesis_stream",
+	"AWS::KinesisFirehose::DeliveryStream":      "aws_kinesis_firehose_delivery_stream",
+	"AWS::MSK::Cluster":                         "aws_msk_cluster",
+	"AWS::EC2::VPC":                             "aws_vpc",
+	"AWS::EC2::Subnet":                          "aws_subnet",
+	"AWS::EC2::SecurityGroup":                   "aws_security_group",
+	"AWS::EC2::RouteTable":                      "aws_route_table",
+	"AWS::EC2::InternetGateway":                 "aws_internet_gateway",
+	"AWS::EC2::NatGateway":                      "aws_nat_gateway",
+	"AWS::EC2::SubnetRouteTableAssociation":     "aws_route_table_association",
 }
 
 // ClassifyWorkloads infers which CB workload slugs the discovered resource

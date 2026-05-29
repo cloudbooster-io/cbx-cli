@@ -23,7 +23,7 @@ func (f *fakeGroundedStreamer) Stream(_ context.Context, _ string, onToken func(
 }
 
 func (f *fakeGroundedStreamer) GroundingTrail() []GroundingEvent { return f.trail }
-func (f *fakeGroundedStreamer) TotalCostUSD() float64             { return f.cost }
+func (f *fakeGroundedStreamer) TotalCostUSD() float64            { return f.cost }
 
 func newGroundedTestAnalyzer(s llmStreamer, maxCost float64) *llmAnalyzer {
 	return &llmAnalyzer{
@@ -39,6 +39,7 @@ func newGroundedTestAnalyzer(s llmStreamer, maxCost float64) *llmAnalyzer {
 }
 
 func TestLLMAnalyzer_Grounded_ParsesCBSourceField(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "aws_s3_bucket" "x" {}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -68,6 +69,7 @@ func TestLLMAnalyzer_Grounded_ParsesCBSourceField(t *testing.T) {
 }
 
 func TestLLMAnalyzer_Grounded_SoftWarnsUngrounded(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "aws_s3_bucket" "x" {}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -93,6 +95,7 @@ func TestLLMAnalyzer_Grounded_SoftWarnsUngrounded(t *testing.T) {
 }
 
 func TestLLMAnalyzer_Grounded_CostCapWarning(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "aws_s3_bucket" "x" {}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -118,6 +121,7 @@ func TestLLMAnalyzer_Grounded_CostCapWarning(t *testing.T) {
 }
 
 func TestLLMAnalyzer_Grounded_BackfillsSnippetFromTrail(t *testing.T) {
+	useFakeKnowledgeBackend(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "aws_s3_bucket" "x" {}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)

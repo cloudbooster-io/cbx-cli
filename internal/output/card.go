@@ -29,11 +29,11 @@ func TerminalWidth() int {
 // advisories, and similar grouped content. Findings use a lighter-weight
 // "rule" layout (see FindingBlock) so they don't each draw a heavy box.
 type Card struct {
-	Title  string        // optional — printed in the top border slot
-	Label  string        // optional — small chip-like tag rendered before Title
-	Width  int           // 0 means auto-fit to TerminalWidth
-	Rows   []CardRow     // ordered key/value rows
-	Footer string        // optional — single dim line under the rows
+	Title  string         // optional — printed in the top border slot
+	Label  string         // optional — small chip-like tag rendered before Title
+	Width  int            // 0 means auto-fit to TerminalWidth
+	Rows   []CardRow      // ordered key/value rows
+	Footer string         // optional — single dim line under the rows
 	Border lipgloss.Color // optional override; defaults to a dim grey
 }
 

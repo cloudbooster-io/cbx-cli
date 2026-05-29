@@ -66,7 +66,7 @@ func DeleteToken(kr Keyring) error {
 // CLI commands call it and inject the result into library constructors
 // (NewAPIClient, NewRunner, …). Library code must NOT call it — accepting the
 // token via injection is what keeps unit tests (and other library consumers
-// such as cb-cli) from triggering the OS keychain authorization prompt.
+// such as downstream consumers) from triggering the OS keychain authorization prompt.
 func AccessToken() string {
 	kr, err := NewKeyring()
 	if err != nil {

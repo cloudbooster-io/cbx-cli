@@ -10,14 +10,15 @@ package aws
 //   - AWS::EC2::Instance   cb_describer_subnet_is_public  (bool)
 //
 // "Internet-routable" for a subnet means either:
-//   (a) MapPublicIpOnLaunch=true (the AWS-canonical "public subnet"
-//       flag — true means the AWS console treats it as a public
-//       subnet, which is the strongest direct signal), OR
-//   (b) the subnet's associated route table contains a 0.0.0.0/0
-//       route whose target is an InternetGateway. Falls back to the
-//       VPC's "main" route table when no explicit
-//       SubnetRouteTableAssociation links the subnet — same default
-//       AWS itself applies.
+//
+//	(a) MapPublicIpOnLaunch=true (the AWS-canonical "public subnet"
+//	    flag — true means the AWS console treats it as a public
+//	    subnet, which is the strongest direct signal), OR
+//	(b) the subnet's associated route table contains a 0.0.0.0/0
+//	    route whose target is an InternetGateway. Falls back to the
+//	    VPC's "main" route table when no explicit
+//	    SubnetRouteTableAssociation links the subnet — same default
+//	    AWS itself applies.
 //
 // "Effectively public" for an RDS instance: PubliclyAccessible=true
 // AND at least one constituent subnet (from its DBSubnetGroup) is

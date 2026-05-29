@@ -10,12 +10,12 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	coreplan "gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/plan"
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/auth"
+	"github.com/cloudbooster-io/cbx-cli/internal/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/plan"
 )
 
 func newPlanCmd() *cobra.Command {

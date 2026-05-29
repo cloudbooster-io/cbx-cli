@@ -16,7 +16,7 @@ import (
 //   - explicit ["all"]                     → enumerated via DescribeRegions
 //   - empty list + profile has default     → single-element list of that
 //   - empty list + no default              → returns ErrNoRegion; caller
-//                                            decides whether to prompt
+//     decides whether to prompt
 //
 // `ec2DescribeRegions` is parameterised so tests can inject a fake.
 func ResolveRegions(ctx context.Context, c awsCfg, requested []string) ([]string, error) {

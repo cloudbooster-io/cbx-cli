@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	auditcore "github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // focusedPane controls which pane receives navigation keys when both
@@ -40,10 +40,10 @@ const (
 // Model is the Bubble Tea model for the interactive audit TUI.
 type Model struct {
 	// Immutable inputs
-	findings        []auditcore.Finding
-	contextLine     string
-	reportPath      string // markdown report (.md)
-	htmlReportPath  string // browser report (.html), optional
+	findings       []auditcore.Finding
+	contextLine    string
+	reportPath     string // markdown report (.md)
+	htmlReportPath string // browser report (.html), optional
 
 	// Derived view state
 	filtered []int
@@ -101,7 +101,7 @@ func NewModel(findings []auditcore.Finding) Model {
 	return m
 }
 
-// WithContext sets the header line (e.g. "AWS · 839000215051 · eu-central-1").
+// WithContext sets the header line (e.g. "AWS · 123456789012 · eu-central-1").
 func (m Model) WithContext(line string) Model {
 	m.contextLine = line
 	return m

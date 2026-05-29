@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // BuildArchitectureDiagram emits a mermaid `architecture-beta` diagram
@@ -65,8 +65,8 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 	regionGroup := "g_region"
 	sb.WriteString(fmt.Sprintf("    group %s(cloud)[REGION]\n", regionGroup))
 	type subnetGroup struct {
-		id  string
-		sn  *topoSubnet
+		id string
+		sn *topoSubnet
 	}
 	var subnetGroups []subnetGroup
 	for vIdx, v := range root.vpcs {

@@ -29,12 +29,12 @@ const (
 
 // UserAgent is sent on every auth-flow HTTP request so the platform can
 // render a friendly device label on the Devices panel (e.g.
-// ``cbx-cli/1.26.2 (darwin/arm64)``). Defaults to a runtime-derived value;
-// ``main`` overrides it at startup with the ldflags-baked version so
+// “cbx-cli/1.26.2 (darwin/arm64)“). Defaults to a runtime-derived value;
+// “main“ overrides it at startup with the ldflags-baked version so
 // release builds report their real version instead of the dev placeholder.
 var UserAgent = defaultUserAgent("dev")
 
-// SetVersion lets ``main`` inject the ldflags-baked CLI version into the
+// SetVersion lets “main“ inject the ldflags-baked CLI version into the
 // User-Agent. Call once at startup before any auth call.
 func SetVersion(v string) {
 	if v == "" {

@@ -49,10 +49,10 @@ type AWSDiscoveryUI struct {
 	// scout-phase state. scoutTotal == 0 means no scout is running.
 	scoutTotal   int
 	scoutDone    int
-	scoutResults map[string]int  // region -> count, ordered separately
-	scoutOrder   []string         // insertion-ordered region list
-	scoutActive  []string         // narrowed list after scout
-	scoutPhase   bool             // currently in scout phase
+	scoutResults map[string]int // region -> count, ordered separately
+	scoutOrder   []string       // insertion-ordered region list
+	scoutActive  []string       // narrowed list after scout
+	scoutPhase   bool           // currently in scout phase
 
 	// in-flight enrichment state — the most recent EnrichProgress
 	// event. Cleared on the next JobDone for this (region,type).

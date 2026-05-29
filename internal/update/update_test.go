@@ -69,17 +69,15 @@ func TestCheckerCheck_CacheMiss(t *testing.T) {
 	defer os.Unsetenv("HOME")
 
 	mockAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// GitLab releases endpoint, path-escaped project id.
-		const wantPath = "/cloudbooster.io%2Fplatform%2Fcbx-cli/releases/permalink/latest"
+		// GitHub releases endpoint: /repos/<owner>/<repo>/releases/latest.
+		const wantPath = "/cloudbooster-io/cbx-cli/releases/latest"
 		if r.URL.EscapedPath() != wantPath {
 			t.Fatalf("unexpected path: %s", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tag_name": "v1.5.0",
-			"_links": map[string]string{
-				"self": "https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/releases/v1.5.0",
-			},
+			"html_url": "https://github.com/cloudbooster-io/cbx-cli/releases/tag/v1.5.0",
 		})
 	}))
 	defer mockAPI.Close()
@@ -186,4 +184,3 @@ func TestCachePathXDG(t *testing.T) {
 		t.Fatalf("cachePath() = %q, want %q", got, want)
 	}
 }
-

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // DiscoverParams is the input to Discover. Kept as a struct so the
@@ -28,7 +28,7 @@ type DiscoverParams struct {
 	// The callback may be invoked from multiple goroutines concurrently
 	// during the fan-out phase, so implementations must be safe for
 	// concurrent use. Wired by the CLI for the live progress display;
-	// library callers (cb-cli, tests) typically leave this nil.
+	// library callers (downstream consumers, tests) typically leave this nil.
 	OnProgress func(ProgressEvent)
 
 	// Types overrides the curated CFN type list (discoverableCFNTypes).

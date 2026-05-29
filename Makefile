@@ -13,16 +13,16 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # Sentry DSN injected into the binary at build time. Override with
-# `make build SENTRY_DSN=https://...` for a fork (e.g. cb-cli), or set
+# `make build SENTRY_DSN=https://...` for a fork (e.g. downstream consumers), or set
 # SENTRY_DSN= (empty) for a build that disables telemetry transport
 # regardless of user opt-in. Goreleaser passes the cbx-cli DSN here.
 SENTRY_DSN ?= https://0a2aad426c5b03f26e243da64d2f5965@o4508150475390976.ingest.de.sentry.io/4511441278074960
 
 LDFLAGS := -ldflags "\
-  -X gitlab.com/cloudbooster.io/platform/cbx-cli/pkg/cmd.Version=$(VERSION) \
-  -X gitlab.com/cloudbooster.io/platform/cbx-cli/pkg/cmd.Commit=$(COMMIT) \
-  -X gitlab.com/cloudbooster.io/platform/cbx-cli/pkg/cmd.Date=$(DATE) \
-  -X gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry.defaultDSN=$(SENTRY_DSN)"
+  -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Version=$(VERSION) \
+  -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Commit=$(COMMIT) \
+  -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Date=$(DATE) \
+  -X github.com/cloudbooster-io/cbx-cli/internal/telemetry.defaultDSN=$(SENTRY_DSN)"
 
 all: build
 
@@ -35,6 +35,7 @@ test:
 test-e2e:
 	go test -v ./e2e/...
 
+# Maintainer-only: targets CloudBooster's internal staging API.
 test-e2e-staging:
 	CB_API_URL=$${CB_API_URL:-https://api.staging.cloudbooster.io} go test -v ./e2e/... -tags=e2e_staging
 

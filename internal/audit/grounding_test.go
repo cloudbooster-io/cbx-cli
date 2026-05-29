@@ -9,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 )
 
-// fakeKnowledgeServer stands up an httptest server that answers the
+// newFakeKnowledgeServer stands up an httptest server that answers the
 // three CB knowledge endpoints with predictable, content-stable bodies.
-// Returns the live *Client so tests can call BuildGrounding directly.
-func fakeKnowledgeServer(t *testing.T) (*knowledge.Client, func()) {
+func newFakeKnowledgeServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	envelope := func(data map[string]interface{}) string {
 		body, _ := json.Marshal(map[string]interface{}{
@@ -70,7 +69,25 @@ func fakeKnowledgeServer(t *testing.T) (*knowledge.Client, func()) {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	return srv
+}
+
+// fakeKnowledgeServer returns a knowledge.Client bound to a fresh fake
+// server plus its cleanup func, for tests that call BuildGrounding directly.
+func fakeKnowledgeServer(t *testing.T) (*knowledge.Client, func()) {
+	t.Helper()
+	srv := newFakeKnowledgeServer(t)
 	return knowledge.New(srv.URL), srv.Close
+}
+
+// useFakeKnowledgeBackend points CB_API_URL at a fresh fake knowledge
+// server for the duration of the test, so analyzer paths that resolve the
+// backend via resolvedCBAPIURL() stay hermetic (no real network).
+func useFakeKnowledgeBackend(t *testing.T) {
+	t.Helper()
+	srv := newFakeKnowledgeServer(t)
+	t.Cleanup(srv.Close)
+	t.Setenv(cbAPIURLEnv, srv.URL)
 }
 
 // TestBuildGrounding_StableAcrossInputShuffle is the load-bearing

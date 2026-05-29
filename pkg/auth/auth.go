@@ -1,10 +1,10 @@
 // Package auth re-exports authentication primitives so that downstream
-// modules (e.g. cb-cli) can verify login state without reaching into
+// modules (e.g. downstream consumers) can verify login state without reaching into
 // cbx-cli/internal/core/auth.
 package auth
 
 import (
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/auth"
 )
 
 // Keyring abstracts OS-native credential storage.
@@ -17,7 +17,7 @@ var NewKeyring = auth.NewKeyring
 var LoadToken = auth.LoadToken
 
 // AccessToken returns the access token from the keyring, or "" if
-// unauthenticated. Composition roots (e.g. cb-cli) call this and inject the
+// unauthenticated. Composition roots (e.g. downstream consumers) call this and inject the
 // result into NewAPIClient via ClientOptions.Token, so library construction
 // never touches the OS keychain directly.
 var AccessToken = auth.AccessToken

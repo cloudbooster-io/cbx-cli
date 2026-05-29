@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/telemetry"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/telemetry"
 
 	"github.com/spf13/cobra"
 )

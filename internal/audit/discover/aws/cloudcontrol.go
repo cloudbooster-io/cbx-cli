@@ -226,4 +226,3 @@ func dedupeByURN(in []DiscoveredResource) []DiscoveredResource {
 	}
 	return out
 }
-

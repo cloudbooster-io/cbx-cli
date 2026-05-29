@@ -3,8 +3,8 @@ package aws
 import (
 	"context"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // CloudControl exposes nearly everything we need for AWS::RDS::DBInstance

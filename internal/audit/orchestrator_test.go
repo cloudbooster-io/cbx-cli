@@ -314,24 +314,8 @@ func TestRunProvidersRespectsOverallTimeout(t *testing.T) {
 	}
 }
 
-// TestNoNetworkImports is a compile-time / vet-style guard that asserts
-// the audit package does not import network or API client packages.
-func TestNoNetworkImports(t *testing.T) {
-	// Since we are inside the audit package, a simple compile-time guarantee
-	 // is that this test file itself would fail to compile if net/http were
-	 // imported in any audit package file. We reinforce it with a runtime
-	 // check of the source files in this directory.
-	//
-	// A stronger check is done in the e2e suite (audit_no_api_imports).
-	// This unit test serves as a fast, local guard.
-	if _, ok := _auditPackageNetHTTPGuard(); ok {
-		t.Fatal("audit package must not import net/http")
-	}
-}
-
-// _auditPackageNetHTTPGuard exists solely so the test above has something
-// to call; the real protection is that any import of net/http in this
-// package would make compilation fail, which is caught by go vet / build.
-func _auditPackageNetHTTPGuard() (struct{}, bool) {
-	return struct{}{}, false
-}
+// NOTE: a former TestNoNetworkImports/_auditPackageNetHTTPGuard lived here but
+// was vacuous (the guard always returned false, so it never asserted anything)
+// and its premise no longer holds — the `cbx audit aws` grounded path
+// legitimately imports net/http to fetch CB knowledge. The real dependency
+// policy is enforced by the e2e suite's go-list-deps check.

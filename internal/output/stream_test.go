@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
 )
 
 func TestWriteStream(t *testing.T) {

@@ -3,7 +3,7 @@ package chat
 import (
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
 )
 
 // StreamAdapter wraps an llm.Stream so it can be consumed by the TUI stream

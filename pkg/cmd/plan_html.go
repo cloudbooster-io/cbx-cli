@@ -19,8 +19,8 @@ import (
 
 	"github.com/pkg/browser"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/assets"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/assets"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // heading represents a single TOC entry extracted from markdown.
@@ -291,8 +291,8 @@ func findStringEnd(s string, start int, quote byte) int {
 	return len(s)
 }
 
-func isDigit(b byte) bool   { return b >= '0' && b <= '9' }
-func isAlpha(b byte) bool   { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
+func isDigit(b byte) bool    { return b >= '0' && b <= '9' }
+func isAlpha(b byte) bool    { return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') }
 func isAlphaNum(b byte) bool { return isAlpha(b) || isDigit(b) }
 func isHexDigit(b byte) bool { return isDigit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }
 

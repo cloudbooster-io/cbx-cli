@@ -1,17 +1,17 @@
 package audit_test
 
-// Smoke test for the pkg/audit facade. cb-cli depends on these type
+// Smoke test for the pkg/audit facade. downstream consumers depends on these type
 // aliases and function vars resolving to the same symbols
 // internal/audit exposes; if a re-export is renamed or dropped this
-// test fails at compile time rather than silently breaking cb-cli at
+// test fails at compile time rather than silently breaking downstream consumers at
 // import.
 
 import (
 	"testing"
 
-	internalaudit "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
-	pkgaudit "gitlab.com/cloudbooster.io/platform/cbx-cli/pkg/audit"
+	internalaudit "github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	pkgaudit "github.com/cloudbooster-io/cbx-cli/pkg/audit"
 )
 
 func TestFacade_TypeAliasesIdentical(t *testing.T) {

@@ -5,8 +5,8 @@ filing issues and proposing changes.
 
 ## Filing issues
 
-Please open issues on the GitLab project:
-<https://gitlab.com/cloudbooster.io/platform/cbx-cli/-/issues>
+Please open issues on GitHub:
+<https://github.com/cloudbooster-io/cbx-cli/issues>
 
 When reporting a bug, include:
 
@@ -21,7 +21,7 @@ For security-sensitive reports, do **not** open a public issue — see
 ## Proposing changes
 
 1. Fork the repository (or create a branch if you have push access).
-2. Create a topic branch off `vibecode` (the integration branch).
+2. Create a topic branch off `main`.
 3. Make your change. Keep commits focused; one logical change per commit.
 4. Run the local checks before pushing:
 
@@ -30,8 +30,8 @@ For security-sensitive reports, do **not** open a public issue — see
    make test
    ```
 
-5. Open a Merge Request against `vibecode`. Reference any related Linear
-   ticket (e.g. `CB-123`) in the title and description.
+5. Open a Pull Request against `main`. Reference any related GitHub
+   issue (e.g. `#123`) in the title and description.
 6. The CI pipeline (lint + test) must pass before review.
 
 ## Development setup
@@ -39,18 +39,17 @@ For security-sensitive reports, do **not** open a public issue — see
 Build and test locally:
 
 ```sh
-make build   # produces ./cbx
+make build   # produces ./bin/cbx
 make test
 ```
 
-For deeper architecture and module layout, see the project README and the
-in-repo `PLAN.md`.
+For deeper architecture and module layout, see the project README.
 
 ## Code style
 
 - Go: standard `gofmt` / `goimports`. CI runs `golangci-lint`.
 - Keep public-facing CLI output stable; user-visible string changes should
-  be flagged in the MR description.
+  be flagged in the PR description.
 
 ## Licensing of contributions
 

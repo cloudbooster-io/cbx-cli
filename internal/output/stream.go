@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
 )
 
 // WriteStream consumes an LLM token stream and writes each token to w.

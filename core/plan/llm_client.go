@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // LLMPlanClient implements Client by delegating to an underlying LLM. If the

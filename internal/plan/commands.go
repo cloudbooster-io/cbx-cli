@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/tui/chat"
 )
 
 const maxFreeVariants = 2
@@ -249,5 +249,3 @@ func cmdQuit(session *Session) (string, error) {
 	}
 	return "Goodbye!", chat.ErrQuit
 }
-
-

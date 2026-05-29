@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	coreplan "gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/chat"
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/tui/chat"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

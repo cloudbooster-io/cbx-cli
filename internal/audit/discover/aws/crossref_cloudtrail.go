@@ -1,7 +1,7 @@
 package aws
 
 import (
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // computeTrailCoverage derives per-region CloudTrail coverage from

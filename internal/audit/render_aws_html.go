@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // RenderAWSHTML emits a self-contained HTML report intended to be

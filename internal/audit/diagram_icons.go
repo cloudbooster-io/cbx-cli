@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/assets"
+	"github.com/cloudbooster-io/cbx-cli/internal/assets"
 )
 
 // AWS service icons rendered as inline SVG.
@@ -214,9 +214,10 @@ func iconLabelLineHeight(iconSize int) int {
 
 // joinIconAndLabel composes an icon with a label underneath it.
 // Format matches the AWS Architecture Center reference diagrams:
-//   Icon
-//   {Service Name}        (bold, mid-weight gray)
-//   {resource-id}         (mono, lighter gray)
+//
+//	Icon
+//	{Service Name}        (bold, mid-weight gray)
+//	{resource-id}         (mono, lighter gray)
 //
 // Pass "" for label2 to skip the second line.
 func joinIconAndLabel(cfnType, monogram, label, label2 string, x, y, iconSize int) string {

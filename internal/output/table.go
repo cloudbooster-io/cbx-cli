@@ -164,7 +164,7 @@ func scaleCols(widths []int, available int) {
 	for remaining > 0 {
 		changed := false
 		for i := range widths {
-			maxW := int(float64(original[i]) * float64(available) / float64(total)) + 1
+			maxW := int(float64(original[i])*float64(available)/float64(total)) + 1
 			if widths[i] < maxW {
 				widths[i]++
 				remaining--

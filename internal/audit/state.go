@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // AuditState captures everything the diagram + report renderer needs

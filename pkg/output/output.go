@@ -1,10 +1,10 @@
 // Package output re-exports terminal formatting helpers so that downstream
-// modules (e.g. cb-cli) can emit consistent JSON, tables, and styled text
+// modules (e.g. downstream consumers) can emit consistent JSON, tables, and styled text
 // without reaching into cbx-cli/internal.
 package output
 
 import (
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // Envelope is the standard JSON response wrapper used when --json is set.

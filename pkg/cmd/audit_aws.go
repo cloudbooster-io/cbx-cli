@@ -8,12 +8,12 @@ import (
 	"os/exec"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	awsdisc "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/discover/aws"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
-	audittui "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/tui/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
+	awsdisc "github.com/cloudbooster-io/cbx-cli/internal/audit/discover/aws"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	audittui "github.com/cloudbooster-io/cbx-cli/internal/tui/audit"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -69,13 +69,14 @@ Discovery uses the CloudControl API across a curated set of CFN types
 permission errors are aggregated and surfaced cleanly; pass --diagnose
 to print every denied API call plus a recommended IAM policy patch.
 
-Findings are always grounded in CloudBooster's curated AWS knowledge
-via cbx-mcp tool calls invoked through the Claude Code CLI. This is
-not optional: the audit ships discovered resources (plus
-cb_describer_* enrichment from the per-service describers) to the
-model as context, then matches each finding to a specific CB
-knowledge entry. Claude Code must be on PATH and cbx-mcp must be
-available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00).`,
+Findings are always grounded in CloudBooster's curated AWS knowledge.
+This is not optional: the audit fetches the relevant CB knowledge (AWS
+primitives, best practices, and composition guidance) directly over
+CloudBooster's knowledge API, then inlines it into the prompt alongside
+the discovered resources (plus cb_describer_* enrichment from the
+per-service describers) and runs Claude Code (` + "`claude -p`" + `) to match
+each finding to that grounding. Claude Code must be on PATH. Use
+--llm-max-cost to cap the per-run cost (USD; default 2.00).`,
 		Example: `  # Audit the default AWS profile in its configured region
   cbx audit aws
 
@@ -235,7 +236,7 @@ available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00
 			// CB-grounded LLM analysis is always-on for `cbx audit aws`:
 			// the value of the audit IS the grounding in CB's curated
 			// knowledge, so the native-rules / mock-scanners path is no
-			// longer reachable from the CLI. Library callers in cb-cli
+			// longer reachable from the CLI. Library callers in downstream consumers
 			// can still construct different Options if they need to.
 			opts := audit.Options{
 				AWS:               true,
@@ -251,7 +252,7 @@ available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00
 
 			// RunFromResources collapses the previous bespoke flow
 			// (CollectFromResources + group.Group + WriteFile) into one
-			// entry point that cb-cli can call to get the same envelope
+			// entry point that downstream consumers can call to get the same envelope
 			// shape. The AWSAuditContext drives RenderAWSMarkdown so the
 			// on-disk report carries the §7.7 + §7.12 audit header and
 			// per-component finding sections. The AWS-specific stderr
@@ -299,7 +300,19 @@ available on disk. Use --llm-max-cost to cap the per-run cost (USD; default 2.00
 					"components":                 result.Components,
 					"permission_errors":          permErrsToJSON(discResult.PermissionErr),
 				}
-				return output.PrintJSON(payload, nil)
+				if err := output.PrintJSON(payload, nil); err != nil {
+					return err
+				}
+				// JSON mode must still signal severity/partial-failure via the
+				// exit code, exactly like the human path below — otherwise
+				// `cbx audit aws --json` always exits 0 even on critical findings.
+				if severityErr := audit.ExitWithSeverity(result.Findings); severityErr != nil {
+					return severityErr
+				}
+				if runErr != nil {
+					return &audit.ExitCodeError{Code: 1}
+				}
+				return nil
 			}
 
 			// Plain rendering. The label is the "stateFile" identifier

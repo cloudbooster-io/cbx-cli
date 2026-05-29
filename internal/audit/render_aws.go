@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // AWSAuditContext carries the live-AWS audit metadata RenderAWSMarkdown
@@ -33,12 +33,12 @@ type AWSAuditContext struct {
 //   - TL;DR alert (CAUTION/WARNING/NOTE depending on worst severity)
 //   - Table of contents linking to severity sections
 //   - Severity-grouped finding cards (CRITICAL → INFO), each card has:
-//       - Title
-//       - GitHub alert block keyed to severity (CAUTION/WARNING/IMPORTANT/NOTE)
-//       - Resource as a code block (not inline) so long URNs wrap cleanly
-//       - Service / Rule / Component as a metadata line
-//       - Description as prose
-//       - Remediation in a quoted callout with a wrench icon
+//   - Title
+//   - GitHub alert block keyed to severity (CAUTION/WARNING/IMPORTANT/NOTE)
+//   - Resource as a code block (not inline) so long URNs wrap cleanly
+//   - Service / Rule / Component as a metadata line
+//   - Description as prose
+//   - Remediation in a quoted callout with a wrench icon
 //
 // GitHub-flavoured alerts (`> [!CAUTION]`) render as colored callouts
 // in GitHub, VS Code, Obsidian, and most modern Markdown viewers; they

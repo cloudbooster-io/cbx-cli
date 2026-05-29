@@ -1,23 +1,23 @@
 // Package audit re-exports the cbx-cli audit surface so downstream
-// modules — notably the proprietary cb-cli — can consume Findings,
+// modules — notably a proprietary downstream edition — can consume Findings,
 // Components, Options, and the entry points (Run, Collect,
 // CollectFromResources) without reaching into internal/audit.
 //
 // Per CLAUDE.md, packages under pkg/ are pure facades: type aliases
 // and var X = internal.X re-exports. No logic lives here. Add a
-// re-export when (and only when) cb-cli legitimately needs the symbol
+// re-export when (and only when) downstream consumers legitimately needs the symbol
 // — every entry is part of the semver-public contract.
 package audit
 
 import (
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // --- core finding / report types ---
 
 // Finding is a single audit finding emitted by a FindingProvider. The
-// JSON shape is part of the contract — cb-cli and downstream consumers
+// JSON shape is part of the contract — downstream consumers and downstream consumers
 // rely on the field names + tags exposed here.
 type Finding = audit.Finding
 
@@ -39,7 +39,7 @@ type DiscoveredResource = audit.DiscoveredResource
 
 // Component is one named grouping of resources (tag-based or
 // CB-primitive). Populated by `cbx audit aws`; empty for state/source
-// mode runs. Lives in internal/audit/group; re-exported here so cb-cli
+// mode runs. Lives in internal/audit/group; re-exported here so downstream consumers
 // can render Components without taking a transitive group import.
 type Component = group.Component
 
@@ -95,7 +95,7 @@ var CollectFromResources = audit.CollectFromResources
 // RunFromResources is the AWS-mode mirror of Run: it takes a pre-
 // discovered resource set, runs the scanner pipeline, groups
 // resources, writes the markdown report, and returns a populated
-// Result. cb-cli uses this to consume the same envelope the CLI
+// Result. downstream consumers uses this to consume the same envelope the CLI
 // produces — Findings + Components attached, ReportPath populated.
 // A non-nil AWSAuditContext drives the audit-flavoured markdown
 // renderer (header + Components section + Account-wide findings);

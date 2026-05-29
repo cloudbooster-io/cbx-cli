@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	auditcore "github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // severityRank maps severity strings to numeric ranks for sorting.

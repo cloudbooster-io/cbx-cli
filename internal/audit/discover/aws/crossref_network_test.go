@@ -168,7 +168,7 @@ func TestCrossReferenceLambdaRole_CopiesAdminFlag(t *testing.T) {
 			Inputs: map[string]any{
 				"RoleName": "admin-role",
 				"Arn":      "arn:aws:iam::123:role/admin-role",
-				"cb_describer_admin_managed_policy_attached":  true,
+				"cb_describer_admin_managed_policy_attached":    true,
 				"cb_describer_inline_policy_has_wildcard_allow": false,
 			},
 		},

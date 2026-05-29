@@ -1,8 +1,8 @@
 package plan
 
 import (
-	coreplan "gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // Type aliases so existing internal/plan/ code can continue using short names.

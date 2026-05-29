@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/keychain"
+	"github.com/cloudbooster-io/cbx-cli/internal/keychain"
 )
 
 // Provider represents a supported LLM provider.

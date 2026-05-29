@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/assets"
+	"github.com/cloudbooster-io/cbx-cli/internal/assets"
 )
 
 func TestMarkdownToHTML(t *testing.T) {

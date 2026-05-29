@@ -30,8 +30,8 @@ import (
 // on the finding card. The far worse failure mode is missing a finding
 // that exists.
 func crossReferenceKMS(resources []DiscoveredResource) {
-	keyByARN := map[string]int{}   // ARN → index into resources
-	keyByID := map[string]int{}    // bare KeyId (uuid) → index
+	keyByARN := map[string]int{} // ARN → index into resources
+	keyByID := map[string]int{}  // bare KeyId (uuid) → index
 	aliasToARN := map[string]string{}
 
 	for i, r := range resources {

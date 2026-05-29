@@ -35,9 +35,9 @@ func TestTableTruncate(t *testing.T) {
 	// Force a very narrow terminal by temporarily replacing term.GetSize.
 	// Since we can't easily mock term.GetSize, we test truncate directly.
 	cases := []struct {
-		in      string
-		max     int
-		want    string
+		in   string
+		max  int
+		want string
 	}{
 		{"hello", 10, "hello"},
 		{"hello world", 8, "hello..."},

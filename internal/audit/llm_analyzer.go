@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/core/plan"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/llm"
+	"github.com/cloudbooster-io/cbx-cli/core/plan"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 )
 
 // llmStreamer is the minimal subset of core/plan.LLMCaller that the analyzer

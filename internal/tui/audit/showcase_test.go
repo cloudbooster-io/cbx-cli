@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	auditcore "github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // TestShowcase renders the TUI at a handful of realistic sizes so a
@@ -36,8 +36,8 @@ func TestShowcase(t *testing.T) {
 	}
 	for _, c := range cases {
 		m := NewModel(findings).
-			WithContext("AWS · 839000215051 (platform-prod) · eu-central-1").
-			WithReportPath("/tmp/839000215051_audit_report.md")
+			WithContext("AWS · 123456789012 (platform-prod) · eu-central-1").
+			WithReportPath("/tmp/123456789012_audit_report.md")
 		m.SetSize(c.w, c.h)
 		if c.setup != nil {
 			c.setup(&m)

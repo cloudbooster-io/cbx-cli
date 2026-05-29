@@ -1,4 +1,4 @@
-module gitlab.com/cloudbooster.io/platform/cbx-cli
+module github.com/cloudbooster-io/cbx-cli
 
 go 1.25.0
 

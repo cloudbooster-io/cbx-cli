@@ -18,17 +18,17 @@ import (
 //   - terraform:      *.tf, *.tf.json
 //   - helm:           any file named Chart.yaml (anywhere under dir)
 //   - cloudformation: *.yaml/*.yml/*.json containing AWSTemplateFormatVersion
-//                     or a top-level "Resources:" with an AWS:: type
+//     or a top-level "Resources:" with an AWS:: type
 //   - k8s:            *.yaml/*.yml with apiVersion: + kind:
 //
 // Helm is checked before generic YAML so a chart's templates/*.yaml don't
 // accidentally classify the dir as plain k8s.
 func detectIaCType(dir string) string {
 	var (
-		sawTerraform     bool
-		sawHelm          bool
+		sawTerraform      bool
+		sawHelm           bool
 		sawCloudFormation bool
-		sawK8s           bool
+		sawK8s            bool
 	)
 
 	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {

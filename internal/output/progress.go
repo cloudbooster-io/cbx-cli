@@ -10,12 +10,12 @@ import (
 
 // Progress renders a bounded progress bar.
 type Progress struct {
-	width    int
-	writer   io.Writer
-	start    time.Time
-	fillRune rune
+	width     int
+	writer    io.Writer
+	start     time.Time
+	fillRune  rune
 	emptyRune rune
-	nowFn    func() time.Time
+	nowFn     func() time.Time
 }
 
 // NewProgress creates a Progress that writes to stderr.

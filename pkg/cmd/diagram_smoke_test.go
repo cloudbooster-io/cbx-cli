@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 )
 
 // TestArchitectureDiagram_RoundTrip exercises the full RenderAWSHTML +
@@ -172,8 +172,8 @@ func TestArchitectureDiagram_RoundTrip(t *testing.T) {
 	}
 
 	ctx := audit.AWSAuditContext{
-		AccountID:  "839000215051",
-		Identity:   "arn:aws:iam::839000215051:user/cbx-audit",
+		AccountID:  "123456789012",
+		Identity:   "arn:aws:iam::123456789012:user/cbx-audit",
 		Regions:    []string{"us-east-1"},
 		EventCount: 117,
 	}

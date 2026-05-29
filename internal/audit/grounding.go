@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 )
 
 // GroundingBundle is the frozen, fully-fetched CB-knowledge context the

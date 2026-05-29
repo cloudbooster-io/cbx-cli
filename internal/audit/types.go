@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // ErrSourceModeUnsupported is returned by FindingProvider.ScanSource when a
@@ -162,9 +162,10 @@ type Options struct {
 	// default" (defaultLLMMaxBytesPerFile).
 	LLMMaxBytesPerFile int
 
-	// CBKnowledge selects the Phase F grounded path: the LLM analyzer
-	// spawns a `claude -p` subprocess wired to cbx-mcp via --mcp-config and
-	// is instructed to cite a CB-knowledge tool call on every finding.
+	// CBKnowledge selects the Phase F grounded path: the analyzer fetches
+	// CloudBooster's curated AWS knowledge directly over the CB knowledge
+	// API (Go-side), inlines it into the prompt, and runs a `claude -p`
+	// subprocess (no MCP) instructed to cite that grounding on every finding.
 	// Only valid when LLMProvider == ClaudeCodeProvider.
 	CBKnowledge bool
 

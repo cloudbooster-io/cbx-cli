@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/group"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // Result holds the outcome of an audit run.
@@ -34,7 +34,7 @@ type Result struct {
 	// Components is the post-discovery grouping output. Populated by the
 	// `cbx audit aws` subcommand from the tag-based + CB-primitive lenses
 	// (see internal/audit/group); empty for state / source mode where no
-	// grouping pass runs. Read by cb-cli through pkg/audit so the
+	// grouping pass runs. Read by downstream consumers through pkg/audit so the
 	// proprietary edition can render the same component sections without
 	// re-importing internal/audit/group.
 	Components []group.Component `json:"components,omitempty"`
@@ -54,7 +54,7 @@ type Result struct {
 	DiagramSVG string `json:"-"`
 
 	// DiagramSVGFile is the basename of the sibling SVG file the
-	// markdown report should link to (e.g. "839000215051_audit_report.svg").
+	// markdown report should link to (e.g. "123456789012_audit_report.svg").
 	// When non-empty, RenderAWSMarkdown emits an
 	// `![Architecture](file.svg)` image tag at the Architecture
 	// section; markdown viewers that sanitize inline <svg> still
@@ -329,7 +329,7 @@ func validateSourceDir(dir string) error {
 // pre-discovered []DiscoveredResource (assembled by the AWS
 // subcommand's CloudControl walk + per-service describers), runs the
 // scanner pipeline, groups the resources, writes the markdown report,
-// and returns a populated Result. cb-cli calls this through pkg/audit
+// and returns a populated Result. downstream consumers calls this through pkg/audit
 // to consume the same envelope the CLI produces.
 //
 // Grouping uses CFNTypeToCBPrimitive — AWS audits always emit CFN-

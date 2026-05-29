@@ -99,10 +99,10 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 	switch {
 	case err == nil && pab.PublicAccessBlockConfiguration != nil:
 		r.Inputs["cb_describer_public_access_block"] = map[string]any{
-			"block_public_acls":         deref(pab.PublicAccessBlockConfiguration.BlockPublicAcls),
-			"block_public_policy":       deref(pab.PublicAccessBlockConfiguration.BlockPublicPolicy),
-			"ignore_public_acls":        deref(pab.PublicAccessBlockConfiguration.IgnorePublicAcls),
-			"restrict_public_buckets":   deref(pab.PublicAccessBlockConfiguration.RestrictPublicBuckets),
+			"block_public_acls":       deref(pab.PublicAccessBlockConfiguration.BlockPublicAcls),
+			"block_public_policy":     deref(pab.PublicAccessBlockConfiguration.BlockPublicPolicy),
+			"ignore_public_acls":      deref(pab.PublicAccessBlockConfiguration.IgnorePublicAcls),
+			"restrict_public_buckets": deref(pab.PublicAccessBlockConfiguration.RestrictPublicBuckets),
 		}
 	case isNoSuchPublicAccessBlock(err):
 		// Distinct signal from "we don't know" — the bucket genuinely

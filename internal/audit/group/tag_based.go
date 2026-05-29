@@ -3,7 +3,7 @@ package group
 import (
 	"sort"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // groupByTags assigns each resource to the component named after its

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/knowledge"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 )
 
 // requireLocalCBBackend skips the test when the local platform-app dev

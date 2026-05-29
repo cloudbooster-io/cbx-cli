@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 make build              # → bin/cbx, with -ldflags injecting Version/Commit/Date into pkg/cmd
 make test               # go test ./... (unit + local e2e)
 make test-e2e           # go test -v ./e2e/...
-make test-e2e-staging   # e2e against https://api.staging.cloudbooster.io (build tag: e2e_staging)
+make test-e2e-staging   # e2e against a staging API (build tag: e2e_staging; maintainer-only)
 make vet                # go vet ./...
 make lint               # golangci-lint run ./...
 make codegen            # regenerate core/api/v1/client.gen.go from api/openapi.yaml
@@ -19,18 +19,18 @@ go test ./internal/audit -run TestParsePulumiState
 go test -v -tags=e2e_staging ./e2e -run TestStaging_Login
 ```
 
-CI (GitLab) runs `validate` (vet + build), `codegen-check`, `go test ./...`, mermaid fixture render, an `e2e-matrix` over linux+darwin runners, and an `e2e-staging` job that gates merges. Smoke-brew runs only on tags. Go version pinned to 1.25 in `.gitlab-ci.yml` (module declares 1.25.0).
+CI runs `validate` (vet + build), `codegen-check`, `go test ./...`, a mermaid fixture render, an `e2e` job, and an `e2e-staging` job that gates merges (see `.gitlab-ci.yml`). Go version pinned to 1.25 (module declares 1.25.0).
 
 ## Open-core context (load-bearing)
 
-`cbx-cli` is the **OSS Apache-2.0** edition. A sibling proprietary `cb-cli` (currently a placeholder in `../cb-cli/`) **depends on `cbx-cli` as a library — never forks**. That dependency direction is the entire reason for the layered layout below: `pkg/` is the contract `cb-cli` consumes. See `../platform-app/agent-arch-talks/rework-2.5.1/01-strategy.md` and `adrs/adr-001-open-core-split.md` for the why.
+`cbx-cli` is the **OSS Apache-2.0** edition. It is consumed **as a library** by downstream tools — `pkg/` is the contract those consumers depend on, which is the entire reason for the layered layout below.
 
 Implications you must respect:
-- **Any breaking change in `pkg/` is a breaking change for `cb-cli`.** Treat `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
-- **`cbx audit` is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to the audit path; mock scanners are the default specifically to keep this property. The carve-out is `cbx audit aws`, which (a) reads live AWS via the SDK (single-account, ad-hoc, user-initiated), and (b) **always** ships discovered resources to Claude Code with grounded `cbx-mcp` tool calls into CB's curated knowledge — that grounding is the entire value of the subcommand, not optional. `cbx audit aws` therefore hard-requires `claude` on PATH and `cbx-mcp` available on disk; it still makes zero CB *API* calls. Library callers in `pkg/audit` can still build non-LLM audits (used by `cb-cli` and the state-file parsers), but the `cbx audit aws` CLI surface no longer exposes that path. See `ai_space/analyses/2026-05-23-cbx-audit-live-aws-plan.md` for the boundary vs. the hosted multi-account product in platform-app.
+- **Any breaking change in `pkg/` is a breaking change for downstream library consumers.** Treat `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
+- **`cbx audit` (state/source modes) is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to those paths; mock scanners are the default specifically to keep this property. The carve-out is `cbx audit aws`, which (a) reads live AWS via the SDK (single-account, ad-hoc, user-initiated), and (b) **always** grounds findings in CloudBooster's curated AWS knowledge: it fetches that knowledge directly over the CB knowledge API (`/v1/knowledge/aws/*`), inlines it into the prompt alongside discovered resources, and runs `claude -p` (no MCP) to cite it — that grounding is the entire value of the subcommand, not optional. So `cbx audit aws` **does** make CB knowledge-API calls and hard-requires `claude` on PATH. Library callers in `pkg/audit` can still build non-LLM audits (used by downstream consumers and the state-file parsers), but the `cbx audit aws` CLI surface no longer exposes that path.
 - **`cbx plan` is BYO-LLM by default** (anonymous tier; user pays the LLM provider, CB pays nothing). Keep it functional without a CB login.
-- **State parsers in `internal/audit/parsers/` are shared substrate** with the hosted "import existing infrastructure" feature in `platform-app`. Changing `DiscoveredResource` shape or parser semantics has cross-repo impact — coordinate.
-- A planned `cbx mcp serve` subcommand will embed an MCP server (Day-2 feature, not yet shipped). When it lands, it must proxy the same `api.cloudbooster.io/v1/*` contract that `cbx-mcp` (Python sibling) uses.
+- **State parsers in `internal/audit/parsers/`** are shared substrate with CloudBooster's hosted "import existing infrastructure" feature. Changing `DiscoveredResource` shape or parser semantics has cross-repo impact — coordinate with maintainers.
+- A planned `cbx mcp serve` subcommand will embed an MCP server (Day-2 feature, not yet shipped). When it lands, it must proxy the same `api.cloudbooster.io/v1/*` contract.
 
 ## Repository layout — the layering rule
 
@@ -41,10 +41,10 @@ core/               cross-module shared logic — core/api/v1/ (generated), core
 internal/           private to cbx-cli — audit/, plan/, llm/, tui/, output/, config/, …
 ```
 
-- `cmd/cbx/main.go` is **deliberately tiny** (10 lines). All cobra wiring lives in `pkg/cmd/` so it can be embedded by `cb-cli`.
+- `cmd/cbx/main.go` is **deliberately tiny** (10 lines). All cobra wiring lives in `pkg/cmd/` so it can be embedded by downstream consumers.
 - `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output` are **pure facades**: type aliases and `var X = internal.X` re-exports only. Don't add logic here — implement in `internal/<pkg>` and re-export.
 - `core/api/v1/client.gen.go` is generated from `api/openapi.yaml` via `tools/codegen/generate.sh` (uses `go tool oapi-codegen`). Never hand-edit; CI's `codegen-check` job will fail. Hand-written companions (`client.go`, `auth.go`, `retry.go`, `ratelimit.go`) wrap the generated client.
-- The API target is the **public** `api.cloudbooster.io/v1/*` surface (anonymous → free → paid tiers, API-key auth). Do **not** call the platform-app **internal** API at `app.cloudbooster.io/api/v1/*` (cookie + CSRF, free to evolve, web-only).
+- The API target is the **public** `api.cloudbooster.io/v1/*` surface (anonymous → free → paid tiers, API-key auth). Target only this public surface.
 - `internal/audit` and `internal/plan` are the two large feature areas; both have a CLI entry in `pkg/cmd/{audit,plan}.go` and a Bubble Tea TUI in `internal/tui/{audit,chat}`.
 
 ## Audit pipeline
@@ -59,11 +59,11 @@ State-file parsing has a 100 MB guard with a `--yes` bypass (see `Options.Yes` i
 
 `cbx plan "<intent>"` runs either headless (`pkg/cmd/plan.go:runOneShot`) or in a Bubble Tea chat TUI (`internal/tui/chat`). The plan engine itself is in `core/plan/` (importable by other modules); `internal/plan/` is the REPL/command wiring on top. LLM providers (Claude, Codex/OpenAI) are in `internal/core/llm`, with credentials in the OS keyring via `internal/core/auth/keyring.go`.
 
-A plan run requires an LLM provider configured (`cbx llm login claude|openai|ollama`) — without it `runE` returns early. Output artifacts are `plan.adr.md` + `plan.d2` (or `--diagram-format mermaid`) written to the working directory; HTML preview is opt-in via `--preview`.
+A plan run requires an LLM provider configured (`cbx llm login claude|openai|ollama`) — without it `runE` returns early. Output artifacts are `plan.md` + `plan.d2` (or `--diagram-format mermaid`) written to the working directory; HTML preview is opt-in via `--preview`.
 
 ## Output / JSON contract
 
-All commands respect a global `--json` flag. JSON output **must** go through `internal/output.WriteJSON` / `PrintJSON`, which wraps payloads in an `Envelope{Data, Error}`. Errors emitted as JSON use `JSONError` / `JSONErrorf` to build the `ErrDetail`. Don't directly `json.Marshal` to stdout — that breaks the wrapper contract and the downstream `cb-cli` consumers depending on it via `pkg/output`.
+All commands respect a global `--json` flag. JSON output **must** go through `internal/output.WriteJSON` / `PrintJSON`, which wraps payloads in an `Envelope{Data, Error}`. Errors emitted as JSON use `JSONError` / `JSONErrorf` to build the `ErrDetail`. Don't directly `json.Marshal` to stdout — that breaks the wrapper contract and the downstream consumers depending on it via `pkg/output`.
 
 Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` set in the root cobra `PersistentPreRunE`. Respect `IsQuiet()` and `Enabled()` rather than reading the cobra flags directly from inside `internal/`.
 
@@ -73,12 +73,11 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 
 ## Workflow specifics for this repo
 
-- **Forge is GitLab.** Use `glab` for MR / pipeline / issue interaction — never raw `curl`. The branch model uses `vibecode` as the integration branch (see `CONTRIBUTING.md`); MRs target `vibecode`, not `main`.
-- **Linear ticket convention:** branch and commit prefixes are `CB-NNN` (e.g. `CB-443: L1.2.2 — …`). The `Lx.y.z` suffix tracks subtasks within a parent; keep that style when adding new commits in a series.
-- **Branch hygiene — every WIP gets a worktree.** Non-trivial feature work runs in its own worktree (`git worktree add ../cbx-cli-<branch> -b feat/<topic>`), so `vibecode` stays clean for fast switching. Merge to `vibecode` as soon as CI is green, then **delete both the branch and the worktree the same hour** (`git branch -d feat/<topic> && git worktree remove ../cbx-cli-<branch>`). A long-lived `feat/*` branch without an active worktree is a smell: it's either ready to merge or ready to delete. Housekeeping commits (docs, gitignore, planning notes) can go straight to `vibecode` without a branch.
-- E2E tests against staging are gated behind the `e2e_staging` build tag and need `CB_API_URL` (default `https://api.staging.cloudbooster.io`).
-- **Release distribution** is GoReleaser → Homebrew tap (`cloudbooster-io/homebrew-tap`) + Scoop bucket + GitLab Releases (will move to GitHub Releases post-migration), with Cosign signing and Syft SBOM. `make test-smoke-brew` / `scripts/smoke-brew.sh` post-release verify the brew install path.
+- **Contributions go through GitHub pull requests against `main`** — see `CONTRIBUTING.md`. Reference any related GitHub issue in commits/PRs.
+- **Topic branches off `main`**, kept short-lived; one logical change per commit.
+- E2E tests against staging are gated behind the `e2e_staging` build tag and need `CB_API_URL` (maintainer-only).
+- **Release distribution** is GoReleaser → Homebrew tap (`cloudbooster-io/homebrew-tap`) + Scoop bucket + GitHub Releases, with Cosign signing and Syft SBOM. `make test-smoke-brew` / `scripts/smoke-brew.sh` verify the brew install path post-release.
 
 ## Docs site is partly aspirational
 
-`../documentation/content/docs/troubleshooting/cbx-{plan,audit}.mdx` and adjacent pages describe flags and subcommands that **do not exist yet** in this repo (e.g. `cbx accounts add aws`, `cbx plan --validate`, `--no-adr`, `--dry-run`, `--format json` on `plan`). Treat the docs as forward-looking spec, not a source of truth for what's implemented. When adding new flags, check that doc set so naming stays consistent with what's been promised publicly.
+The public documentation site describes some flags and subcommands that **do not exist yet** in this repo (e.g. `cbx accounts add aws`, `cbx plan --validate`, `--no-adr`, `--dry-run`, `--format json` on `plan`). Treat the docs as forward-looking spec, not a source of truth for what's implemented. When adding new flags, check the published docs so naming stays consistent with what's been promised publicly.

@@ -13,9 +13,9 @@
 // Typical dev loop:
 //
 //  1. Run a real audit once: `cbx audit aws --region eu-central-1 --cb-knowledge`
-//     — produces 839000215051_audit_report.md + .html + .state.json.
+//     — produces 123456789012_audit_report.md + .html + .state.json.
 //  2. Iterate on diagram_svg.go / diagram_icons.go.
-//  3. `go run ./tools/diagram-replay 839000215051_audit_report.state.json`
+//  3. `go run ./tools/diagram-replay 123456789012_audit_report.state.json`
 //     — refreshes the HTML in <1s.
 //  4. Reload the file:// URL in the browser.
 //
@@ -29,7 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 func main() {

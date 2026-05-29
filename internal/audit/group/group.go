@@ -12,7 +12,7 @@ package group
 import (
 	"sort"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // Component is one named grouping of resources. The grouping is the

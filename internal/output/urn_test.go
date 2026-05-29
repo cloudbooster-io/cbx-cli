@@ -4,7 +4,7 @@ import "testing"
 
 func TestParseURN(t *testing.T) {
 	cases := []struct {
-		urn                        string
+		urn                         string
 		service, kind, name, region string
 	}{
 		{

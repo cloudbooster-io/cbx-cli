@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/smithy-go"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 // gatherAccountPosture runs the account-level probes in parallel and

@@ -27,12 +27,10 @@ const defaultLLMMaxCostUSD = 2.00
 const cbAPIURLEnv = "CB_API_URL"
 
 // defaultCBAPIURL is the CloudBooster knowledge backend the audit
-// grounds against by default. Currently pointed at the local
-// platform-app dev backend (host-published on port 18000) because
-// api.cloudbooster.io is not yet reachable from outside the cluster.
-// Flip this to the production URL once it ships; override via
-// CB_API_URL for any other endpoint.
-const defaultCBAPIURL = "http://localhost:18000"
+// grounds against by default: the public CloudBooster API. Override via
+// CB_API_URL to point at a local dev backend (e.g. on port 18000) or
+// any other endpoint.
+const defaultCBAPIURL = "https://api.cloudbooster.io"
 
 // GroundingEvent records one CB-knowledge fetch as a flat
 // (tool, input, result) triple. Historically these came from parsing
@@ -112,7 +110,7 @@ func preflightCBBackend(apiURL string) error {
 	resp, err := client.Get(healthURL)
 	if err != nil {
 		return fmt.Errorf(
-			"CB knowledge backend at %s is unreachable: %v\n  set %s to a reachable backend (e.g. http://localhost:18000 for a local platform-app)",
+			"CB knowledge backend at %s is unreachable: %v\n  set %s to a reachable backend (e.g. http://localhost:18000 for a local dev backend)",
 			apiURL, err, cbAPIURLEnv,
 		)
 	}

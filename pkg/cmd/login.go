@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	v1 "gitlab.com/cloudbooster.io/platform/cbx-cli/core/api/v1"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/auth"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	v1 "github.com/cloudbooster-io/cbx-cli/core/api/v1"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/auth"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -257,7 +257,7 @@ func renderNotLoggedInCard() string {
 		Rows: []output.CardRow{
 			{Key: "account", Value: output.Dim.Render("—")},
 		},
-		Footer: output.Dim.Render(output.Symbol("arrow") + " run ") +
+		Footer: output.Dim.Render(output.Symbol("arrow")+" run ") +
 			"cbx login" +
 			output.Dim.Render(" to authenticate (or `cbx login --device-code` for headless / SSH)"),
 	}

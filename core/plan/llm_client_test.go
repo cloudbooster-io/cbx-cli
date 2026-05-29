@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/core/llm"
+	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
 )
 
 // mockLLMClient is a test double that returns a fixed stream.

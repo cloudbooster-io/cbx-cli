@@ -21,8 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every other audit mode uses. `--diagnose` surfaces per-call IAM
   permission errors and a recommended policy patch. No external CLI
   dependencies; the default scanner list is the same native CB rules
-  source mode uses. See `ai_space/analyses/2026-05-23-cbx-audit-live-aws-plan.md`
-  for the boundary vs. the hosted multi-account product in platform-app.
+  source mode uses.
 - Per-service describers enrich CloudControl-discovered resources with
   fields CC doesn't expose: `AWS::S3::Bucket` (PublicAccessBlock,
   Versioning, Encryption, BucketPolicy presence, ListObjectsV2 probe,
@@ -50,14 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Markdown report under `## Components` with each finding placed under
   its primary component; resources matching no lens fall into
   `## Account-wide Findings`.
-- `cbx audit aws --llm claude-code --cb-knowledge` ships the
-  discovered resources to the Phase F grounded analyzer via cbx-mcp.
-  The grounded prompt builder emits an AWS-discovery header instead of
-  the source-files block when invoked through the new
-  `llmAnalyzer.ScanResources` entry point, includes the
-  `cb_describer_*` describer enrichment per resource, and honors the
-  engine-resolved CB primitive id (so RDS instances ground against
-  `aws:db/postgres@v1` rather than the unmapped CFN type).
+- `cbx audit aws` always runs the Phase F grounded analyzer: it fetches
+  CloudBooster's curated AWS knowledge directly over the CB knowledge API,
+  inlines it into the prompt (with an AWS-discovery header and per-resource
+  `cb_describer_*` describer enrichment), and runs `claude -p` to cite that
+  grounding on every finding. It honors the engine-resolved CB primitive id
+  (so RDS instances ground against `aws:db/postgres@v1` rather than the
+  unmapped CFN type).
 - `audit.RunFromResources(opts, resources, *AWSAuditContext)` mirrors
   `audit.Run` for the AWS path: scanner pipeline + component grouping
   + AWS-mode markdown render + populated `Result`. Re-exported via
@@ -71,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rendering helpers (`RenderMarkdown`, `RenderAWSMarkdown`,
   `RenderPlain`, `DefaultReportPath`, `ExitWithSeverity`). Per
   CLAUDE.md, `pkg/audit` joins `pkg/auth`, `pkg/config`, `pkg/output`
-  as semver-public surface for `cb-cli` consumption.
+  as semver-public surface for downstream library consumers.
 - `tools/genprimitives` extended to emit a CFN-type-keyed companion
   to the existing Terraform / Pulumi → CB-primitive maps (82 CFN
   aliases). `audit.CFNTypeToCBPrimitive(cfnType)` is the public lookup.
@@ -94,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tfsec` is filtered out automatically for non-Terraform sources;
   `checkov` and `trivy` self-detect their input and run on every flavor.
 - `pkg/audit.DefaultReportPath` exported so non-CLI consumers
-  (e.g. `cb-cli`) can derive the same `<basename>_audit_report.md` name
+  can derive the same `<basename>_audit_report.md` name
   used by the CLI.
 - `internal/audit.ErrSourceModeUnsupported` sentinel for adapters with no
   source-mode implementation (currently only `prowler`, which scans live
@@ -102,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** the Go module path changed from
+  `gitlab.com/cloudbooster.io/platform/cbx-cli` to
+  `github.com/cloudbooster-io/cbx-cli` for the public GitHub release.
+  Downstream library consumers must update their import paths (or add a
+  `replace` directive) in lockstep.
 - `cbx audit` now requires exactly one of `--pulumi-state`,
   `--terraform-state`, or `--source`. The error message previously read
   "`--pulumi-state` or `--terraform-state` is required"; it now lists all
@@ -119,6 +122,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The IaC state/source flag surface on `cbx audit` (`--pulumi-state`,
+  `--terraform-state`, `--source`, `--iac-type`, `--scanners`, `--llm`) is no
+  longer exposed at the CLI; `cbx audit` now dispatches only to
+  `cbx audit aws`. The underlying parsers, scanners, and analyzers remain
+  available to library consumers via the `pkg/audit` facade.
+
 ### Fixed
+
+- `cbx audit aws --json` now exits with the severity-mapped code (and the
+  partial-failure code) instead of always exiting 0, matching the human
+  output path.
 
 ### Security

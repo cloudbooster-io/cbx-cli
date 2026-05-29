@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // RunScanners executes all given scanners against the resources and
@@ -148,7 +148,7 @@ func (s *staticScanner) ScanSource(_ context.Context, dir string) ([]Finding, er
 
 	// Always return at least one finding so the source-mode happy path is
 	// observable, but vary the count between 1 and 3 across directory names.
-	return pool[: n+1], nil
+	return pool[:n+1], nil
 }
 
 // scanTerraformSourceIfPossible runs the HCL T1 parser over dir and

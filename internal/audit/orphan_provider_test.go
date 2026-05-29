@@ -174,7 +174,7 @@ func TestOrphanProvider_EmptyS3Bucket(t *testing.T) {
 			URN:  "aws://us-east-1/AWS::S3::Bucket/bucket-empty-old",
 			ID:   "bucket-empty-old",
 			Inputs: map[string]any{
-				"cb_describer_has_objects": false,
+				"cb_describer_has_objects":   false,
 				"cb_describer_creation_date": oldDate,
 			},
 		},
@@ -183,7 +183,7 @@ func TestOrphanProvider_EmptyS3Bucket(t *testing.T) {
 			URN:  "aws://us-east-1/AWS::S3::Bucket/bucket-empty-young",
 			ID:   "bucket-empty-young",
 			Inputs: map[string]any{
-				"cb_describer_has_objects": false,
+				"cb_describer_has_objects":   false,
 				"cb_describer_creation_date": recentDate,
 			},
 		},
@@ -192,7 +192,7 @@ func TestOrphanProvider_EmptyS3Bucket(t *testing.T) {
 			URN:  "aws://us-east-1/AWS::S3::Bucket/bucket-with-data",
 			ID:   "bucket-with-data",
 			Inputs: map[string]any{
-				"cb_describer_has_objects": true,
+				"cb_describer_has_objects":   true,
 				"cb_describer_creation_date": oldDate,
 			},
 		},

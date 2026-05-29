@@ -3,7 +3,7 @@ package audit
 import (
 	"testing"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // TestPrimitiveIDFor pins the load-bearing resolution order:

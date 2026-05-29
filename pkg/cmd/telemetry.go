@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/config"
-	"gitlab.com/cloudbooster.io/platform/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 func newTelemetryCmd() *cobra.Command {
@@ -95,7 +95,7 @@ func renderTelemetryStatusCard(enabled bool, promptedAt string) string {
 			{Key: "state", Value: stateChip},
 			{Key: "last asked", Value: asked},
 		},
-		Footer: output.Dim.Render(output.Symbol("arrow") + " ") + toggleCmd +
+		Footer: output.Dim.Render(output.Symbol("arrow")+" ") + toggleCmd +
 			output.Dim.Render(" to change · `cbx telemetry` for what's sent and what isn't"),
 	}
 	return card.Render()

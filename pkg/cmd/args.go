@@ -12,7 +12,7 @@ import (
 // (e.g. "provider", "executor"); usage is a short copy-paste-ready
 // example.
 //
-// Exported because downstream consumers (cb-cli) reuse it when wiring
+// Exported because downstream consumers (downstream consumers) reuse it when wiring
 // the same cobra commands.
 func RequireExactlyOneArg(label, usage string) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {

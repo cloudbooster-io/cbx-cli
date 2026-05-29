@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 If you believe you have found a security vulnerability in `cbx-cli`,
-please report it privately. **Do not open a public GitLab issue.**
+please report it privately. **Do not open a public GitHub issue.**
 
 Email: **security@cloudbooster.io**
 
@@ -43,3 +43,13 @@ authentication, configuration, and network behavior.
 Out of scope: third-party services that `cbx` integrates with (report
 those to the respective vendor), and issues in dependencies that have
 no exploitation path through `cbx-cli` itself.
+
+## Known limitations
+
+- **File keyring backend (`CBX_KEYRING_BACKEND=file`)** encrypts stored
+  credentials with a fixed, source-published passphrase. On-disk tokens are
+  therefore obfuscated rather than meaningfully protected. Use this backend
+  only as a convenience fallback for throwaway or headless contexts; prefer a
+  real OS keyring (macOS Keychain, Secret Service, Windows Credential Manager)
+  for long-lived credentials. Hardening to a user-supplied passphrase is
+  planned.

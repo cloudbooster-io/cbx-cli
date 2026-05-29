@@ -235,4 +235,3 @@ func providerFromType(rtype string) string {
 	}
 	return rtype[:idx]
 }
-

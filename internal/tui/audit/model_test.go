@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	auditcore "gitlab.com/cloudbooster.io/platform/cbx-cli/internal/audit"
+	auditcore "github.com/cloudbooster-io/cbx-cli/internal/audit"
 )
 
 func TestNewModelSortsFindings(t *testing.T) {
