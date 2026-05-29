@@ -13,6 +13,8 @@ func TestProgressRender(t *testing.T) {
 	oldFn := isTerminalFn
 	isTerminalFn = func() bool { return true }
 	defer func() { isTerminalFn = oldFn }()
+	// Clear any ambient NO_COLOR so forcing styling actually enables it.
+	t.Setenv("NO_COLOR", "")
 	Configure(false, false)
 
 	p := NewProgress()
@@ -64,6 +66,8 @@ func TestProgressGolden(t *testing.T) {
 	oldFn := isTerminalFn
 	isTerminalFn = func() bool { return true }
 	defer func() { isTerminalFn = oldFn }()
+	// Clear any ambient NO_COLOR so forcing styling actually enables it.
+	t.Setenv("NO_COLOR", "")
 	Configure(false, false)
 
 	p := NewProgress()

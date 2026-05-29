@@ -62,7 +62,7 @@ side by side.`,
 				return fmt.Errorf("loading config: %w", err)
 			}
 
-			if len(cfg.LLM.Providers) == 0 {
+			if !planLLMSatisfied(cfg, llmProvider) {
 				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
 					What: "no LLM provider configured",
 					Why:  "cbx plan needs a model to generate the plan",
@@ -113,6 +113,24 @@ side by side.`,
 	cmd.Flags().IntVar(&previewPort, "port", 0, "Local HTML preview server port (0 = random; requires --html)")
 	cmd.Flags().IntVar(&variants, "variants", 1, "Number of plan variants to generate")
 	return cmd
+}
+
+// planLLMSatisfied reports whether `cbx plan` has a usable LLM. A CLI executor
+// (e.g. `claude-code`, selected via `cbx llm default claude-code` or
+// `--llm claude-code`) counts even when no HTTP api provider has been
+// configured — it shells out to a local binary that owns its own auth, so the
+// "no API key needed" story works. Otherwise we require at least one api
+// provider in the config. llmOverride is the per-run `--llm` flag value (empty
+// = fall back to the configured default).
+func planLLMSatisfied(cfg *config.Config, llmOverride string) bool {
+	selected := llmOverride
+	if selected == "" {
+		selected = cfg.LLM.Default
+	}
+	if coreplan.IsCLIExecutor(selected) {
+		return true
+	}
+	return len(cfg.LLM.Providers) > 0
 }
 
 type headlessProgress struct {

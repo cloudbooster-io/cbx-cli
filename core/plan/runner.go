@@ -49,9 +49,21 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	if provider == "" {
 		provider = r.cfg.LLM.Default
 	}
-	provCfg, ok := r.cfg.LLM.Providers[provider]
-	if !ok {
-		return nil, fmt.Errorf("provider %s not configured", provider)
+
+	// CLI executors (e.g. `claude-code`) are not stored in cfg.LLM.Providers —
+	// they're selected by name via `cbx llm default claude-code` and shell out
+	// to a local binary that owns its own auth. Resolve them before the API
+	// provider lookup so a CLI-only setup (no `llm api login`) still works.
+	cliExecutor := IsCLIExecutor(provider)
+	var provCfg config.LLMProvider
+	if !cliExecutor {
+		// CLI executors route on the provider name alone (see Phase 2); only
+		// HTTP api providers need a LLMProvider config from the map.
+		var ok bool
+		provCfg, ok = r.cfg.LLM.Providers[provider]
+		if !ok {
+			return nil, fmt.Errorf("provider %s not configured", provider)
+		}
 	}
 
 	// Phase 1: Propose
@@ -76,16 +88,34 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	progress.PhaseStart(2, 3, "Thinking")
 	progress.SetStatus(fmt.Sprintf("thinking | %s", provider), "")
 
-	var llmToken string
-	if r.llmToken != nil {
-		llmToken = r.llmToken(provider)
-	}
-	llm := NewLLMCaller(provCfg, llmToken)
 	prompt := buildLLMPrompt(intent, components)
 
-	if err := llm.Stream(ctx, prompt, func(token string) {
-		progress.Token(token)
-	}); err != nil {
+	// Pick the streamer: a local CLI executor (shells out, owns its own auth)
+	// or the HTTP LLMCaller (BYO API key). Both satisfy the same Stream
+	// contract; a failure in either degrades gracefully to the proposed
+	// components rather than aborting the run.
+	stream := func(string) error { return nil }
+	if cliExecutor {
+		cli, err := newCLIStreamer(provider)
+		if err != nil {
+			stream = func(string) error { return err }
+		} else {
+			stream = func(p string) error {
+				return cli.Stream(ctx, p, func(token string) { progress.Token(token) })
+			}
+		}
+	} else {
+		var llmToken string
+		if r.llmToken != nil {
+			llmToken = r.llmToken(provider)
+		}
+		llm := NewLLMCaller(provCfg, llmToken)
+		stream = func(p string) error {
+			return llm.Stream(ctx, p, func(token string) { progress.Token(token) })
+		}
+	}
+
+	if err := stream(prompt); err != nil {
 		progress.Token(fmt.Sprintf("\n\n*LLM stream unavailable (%v); continuing with proposed components.*\n\n", err))
 	}
 	progress.Commit()

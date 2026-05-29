@@ -1,13 +1,14 @@
 {
-  "_comment": "Minimum IAM policy for `cbx audit aws`. Actions cover STS preflight, CloudControl-based discovery, every per-service describer the v1 codebase invokes (S3, IAM, RDS/Lambda/EC2 are pure CC reads), the region-resolution call (ec2:DescribeRegions), and the orphan-detection provider's reads. The AWS-managed AWSReadOnlyAccess policy is a strict superset and is acceptable; use this curated policy when a least-privilege grant is required. Plan §7.6.",
+  "_comment": "Minimum read-only IAM policy for `cbx audit aws`. It authorizes two layers: (1) the explicit per-service AWS SDK calls the discovery code makes directly — STS preflight, ec2:DescribeRegions, the S3/IAM/KMS describers, the account-posture probes (ec2:GetEbsEncryptionByDefault, iam:GetAccountSummary, iam:GetAccountPasswordPolicy), the EBS snapshot lister/describer; and (2) the Cloud Control discovery path (cloudformation:ListResources/GetResource), where Cloud Control invokes each CFN resource type's List/Read handler under the *caller's* identity, so the caller needs read access to every service in internal/audit/discover/aws/types_to_query.go (EC2, S3, IAM, RDS, Lambda, ECS, EKS, ELBv2, EFS, ApiGateway, DynamoDB, ElastiCache, SQS, SNS, Events, Cognito, WAFv2, ACM, Logs, CloudWatch, SecretsManager, KMS, CloudFront, Route53, CloudTrail). It is strictly read-only and deliberately avoids data-plane reads (e.g. secretsmanager:GetSecretValue, s3:GetObject). The AWS-managed AWSReadOnlyAccess policy is a valid superset; use this curated policy when a least-privilege grant is required. Plan §7.6.",
   "Version": "2012-10-17",
   "Statement": [
     {
       "Sid": "Preflight",
       "Effect": "Allow",
       "Action": [
-        "sts:GetCallerIdentity",
-        "ec2:DescribeRegions"
+        "ec2:DescribeRegions",
+        "iam:ListAccountAliases",
+        "sts:GetCallerIdentity"
       ],
       "Resource": "*"
     },
@@ -15,8 +16,8 @@
       "Sid": "CloudControlDiscovery",
       "Effect": "Allow",
       "Action": [
-        "cloudformation:ListResources",
-        "cloudformation:GetResource"
+        "cloudformation:GetResource",
+        "cloudformation:ListResources"
       ],
       "Resource": "*"
     },
@@ -24,52 +25,95 @@
       "Sid": "S3Describer",
       "Effect": "Allow",
       "Action": [
-        "s3:ListAllMyBuckets",
+        "s3:GetBucketPolicy",
         "s3:GetBucketPublicAccessBlock",
         "s3:GetBucketVersioning",
         "s3:GetEncryptionConfiguration",
-        "s3:GetBucketPolicy",
+        "s3:ListAllMyBuckets",
         "s3:ListBucket"
       ],
       "Resource": "*"
     },
     {
-      "Sid": "IAMRoleDescriber",
+      "Sid": "IAMReads",
       "Effect": "Allow",
       "Action": [
+        "iam:GetAccountPasswordPolicy",
+        "iam:GetAccountSummary",
+        "iam:GetGroup",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
         "iam:GetRole",
-        "iam:ListAttachedRolePolicies"
+        "iam:GetRolePolicy",
+        "iam:GetUser",
+        "iam:ListAccessKeys",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListAttachedUserPolicies",
+        "iam:ListGroups",
+        "iam:ListMFADevices",
+        "iam:ListPolicies",
+        "iam:ListRolePolicies",
+        "iam:ListRoles",
+        "iam:ListUsers"
       ],
       "Resource": "*"
     },
     {
-      "Sid": "DiscoveryReadsForOrphanAndComponentRules",
+      "Sid": "AccountPostureAndSnapshots",
       "Effect": "Allow",
       "Action": [
+        "ec2:DescribeSnapshotAttribute",
+        "ec2:DescribeSnapshots",
+        "ec2:GetEbsEncryptionByDefault",
+        "kms:GetKeyRotationStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudControlReadHandlers",
+      "Effect": "Allow",
+      "Action": [
+        "acm:Describe*",
+        "acm:List*",
+        "apigateway:GET",
+        "autoscaling:Describe*",
+        "cloudfront:Get*",
+        "cloudfront:List*",
+        "cloudtrail:Describe*",
+        "cloudtrail:Get*",
+        "cloudtrail:List*",
+        "cloudwatch:Describe*",
+        "cognito-idp:Describe*",
+        "cognito-idp:List*",
+        "dynamodb:Describe*",
+        "dynamodb:List*",
         "ec2:Describe*",
-        "rds:Describe*",
+        "ecs:Describe*",
+        "ecs:List*",
+        "eks:Describe*",
+        "eks:List*",
+        "elasticache:Describe*",
+        "elasticfilesystem:Describe*",
+        "elasticloadbalancing:Describe*",
+        "events:Describe*",
+        "events:List*",
+        "kms:Describe*",
+        "kms:List*",
         "lambda:GetFunction",
         "lambda:GetFunctionConfiguration",
         "lambda:ListFunctions",
-        "elasticloadbalancing:Describe*",
-        "cloudfront:List*",
-        "route53:List*",
-        "dynamodb:List*",
-        "dynamodb:Describe*",
-        "sqs:List*",
-        "sqs:GetQueue*",
-        "sns:List*",
-        "events:List*",
-        "events:Describe*",
         "logs:Describe*",
-        "cloudwatch:Describe*",
-        "secretsmanager:List*",
+        "rds:Describe*",
+        "route53:Get*",
+        "route53:List*",
         "secretsmanager:Describe*",
-        "kms:List*",
-        "kms:Describe*",
-        "autoscaling:Describe*",
-        "ecs:List*",
-        "ecs:Describe*"
+        "secretsmanager:List*",
+        "sns:Get*",
+        "sns:List*",
+        "sqs:GetQueue*",
+        "sqs:List*",
+        "wafv2:Get*",
+        "wafv2:List*"
       ],
       "Resource": "*"
     }

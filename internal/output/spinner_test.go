@@ -12,6 +12,8 @@ func TestSpinnerFrame(t *testing.T) {
 	oldFn := isTerminalFn
 	isTerminalFn = func() bool { return true }
 	defer func() { isTerminalFn = oldFn }()
+	// Clear any ambient NO_COLOR so forcing styling actually enables it.
+	t.Setenv("NO_COLOR", "")
 	Configure(false, false)
 
 	s := NewSpinner("loading")
@@ -48,6 +50,8 @@ func TestSpinnerGolden(t *testing.T) {
 	oldFn := isTerminalFn
 	isTerminalFn = func() bool { return true }
 	defer func() { isTerminalFn = oldFn }()
+	// Clear any ambient NO_COLOR so forcing styling actually enables it.
+	t.Setenv("NO_COLOR", "")
 	Configure(false, false)
 
 	s := NewSpinner("working")
