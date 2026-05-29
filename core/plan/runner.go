@@ -50,10 +50,10 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 		provider = r.cfg.LLM.Default
 	}
 
-	// CLI executors (e.g. `claude-code`) are not stored in cfg.LLM.Providers —
-	// they're selected by name via `cbx llm default claude-code` and shell out
-	// to a local binary that owns its own auth. Resolve them before the API
-	// provider lookup so a CLI-only setup (no `llm api login`) still works.
+	// CLI executors (`claude-code`, `codex`) are not stored in cfg.LLM.Providers —
+	// they're selected by name via `cbx llm default <name>` and shell out to a
+	// local binary that owns its own auth. Resolve them before the API provider
+	// lookup so a CLI-only setup (no `llm api login`) still works.
 	cliExecutor := IsCLIExecutor(provider)
 	var provCfg config.LLMProvider
 	if !cliExecutor {

@@ -99,6 +99,15 @@ func (p *Pipeline) run(ctx context.Context, intent string) {
 	p.sendResolve(plan)
 
 	provider := GetProvider(p.session, p.cfg)
+	// CLI executors (claude-code, codex) aren't stored in cfg.LLM.Providers and
+	// own their own auth + model selection, so there's no Model to show — render
+	// a "local CLI" label instead of an empty model field. They're BYO by
+	// definition (the user's own subscription pays; cbx never sees a token).
+	if coreplan.IsCLIExecutor(provider) {
+		p.sendStatus(fmt.Sprintf("%s | local CLI", provider), "BYO LLM — cost not tracked")
+		return
+	}
+
 	provCfg, ok := p.cfg.LLM.Providers[provider]
 	var right string
 	if ok && (strings.Contains(provCfg.BaseURL, "localhost") || strings.Contains(provCfg.BaseURL, "127.0.0.1")) {

@@ -47,13 +47,19 @@ func TestPlanLLMSatisfied(t *testing.T) {
 			want:     true,
 		},
 		{
-			name: "no providers, codex default — blocked (no codex CLI streamer yet)",
+			name: "no providers, codex default — allowed (codex CLI executor)",
 			cfg: func() *config.Config {
 				c := &config.Config{}
 				c.LLM.Default = "codex"
 				return c
 			}(),
-			want: false,
+			want: true,
+		},
+		{
+			name:     "no providers, --llm codex override — allowed",
+			cfg:      &config.Config{},
+			override: "codex",
+			want:     true,
 		},
 		{
 			name: "one api provider, no default — allowed",
