@@ -70,11 +70,11 @@ func (l *llmAnalyzer) LastConnections() []LLMConnection {
 
 // newLLMAnalyzer wires a Stream-based analyzer against the user's logged-in
 // provider. Returns an error when the provider isn't configured — caller
-// should surface that to the user as "run cbx llm login <provider> first".
+// should surface that to the user as "run cbx llm api login <provider> first".
 //
 // The special provider name ClaudeCodeProvider ("claude-code") sidesteps
 // cbx's own credential handling entirely: it shells out to the `claude`
-// CLI which authenticates as Claude Code itself. No `cbx llm login`
+// CLI which authenticates as Claude Code itself. No `cbx llm api login`
 // required, no token stored by cbx.
 func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	if opts.LLMProvider == "" {
@@ -129,7 +129,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	}
 	provCfg, ok := cfg.LLM.Providers[opts.LLMProvider]
 	if !ok {
-		return nil, fmt.Errorf("llm provider %q is not configured; run 'cbx llm login %s' first", opts.LLMProvider, opts.LLMProvider)
+		return nil, fmt.Errorf("llm provider %q is not configured; run 'cbx llm api login %s' first", opts.LLMProvider, opts.LLMProvider)
 	}
 
 	// Resolve the provider credential here at the audit composition root and

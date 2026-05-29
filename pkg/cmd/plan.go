@@ -40,8 +40,8 @@ intent positionally to run one-shot and exit when the artifacts are on
 disk.
 
 Output artifacts (written into --output-dir, default cwd):
-  plan.md   — the generated architecture plan (ADR-style)
-  plan.d2   — the architecture diagram (or plan.mermaid with --diagram mermaid)
+  plan.md   — the generated architecture plan (ADR-style, with an embedded Mermaid diagram)
+  plan.d2   — a standalone diagram file, written only with --diagram d2
 
 Use --llm <provider> to override the default LLM provider for a single
 run; the default is whatever you configured via 'cbx llm api login' or
@@ -168,6 +168,9 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 	}
 
 	// Write files for each variant.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating output dir %q: %w", dir, err)
+	}
 	var files []string
 	var totalBytes int
 	for i, p := range plans {

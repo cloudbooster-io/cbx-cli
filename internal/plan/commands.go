@@ -189,7 +189,7 @@ func cmdLLM(args []string, session *Session, cfg *config.Config) (string, error)
 	}
 	provider := args[0]
 	if _, ok := cfg.LLM.Providers[provider]; !ok {
-		return "", fmt.Errorf("provider %s is not logged in; run 'cbx llm login %s' first", provider, provider)
+		return "", fmt.Errorf("provider %s is not logged in; run 'cbx llm api login %s' first", provider, provider)
 	}
 	cfg.LLM.Default = provider
 	if err := config.Save(cfg); err != nil {

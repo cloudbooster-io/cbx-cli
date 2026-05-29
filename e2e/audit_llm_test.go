@@ -12,7 +12,7 @@ import (
 
 // TestAuditSource_LLM exercises the --llm <provider> path against a real
 // LLM. Build-tagged off the default suite — only meaningful when a provider
-// has been logged in via `cbx llm login <provider>`. Skips cleanly when
+// has been logged in via `cbx llm api login <provider>`. Skips cleanly when
 // CBX_LLM_PROVIDER is unset or the per-CI keyring is empty.
 func TestAuditSource_LLM(t *testing.T) {
 	provider := os.Getenv("CBX_LLM_PROVIDER")

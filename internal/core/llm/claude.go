@@ -98,7 +98,7 @@ func (c *ClaudeClient) Complete(ctx context.Context, prompt string, opts Complet
 		// error so the caller can trigger a silent refresh (handled at the
 		// auth layer in CB-389).
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("claude: authentication expired (401); re-run 'cbx llm login claude'")
+			return nil, fmt.Errorf("claude: authentication expired (401); re-run 'cbx llm api login claude'")
 		}
 		return nil, fmt.Errorf("claude: unexpected status %d", resp.StatusCode)
 	}

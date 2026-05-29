@@ -148,7 +148,7 @@ type Options struct {
 
 	// LLMProvider, when non-empty, switches a source-mode audit to the LLM
 	// analyzer using the configured provider (claude / codex / ollama —
-	// whatever the user has logged in via `cbx llm login`). Mutually
+	// whatever the user has logged in via `cbx llm api login`). Mutually
 	// exclusive with Scanners at the CLI layer. Implies network egress —
 	// document accordingly.
 	LLMProvider string

@@ -82,7 +82,7 @@ Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx
 		},
 	}
 
-	root.PersistentFlags().StringVarP(&outputFormat, "output", "o", "", "Output format: json, yaml, table (default: human)")
+	root.PersistentFlags().StringVarP(&outputFormat, "output", "o", "", "Output format: json (default: human)")
 	root.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format (alias for --output json)")
 	_ = root.PersistentFlags().MarkHidden("json")
 	root.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-error output")

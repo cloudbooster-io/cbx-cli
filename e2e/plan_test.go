@@ -30,11 +30,11 @@ func TestPlanEndToEnd(t *testing.T) {
 		tmpDir := t.TempDir()
 		homeDir := filepath.Join(tmpDir, "home")
 
-		// Step 1: cbx llm login claude — success message is decoration,
+		// Step 1: cbx llm api login claude — success message is decoration,
 		// routed to stderr in B6 so stdout stays clean for data.
 		_, stderr, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
-			t.Fatalf("cbx llm login claude exited %d", code)
+			t.Fatalf("cbx llm api login claude exited %d", code)
 		}
 		if !strings.Contains(stderr, "Logged in to api/claude") {
 			t.Fatalf("expected login confirmation on stderr, got: %s", stderr)

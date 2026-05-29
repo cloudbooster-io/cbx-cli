@@ -24,7 +24,7 @@ cbx llm api login claude        # or: codex
 
 # Generate an architecture plan
 cbx plan "static site with auth"
-# → writes plan.md + plan.mermaid to the current directory (--diagram d2 for D2)
+# → writes plan.md (with an embedded Mermaid diagram); use --diagram d2 to also emit plan.d2
 
 # Audit a live AWS account (read-only, via the AWS SDK)
 cbx audit aws

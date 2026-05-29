@@ -129,7 +129,7 @@ func (c *CodexClient) Complete(ctx context.Context, prompt string, opts Complete
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("codex: authentication expired (401); re-run 'cbx llm login codex'")
+			return nil, fmt.Errorf("codex: authentication expired (401); re-run 'cbx llm api login codex'")
 		}
 		return nil, fmt.Errorf("codex: unexpected status %d", resp.StatusCode)
 	}

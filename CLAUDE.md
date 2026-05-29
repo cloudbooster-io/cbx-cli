@@ -59,7 +59,7 @@ State-file parsing has a 100 MB guard with a `--yes` bypass (see `Options.Yes` i
 
 `cbx plan "<intent>"` runs either headless (`pkg/cmd/plan.go:runOneShot`) or in a Bubble Tea chat TUI (`internal/tui/chat`). The plan engine itself is in `core/plan/` (importable by other modules); `internal/plan/` is the REPL/command wiring on top. LLM providers (Claude, Codex/OpenAI) are in `internal/core/llm`, with credentials in the OS keyring via `internal/core/auth/keyring.go`.
 
-A plan run requires an LLM provider configured (`cbx llm login claude|openai|ollama`) — without it `runE` returns early. Output artifacts are `plan.md` + `plan.d2` (or `--diagram-format mermaid`) written to the working directory; HTML preview is opt-in via `--preview`.
+A plan run requires an LLM provider configured (`cbx llm api login claude|codex` for an API key, or `cbx llm cli list` for a local executor like Claude Code / Codex CLI) — without it `runE` returns early. The output artifact is `plan.md` (with an embedded Mermaid diagram) written to the output dir; `--diagram d2` also emits a standalone `plan.d2`; HTML preview is opt-in via `--html`.
 
 ## Output / JSON contract
 
