@@ -5,11 +5,15 @@ CloudBooster CLI — plan, audit, and manage cloud infrastructure from your term
 ## Installation
 
 ```bash
-# Via Homebrew (macOS / Linux)
+# macOS — Homebrew (cask)
 brew tap cloudbooster-io/tap
-brew install cbx-cli
+brew install --cask cbx-cli
 
-# Or download the latest release from GitHub Releases:
+# Linux — .deb (Debian/Ubuntu) or .rpm (Fedora/RHEL) from GitHub Releases, e.g.:
+#   sudo dpkg -i cbx-cli_*_linux_amd64.deb
+#   sudo rpm  -i cbx-cli_*_linux_amd64.rpm
+
+# Any platform — download the matching archive from GitHub Releases:
 # https://github.com/cloudbooster-io/cbx-cli/releases
 ```
 

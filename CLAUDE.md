@@ -76,7 +76,7 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 - **Contributions go through GitHub pull requests against `main`** — see `CONTRIBUTING.md`. Reference any related GitHub issue in commits/PRs.
 - **Topic branches off `main`**, kept short-lived; one logical change per commit.
 - E2E tests against staging are gated behind the `e2e_staging` build tag and need `CB_API_URL` (maintainer-only).
-- **Release distribution** is GoReleaser → Homebrew tap (`cloudbooster-io/homebrew-tap`) + Scoop bucket + GitHub Releases, with Cosign signing and Syft SBOM. `make test-smoke-brew` / `scripts/smoke-brew.sh` verify the brew install path post-release.
+- **Release distribution** is GoReleaser → Homebrew **cask** (`cloudbooster-io/homebrew-tap`; macOS-only — GoReleaser deprecated `brews`/formulas) + `nfpms` `.deb`/`.rpm` for Linux + Scoop bucket (Windows) + GitHub Releases, with Cosign signing and Syft SBOM. The archive `name_template` (`cbx-cli_<TitleOs>_<Arch>`, amd64→x86_64) is load-bearing — it must match `internal/update/update.go:directAssetURL`; validate with `goreleaser check` + a `--snapshot` build. `make test-smoke-brew` / `scripts/smoke-brew.sh` verify the cask install path post-release (macOS runner only).
 
 ## Docs site is partly aspirational
 

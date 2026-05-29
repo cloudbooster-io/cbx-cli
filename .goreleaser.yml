@@ -97,24 +97,53 @@ release:
     owner: cloudbooster-io
     name: cbx-cli
 
-brews:
+# Homebrew **cask**. GoReleaser deprecated `brews` (it generated hackyish
+# formulas for pre-built binaries) in favour of casks; in v2.16 the deprecation
+# is mandatory. Casks are macOS-only — Linux installs via the nfpms .deb/.rpm
+# below or the release tarball (see README). After the first cask release,
+# delete any stale Formula/cbx-cli.rb from the tap repo so the name resolves to
+# the cask. Cask metadata has no `license`/`test`/`install` stanzas (those are
+# formula-only); the binary symlink is declared via `binaries` and Gatekeeper
+# quarantine is handled in the post-install hook.
+homebrew_casks:
   - name: cbx-cli
     ids:
+      - cbx
+    binaries:
       - cbx
     repository:
       owner: cloudbooster-io
       name: homebrew-tap
-    directory: Formula
     homepage: "https://github.com/cloudbooster-io/cbx-cli"
     description: "CloudBooster CLI — plan and audit your cloud infrastructure."
-    license: "Apache-2.0"
     commit_author:
       name: goreleaserbot
       email: bot@cloudbooster.io
-    test: |
-      system "#{bin}/cbx", "version"
-    install: |
-      bin.install "cbx"
+    # The release binaries are not Apple-notarized; strip the Gatekeeper
+    # quarantine xattr on install so `cbx` runs without a "cannot be opened"
+    # prompt on the first launch.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cbx"]
+          end
+
+# Linux packages (.deb / .rpm) so Linux users get a native apt/dnf path instead
+# of Homebrew (casks don't work on Linux). Built from the same `cbx` build.
+nfpms:
+  - id: cbx
+    package_name: cbx-cli
+    ids:
+      - cbx
+    formats:
+      - deb
+      - rpm
+    maintainer: "CloudBooster <opensource@cloudbooster.io>" # TODO: confirm the maintainer address
+    homepage: "https://github.com/cloudbooster-io/cbx-cli"
+    description: "CloudBooster CLI — plan and audit your cloud infrastructure."
+    license: "Apache-2.0"
+    bindir: /usr/bin
 
 scoops:
   - name: cbx-cli
