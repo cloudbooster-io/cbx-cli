@@ -139,7 +139,8 @@ nfpms:
     formats:
       - deb
       - rpm
-    maintainer: "CloudBooster <opensource@cloudbooster.io>" # TODO: confirm the maintainer address
+    # Same identity GoReleaser commits to the tap / scoop-bucket repos with.
+    maintainer: "CloudBooster <bot@cloudbooster.io>"
     homepage: "https://github.com/cloudbooster-io/cbx-cli"
     description: "CloudBooster CLI — plan and audit your cloud infrastructure."
     license: "Apache-2.0"
