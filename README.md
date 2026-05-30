@@ -23,8 +23,9 @@ brew install --cask cbx-cli
 # (optional) Log in to CloudBooster — not required for `cbx plan`
 cbx login
 
-# Configure an LLM provider (bring your own API key)
-cbx llm api login claude        # or: codex
+# Configure a model for `cbx plan` (pick one):
+cbx llm api login claude     # Anthropic API key (BYO)
+cbx llm cli list             # or a local CLI — Claude Code / Codex — no API key needed
 
 # Generate an architecture plan
 cbx plan "static site with auth"
