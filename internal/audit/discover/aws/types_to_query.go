@@ -29,8 +29,11 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::IAM::Role", Global: true, KeepIdentifier: keepCustomerIAMRole},
 	// CloudControl's AWS::IAM::ManagedPolicy ListResources returns ALL
 	// policies, including ~1,400 AWS-managed ones (arn:aws:iam::aws:policy/…).
-	// Filter to customer-managed only.
-	{Type: "AWS::IAM::ManagedPolicy", Global: true, KeepIdentifier: keepCustomerIAMPolicy},
+	// Filter to customer-managed only. When CloudControl's list comes back
+	// empty (observed: it under-returns customer policies even though IAM
+	// is strongly consistent and permission_errors==0), fall back to the
+	// authoritative iam:ListPolicies(Scope=Local).
+	{Type: "AWS::IAM::ManagedPolicy", Global: true, KeepIdentifier: keepCustomerIAMPolicy, FallbackLister: listLocalManagedPoliciesNative},
 	{Type: "AWS::IAM::User", Global: true},
 	{Type: "AWS::IAM::Group", Global: true},
 
@@ -40,7 +43,10 @@ var discoverableCFNTypes = []cfnTypeSpec{
 
 	// --- regional storage ---
 	{Type: "AWS::S3::Bucket"}, // S3 is regional but listable globally; treat as regional and dedupe by ARN
-	{Type: "AWS::EC2::Volume"},
+	// CloudControl's AWS::EC2::Volume list is eventually consistent and
+	// came back empty in every fixtures run; ec2:DescribeVolumes is the
+	// strongly-consistent fallback (fires only when CC returns nothing).
+	{Type: "AWS::EC2::Volume", FallbackLister: listVolumesNative},
 	// CloudControl's AWS::EC2::Snapshot ListResources is unreliable —
 	// in some accounts it returns no results, in others it dumps tens
 	// of thousands of public AMI snapshots and times out. We bypass
@@ -51,13 +57,16 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::EFS::FileSystem"},
 
 	// --- regional compute ---
-	{Type: "AWS::EC2::Instance"},
+	// EC2 instances NEVER surface through CloudControl's list (absent in
+	// all 11 fixtures runs, kitchen-sink included). ec2:DescribeInstances
+	// is the strongly-consistent fallback.
+	{Type: "AWS::EC2::Instance", FallbackLister: listInstancesNative},
 	{Type: "AWS::Lambda::Function"},
 	{Type: "AWS::ECS::Cluster"},
-	{Type: "AWS::ECS::Service"},
+	{Type: "AWS::ECS::Service", FallbackLister: listECSServicesNative},
 	{Type: "AWS::ECS::TaskDefinition"},
 	{Type: "AWS::AutoScaling::AutoScalingGroup"},
-	{Type: "AWS::EKS::Cluster"},
+	{Type: "AWS::EKS::Cluster", FallbackLister: listEKSClustersNative},
 
 	// --- regional networking ---
 	{Type: "AWS::EC2::VPC"},
@@ -72,9 +81,12 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// for "is this subnet internet-routable" defaults to MapPublicIpOnLaunch.
 	{Type: "AWS::EC2::SubnetRouteTableAssociation"},
 	{Type: "AWS::EC2::VPCEndpoint"},
-	{Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"},
-	{Type: "AWS::ElasticLoadBalancingV2::Listener"},
-	{Type: "AWS::ElasticLoadBalancingV2::TargetGroup"},
+	{Type: "AWS::ElasticLoadBalancingV2::LoadBalancer", FallbackLister: listLoadBalancersNative},
+	// Listeners carry the HTTP-only (no-HTTPS) finding; their CloudControl
+	// list is empty for a fresh ALB just like the LB. DescribeListeners is
+	// per-LB so the fallback enumerates load balancers first.
+	{Type: "AWS::ElasticLoadBalancingV2::Listener", FallbackLister: listListenersNative},
+	{Type: "AWS::ElasticLoadBalancingV2::TargetGroup", FallbackLister: listTargetGroupsNative},
 
 	// --- regional APIs ---
 	{Type: "AWS::ApiGateway::RestApi"},
@@ -85,8 +97,8 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::ApiGatewayV2::Authorizer"},
 
 	// --- regional data ---
-	{Type: "AWS::RDS::DBInstance"},
-	{Type: "AWS::RDS::DBCluster"},
+	{Type: "AWS::RDS::DBInstance", FallbackLister: listRDSInstancesNative},
+	{Type: "AWS::RDS::DBCluster", FallbackLister: listRDSClustersNative},
 	// DBSubnetGroup carries the SubnetIds we need to compute whether
 	// an RDS instance with PubliclyAccessible=true is actually
 	// reachable from the internet (any constituent subnet routable
@@ -148,6 +160,31 @@ type cfnTypeSpec struct {
 	// that flow through the same mapToDiscovered + describer path as
 	// CloudControl-listed types, so downstream code is identical.
 	CustomLister func(ctx context.Context, c awsCfg, region string) ([]rawResource, error)
+
+	// FallbackLister, when non-nil, is invoked only when the primary
+	// list path (CloudControl ListResources, or CustomLister) returns
+	// an *empty* result set for this type in this region. It performs a
+	// strongly-consistent native Describe (e.g. ec2:DescribeInstances)
+	// and synthesises the same CFN-shape rawResource records.
+	//
+	// This exists because CloudControl's ListResources is eventually
+	// consistent: for freshly-created workload resources (EC2 instances,
+	// RDS, ALB, ECS services, EKS clusters) it returns an *empty list,
+	// not an error* — so discovery silently drops the resource an audit
+	// run right after `terraform apply` most wants to see. permission_errors
+	// stays 0; nothing signals the miss. The native Describe APIs are
+	// strongly consistent and surface the resource immediately.
+	//
+	// Semantics are deliberately fallback-on-empty rather than full
+	// replacement (the CustomLister model): when CloudControl *does*
+	// list the type (the kitchen-sink/settled-account case) its richer
+	// CFN payload is used unchanged, so wiring a FallbackLister can
+	// never regress a type CloudControl already discovers. The known
+	// gap is a partial-stale list — CloudControl returning older
+	// resources but not the just-created one — which won't trigger the
+	// fallback; the observed failure mode in the fixtures is a fully
+	// empty list for the target types, which this covers.
+	FallbackLister func(ctx context.Context, c awsCfg, region string) ([]rawResource, error)
 }
 
 // keepCustomerIAMPolicy returns false for AWS-managed policy ARNs
