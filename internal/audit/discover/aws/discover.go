@@ -57,6 +57,16 @@ type DiscoverResult struct {
 	PermissionErr []*PermissionError
 	OtherErrs     []error
 
+	// IntegrityWarnings flags types the discovery-integrity probe found
+	// the primary pass silently dropped: a CB-curated type with no
+	// native-Describe fallback that came back empty from CloudControl,
+	// yet an independent re-list saw resources for. Each becomes a
+	// deterministic `warning` finding so a silent false-clean surfaces
+	// instead of staying invisible. Nil when the probe found no
+	// disagreement (the common, healthy case) or for ScoutOnly runs.
+	// See integrity.go.
+	IntegrityWarnings []IntegrityWarning
+
 	// EventCount is an approximation of the CloudTrail Read events this
 	// audit emitted into the audited account. The number is a structural
 	// estimate (list calls × types × regions, plus get + describer calls
@@ -167,10 +177,17 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 		}, nil
 	}
 
-	resources, permErrs, otherErrs := fanOutDiscovery(ctx, cfg, regions, types, concurrency, p.OnProgress)
+	resources, permErrs, otherErrs, integrityCandidates := fanOutDiscovery(ctx, cfg, regions, types, concurrency, p.OnProgress)
 	permErrs = append(scoutPermErrs, permErrs...)
 	otherErrs = append(scoutOtherErrs, otherErrs...)
 	deduped := dedupeByURN(resources)
+
+	// Discovery-integrity probe: for every CB-curated type with no
+	// native fallback that came back empty (CloudControl's silent miss),
+	// independently re-list it and warn when the second read disagrees.
+	// The generic backstop for the long tail the per-type fallbacks can't
+	// cover — see integrity.go. Deterministic, no LLM.
+	integrityWarnings := probeDiscoveryIntegrity(ctx, cfg, integrityCandidates, concurrency, reprobeIdentifierCount)
 
 	// Cross-resource KMS pass: annotate every AWS::KMS::Key with the
 	// list of other resources referencing it (cb_describer_referenced_by)
@@ -204,13 +221,18 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
 
 	return &DiscoverResult{
-		Identity:       identity,
-		Regions:        regions,
-		Resources:      deduped,
-		PermissionErr:  permErrs,
-		OtherErrs:      otherErrs,
-		EventCount:     estimateEventCount(types, regions, deduped),
-		AccountPosture: posture,
+		Identity:      identity,
+		Regions:       regions,
+		Resources:     deduped,
+		PermissionErr: permErrs,
+		OtherErrs:     otherErrs,
+		// The integrity probe issues one extra cloudformation:ListResources
+		// per candidate (an empty bare-curated type×region), so fold that
+		// into the structural event-count estimate — same colocated-cost
+		// discipline perResourceDescriberCost enforces for describers.
+		EventCount:        estimateEventCount(types, regions, deduped) + len(integrityCandidates),
+		AccountPosture:    posture,
+		IntegrityWarnings: integrityWarnings,
 	}, nil
 }
 
@@ -288,7 +310,7 @@ func perResourceDescriberCost(cfnType string) int {
 // Per-job errors collect into the returned slices; the function never
 // returns a non-nil error itself.
 func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cfnTypeSpec, concurrency int, onProgress func(ProgressEvent)) (
-	resources []DiscoveredResource, permErrs []*PermissionError, otherErrs []error,
+	resources []DiscoveredResource, permErrs []*PermissionError, otherErrs []error, integrityCandidates []integrityCandidate,
 ) {
 	type job struct {
 		region string
@@ -307,7 +329,7 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 	}
 
 	if len(jobs) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	emitProgress(onProgress, ProgressEvent{Phase: ProgressPhaseDiscoverStart, Total: len(jobs)})
@@ -354,6 +376,12 @@ func fanOutDiscovery(ctx context.Context, c awsCfg, regions []string, types []cf
 			} else {
 				otherErrs = append(otherErrs, r.listErr)
 			}
+		}
+		// A clean-empty result for a bare CB-curated type is a
+		// discovery-integrity candidate: re-list it independently after
+		// the fan-out to catch CloudControl's silent miss.
+		if isIntegrityCandidate(r) {
+			integrityCandidates = append(integrityCandidates, integrityCandidate{region: r.region, spec: r.spec})
 		}
 		done++
 		emitProgress(onProgress, ProgressEvent{
