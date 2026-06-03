@@ -402,10 +402,10 @@ func runJob(ctx context.Context, c awsCfg, region string, spec cfnTypeSpec, onPr
 		r.listErr = lerr
 	}
 
-	// Fallback-on-empty: CloudControl's ListResources is eventually
-	// consistent and returns an empty set (not an error) for freshly-
-	// created workload resources. When the primary path found nothing
-	// and a strongly-consistent native Describe is wired for this type,
+	// Fallback-on-empty: CloudControl's ListResources silently returns an
+	// empty set (not an error) for freshly-created workload resources and a
+	// couple of persistently under-returned types. When the primary path found
+	// nothing and a strongly-consistent native Describe is wired for this type,
 	// try it. Only firing on a genuinely empty result means CloudControl's
 	// richer payload wins whenever it does list the type, and there's no
 	// double-counting. See cfnTypeSpec.FallbackLister.
