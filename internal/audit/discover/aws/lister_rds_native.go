@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
@@ -134,42 +133,4 @@ func rdsTagsToCFN(tags []rdstypes.Tag) []map[string]string {
 		return nil
 	}
 	return out
-}
-
-// --- small CFN-shape writers, shared by the native listers ---
-
-// putStr / putBool / putInt32 set the CFN property only when the SDK
-// pointer is non-nil, so an unread field stays absent (the describers
-// distinguish "false" from "not read"). marshalRaw JSON-encodes the
-// props into the rawResource the rest of the pipeline consumes.
-
-func putStr(m map[string]any, key string, v *string) {
-	if v != nil && *v != "" {
-		m[key] = *v
-	}
-}
-
-func putBool(m map[string]any, key string, v *bool) {
-	if v != nil {
-		m[key] = *v
-	}
-}
-
-func putInt32(m map[string]any, key string, v *int32) {
-	if v != nil {
-		m[key] = *v
-	}
-}
-
-func marshalRaw(cfnType, id, region string, props map[string]any) (rawResource, bool) {
-	raw, err := json.Marshal(props)
-	if err != nil {
-		return rawResource{}, false
-	}
-	return rawResource{
-		CFNType:    cfnType,
-		Identifier: id,
-		Region:     region,
-		Properties: string(raw),
-	}, true
 }

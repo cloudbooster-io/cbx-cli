@@ -256,36 +256,8 @@ func TestRDSInstanceToRaw_RoundTripThroughDescriberAndCrossref(t *testing.T) {
 	}
 }
 
-// --- ALB / ECS / EKS have no describer; assert the key posture fields land
-//     in Inputs so the grounded LLM sees them. -----------------------------
-
-func TestLoadBalancerToRaw_KeyFields(t *testing.T) {
-	lb := elbv2types.LoadBalancer{
-		LoadBalancerArn:  strp("arn:aws:elasticloadbalancing:eu-central-1:111122223333:loadbalancer/app/web/abc"),
-		LoadBalancerName: strp("web"),
-		Scheme:           elbv2types.LoadBalancerSchemeEnum("internet-facing"),
-		Type:             elbv2types.LoadBalancerTypeEnum("application"),
-		VpcId:            strp("vpc-1"),
-		SecurityGroups:   []string{"sg-1"},
-	}
-	raw, ok := loadBalancerToRaw(lb, boolp(false), "eu-central-1")
-	if !ok {
-		t.Fatal("loadBalancerToRaw !ok")
-	}
-	dr, err := raw.mapToDiscovered()
-	if err != nil {
-		t.Fatalf("mapToDiscovered: %v", err)
-	}
-	if dr.Type != "AWS::ElasticLoadBalancingV2::LoadBalancer" {
-		t.Errorf("type: got %q", dr.Type)
-	}
-	if got := dr.Inputs["Scheme"]; got != "internet-facing" {
-		t.Errorf("Scheme: got %v, want internet-facing", got)
-	}
-	if v, ok := dr.Inputs["cb_describer_access_logs_enabled"].(bool); !ok || v {
-		t.Errorf("cb_describer_access_logs_enabled: got %v, want false", dr.Inputs["cb_describer_access_logs_enabled"])
-	}
-}
+// --- ECS / EKS have no describer; assert the key posture fields land in
+//     Inputs so the grounded LLM sees them. ----------------------------------
 
 // The HTTP-only listener finding: an empty primary (CloudControl) list
 // must trigger the Listener fallback, and a Protocol=HTTP listener must
@@ -327,31 +299,6 @@ func TestRunJob_ListenerFallbackFiresWithHTTPProtocol(t *testing.T) {
 	}
 	if v, _ := got.Inputs["cb_describer_has_tls_certificate"].(bool); v {
 		t.Errorf("cb_describer_has_tls_certificate: got true, want false (plaintext HTTP)")
-	}
-}
-
-func TestTargetGroupToRaw_KeyFields(t *testing.T) {
-	tg := elbv2types.TargetGroup{
-		TargetGroupArn:  strp("arn:aws:elasticloadbalancing:eu-central-1:111122223333:targetgroup/web/abc"),
-		TargetGroupName: strp("web"),
-		Protocol:        elbv2types.ProtocolEnum("HTTP"),
-		Port:            int32p(8080),
-		VpcId:           strp("vpc-1"),
-		TargetType:      elbv2types.TargetTypeEnum("ip"),
-	}
-	raw, ok := targetGroupToRaw(tg, "eu-central-1")
-	if !ok {
-		t.Fatal("targetGroupToRaw !ok")
-	}
-	dr, err := raw.mapToDiscovered()
-	if err != nil {
-		t.Fatalf("mapToDiscovered: %v", err)
-	}
-	if dr.Type != "AWS::ElasticLoadBalancingV2::TargetGroup" {
-		t.Errorf("type: got %q", dr.Type)
-	}
-	if got := dr.Inputs["Protocol"]; got != "HTTP" {
-		t.Errorf("Protocol: got %v, want HTTP", got)
 	}
 }
 
