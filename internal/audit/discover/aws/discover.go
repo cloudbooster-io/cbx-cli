@@ -276,6 +276,15 @@ func perResourceDescriberCost(cfnType string) int {
 		// count and not folded in here — usually 0-2 per role; coarse
 		// estimate stays useful at order-of-magnitude.
 		return 3
+	case "AWS::ECR::Repository":
+		// ecrRepositoryDescriber: GetLifecyclePolicy.
+		return 1
+	case "AWS::Backup::BackupVault":
+		// backupVaultDescriber: DescribeBackupVault + GetBackupVaultAccessPolicy.
+		return 2
+	case "AWS::Backup::BackupPlan":
+		// backupPlanDescriber: GetBackupPlan.
+		return 1
 	}
 	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
 	// make no SDK calls.

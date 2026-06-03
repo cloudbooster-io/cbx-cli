@@ -65,14 +65,21 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::Lambda::Function"},
 	{Type: "AWS::ECS::Cluster"},
 	{Type: "AWS::ECS::Service", FallbackLister: listECSServicesNative},
-	{Type: "AWS::ECS::TaskDefinition"},
+	// TaskDefinition is CloudControl-listable, but a live run dropped it from
+	// the audit-time list (probe saw it, audit saw none) — so the privileged-
+	// container / writable-rootfs / plaintext-env / no-log-driver findings went
+	// dark. The fallback enumerates ACTIVE task defs, deduped to the latest
+	// revision per family, via ecs:ListTaskDefinitions + DescribeTaskDefinition.
+	{Type: "AWS::ECS::TaskDefinition", FallbackLister: listECSTaskDefinitionsNative},
 	{Type: "AWS::AutoScaling::AutoScalingGroup"},
 	{Type: "AWS::EKS::Cluster", FallbackLister: listEKSClustersNative},
 	// ECR repositories are CloudControl-listable (fixtures-08 probe = 1) but
 	// were absent from this set, so the scan-on-push / tag-mutability /
 	// lifecycle findings on the discovered repo never surfaced. GetResource
-	// returns ImageScanningConfiguration + ImageTagMutability inline.
-	{Type: "AWS::ECR::Repository"},
+	// returns ImageScanningConfiguration + ImageTagMutability inline. A live 09
+	// run additionally showed the audit-time list silently empty for this type,
+	// so ecr:DescribeRepositories is wired as the fallback-on-empty.
+	{Type: "AWS::ECR::Repository", FallbackLister: listECRRepositoriesNative},
 
 	// --- regional networking ---
 	{Type: "AWS::EC2::VPC"},
@@ -125,9 +132,13 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// 1 each) but were absent from this set, so the vault-lock / vault-CMK /
 	// vault-access-policy / plan-secondary-region-copy findings never
 	// surfaced. GetResource returns EncryptionKeyArn (vault) and the
-	// rule/copyAction tree (plan) inline.
-	{Type: "AWS::Backup::BackupVault"},
-	{Type: "AWS::Backup::BackupPlan"},
+	// rule/copyAction tree (plan) inline. A live run additionally showed the
+	// audit-time list silently empty for both, so backup:ListBackupVaults /
+	// ListBackupPlans are wired as fallback-on-empty. The absence-of-config
+	// posture (AWS-managed key, no access policy, no cross-region copy) is
+	// surfaced by backupVaultDescriber / backupPlanDescriber.
+	{Type: "AWS::Backup::BackupVault", FallbackLister: listBackupVaultsNative},
+	{Type: "AWS::Backup::BackupPlan", FallbackLister: listBackupPlansNative},
 
 	// --- regional messaging ---
 	{Type: "AWS::SQS::Queue"},
@@ -195,8 +206,12 @@ type cfnTypeSpec struct {
 	// cluster) where the list is eventually consistent and comes back empty
 	// right after create — proven live, not theoretical (see lister_native.go)
 	// — plus the ELBv2 Listener of a fresh ALB and the persistently
-	// under-returned AWS::IAM::ManagedPolicy. The load balancer and target
-	// group themselves need no fallback: CloudControl lists them reliably.
+	// under-returned AWS::IAM::ManagedPolicy. A live run additionally caught the
+	// same silent-empty miss on strongly-consistent types that carry planted
+	// findings — AWS::ECR::Repository, AWS::ECS::TaskDefinition,
+	// AWS::Backup::BackupVault, AWS::Backup::BackupPlan — so each of those is
+	// wired too. The load balancer and target group themselves need no
+	// fallback: CloudControl lists them reliably.
 	//
 	// Semantics are deliberately fallback-on-empty rather than full
 	// replacement (the CustomLister model): when CloudControl *does*
