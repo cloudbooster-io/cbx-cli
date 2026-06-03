@@ -2,6 +2,9 @@ package aws
 
 import (
 	"context"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
@@ -148,6 +151,186 @@ func toAnySlice(ss []string) []any {
 	out := make([]any, 0, len(ss))
 	for _, s := range ss {
 		out = append(out, s)
+	}
+	return out
+}
+
+// listECSTaskDefinitionsNative is the FallbackLister for
+// AWS::ECS::TaskDefinition. The type is CloudControl-listable, but a live 09
+// run dropped it from the audit-time list (probe saw it, audit saw none) — so
+// task-level posture (privileged containers, writable root filesystem,
+// plaintext-env secrets, missing log driver) had nothing to evaluate.
+//
+// ecs:ListTaskDefinitions(Status=ACTIVE) is strongly consistent but enumerates
+// every active *revision* of every family; auditing all of them would re-flag
+// the same family N times. We dedupe to the latest active revision per family
+// (latestTaskDefArns) and DescribeTaskDefinition each — one task definition per
+// family, the granularity the posture findings actually care about.
+//
+// There is no TaskDefinition describer; the synthesised CFN-shape
+// ContainerDefinitions are read directly by the grounded LLM.
+func listECSTaskDefinitionsNative(ctx context.Context, c awsCfg, region string) ([]rawResource, error) {
+	client := ecs.NewFromConfig(c.withRegion(region).cfg)
+
+	var arns []string
+	var next *string
+	for {
+		out, err := client.ListTaskDefinitions(ctx, &ecs.ListTaskDefinitionsInput{
+			Status:    ecstypes.TaskDefinitionStatusActive,
+			NextToken: next,
+		})
+		if err != nil {
+			return nil, classifyAWSError(err, "ecs", "ecs:ListTaskDefinitions", region)
+		}
+		arns = append(arns, out.TaskDefinitionArns...)
+		if out.NextToken == nil || *out.NextToken == "" {
+			break
+		}
+		next = out.NextToken
+	}
+
+	var results []rawResource
+	for _, arn := range latestTaskDefArns(arns) {
+		a := arn
+		out, err := client.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{TaskDefinition: &a})
+		if err != nil {
+			return nil, classifyAWSError(err, "ecs", "ecs:DescribeTaskDefinition", region)
+		}
+		if out.TaskDefinition == nil {
+			continue
+		}
+		if raw, ok := taskDefinitionToRaw(*out.TaskDefinition, region); ok {
+			results = append(results, raw)
+		}
+	}
+	return results, nil
+}
+
+// latestTaskDefArns collapses a flat list of task-definition ARNs to the
+// highest-revision ARN per family, so a family with 40 historical revisions is
+// audited once. Unparseable ARNs are passed through untouched rather than
+// dropped (fail-open: better an extra describe than a silent miss). Output is
+// sorted for deterministic ordering. Pure for unit testing.
+func latestTaskDefArns(arns []string) []string {
+	type best struct {
+		arn string
+		rev int
+	}
+	byFamily := map[string]best{}
+	for _, a := range arns {
+		family, rev := parseTaskDefFamilyRevision(a)
+		key := family
+		if family == "" {
+			// Unparseable — key by the full ARN so it survives as its own entry.
+			key = a
+			rev = -1
+		}
+		if cur, ok := byFamily[key]; !ok || rev > cur.rev {
+			byFamily[key] = best{arn: a, rev: rev}
+		}
+	}
+	out := make([]string, 0, len(byFamily))
+	for _, b := range byFamily {
+		out = append(out, b.arn)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// parseTaskDefFamilyRevision splits a task-definition ARN
+// (…:task-definition/<family>:<revision>) into its family and integer
+// revision. Returns ("", -1) when the ARN doesn't match that shape. Pure.
+func parseTaskDefFamilyRevision(arn string) (family string, revision int) {
+	const marker = "task-definition/"
+	i := strings.LastIndex(arn, marker)
+	if i < 0 {
+		return "", -1
+	}
+	tail := arn[i+len(marker):] // <family>:<revision>
+	j := strings.LastIndex(tail, ":")
+	if j < 0 {
+		return "", -1
+	}
+	rev, err := strconv.Atoi(tail[j+1:])
+	if err != nil {
+		return "", -1
+	}
+	return tail[:j], rev
+}
+
+// taskDefinitionToRaw maps an SDK TaskDefinition into CloudControl's CFN shape.
+// The identifier is the TaskDefinitionArn (CloudControl's primary id for this
+// type). ContainerDefinitions carries the per-container posture the findings
+// key off — Privileged, ReadonlyRootFilesystem, User, plaintext Environment vs
+// Secrets, and the log driver. *bool fields are emitted only when set, so the
+// "absent = unknown" contract holds. Pure (no SDK client) for unit testing.
+func taskDefinitionToRaw(td ecstypes.TaskDefinition, region string) (rawResource, bool) {
+	if td.TaskDefinitionArn == nil || *td.TaskDefinitionArn == "" {
+		return rawResource{}, false
+	}
+	id := *td.TaskDefinitionArn
+
+	props := map[string]any{"TaskDefinitionArn": id}
+	putStr(props, "Family", td.Family)
+	putStr(props, "ExecutionRoleArn", td.ExecutionRoleArn)
+	putStr(props, "TaskRoleArn", td.TaskRoleArn)
+	if td.NetworkMode != "" {
+		props["NetworkMode"] = string(td.NetworkMode)
+	}
+	if len(td.RequiresCompatibilities) > 0 {
+		compat := make([]any, 0, len(td.RequiresCompatibilities))
+		for _, ct := range td.RequiresCompatibilities {
+			compat = append(compat, string(ct))
+		}
+		props["RequiresCompatibilities"] = compat
+	}
+
+	if defs := containerDefinitionsToCFN(td.ContainerDefinitions); len(defs) > 0 {
+		props["ContainerDefinitions"] = defs
+	}
+
+	return marshalRaw("AWS::ECS::TaskDefinition", id, region, props)
+}
+
+// containerDefinitionsToCFN maps the per-container security posture into the
+// CFN ContainerDefinitions array shape. Pure.
+func containerDefinitionsToCFN(defs []ecstypes.ContainerDefinition) []any {
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(defs))
+	for _, cd := range defs {
+		c := map[string]any{}
+		putStr(c, "Name", cd.Name)
+		putStr(c, "Image", cd.Image)
+		putStr(c, "User", cd.User)
+		putBool(c, "Privileged", cd.Privileged)
+		putBool(c, "ReadonlyRootFilesystem", cd.ReadonlyRootFilesystem)
+		putBool(c, "Essential", cd.Essential)
+		if len(cd.Environment) > 0 {
+			env := make([]any, 0, len(cd.Environment))
+			for _, kv := range cd.Environment {
+				e := map[string]any{}
+				putStr(e, "Name", kv.Name)
+				putStr(e, "Value", kv.Value)
+				env = append(env, e)
+			}
+			c["Environment"] = env
+		}
+		if len(cd.Secrets) > 0 {
+			secrets := make([]any, 0, len(cd.Secrets))
+			for _, s := range cd.Secrets {
+				sm := map[string]any{}
+				putStr(sm, "Name", s.Name)
+				putStr(sm, "ValueFrom", s.ValueFrom)
+				secrets = append(secrets, sm)
+			}
+			c["Secrets"] = secrets
+		}
+		if cd.LogConfiguration != nil && cd.LogConfiguration.LogDriver != "" {
+			c["LogConfiguration"] = map[string]any{"LogDriver": string(cd.LogConfiguration.LogDriver)}
+		}
+		out = append(out, c)
 	}
 	return out
 }

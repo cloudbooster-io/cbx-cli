@@ -14,6 +14,9 @@ func TestDescriberFor(t *testing.T) {
 		"AWS::RDS::DBCluster",
 		"AWS::Lambda::Function",
 		"AWS::EC2::Instance",
+		"AWS::ECR::Repository",
+		"AWS::Backup::BackupVault",
+		"AWS::Backup::BackupPlan",
 	}
 	for _, cfnType := range registered {
 		if d := describerFor(cfnType); d == nil {
