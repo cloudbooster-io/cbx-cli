@@ -209,6 +209,8 @@ func TestDiscoverableTypes_FallbackWiring(t *testing.T) {
 
 	mustHaveFallback := []string{
 		// added this change
+		"AWS::DynamoDB::Table",
+		// added by the prior fallback batch — regression guard
 		"AWS::ECR::Repository",
 		"AWS::ECS::TaskDefinition",
 		"AWS::Backup::BackupVault",

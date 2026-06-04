@@ -11,10 +11,10 @@ import (
 // The native fallback listers in this package (lister_ec2_native.go,
 // lister_rds_native.go, lister_ecs_native.go, lister_ecr_native.go,
 // lister_eks_native.go, lister_elb_native.go, lister_iam_native.go,
-// lister_backup_native.go) exist because CloudControl's ListResources silently
-// under-returns: it answers with an empty set — not an error — so discovery
-// drops the resource with permission_errors staying 0. Two distinct failure
-// modes:
+// lister_backup_native.go, lister_dynamodb_native.go) exist because
+// CloudControl's ListResources silently under-returns: it answers with an empty
+// set — not an error — so discovery drops the resource with permission_errors
+// staying 0. Two distinct failure modes:
 //
 //   - Eventual consistency on freshly-created workload resources — EC2
 //     instances/volumes, RDS instances/clusters, ECS services, EKS clusters,
@@ -34,9 +34,11 @@ import (
 //     planted findings — a live run watched AWS::ECR::Repository,
 //     AWS::ECS::TaskDefinition, AWS::Backup::BackupVault and
 //     AWS::Backup::BackupPlan each come back empty from the audit-time list
-//     while the probe saw count=1. These aren't eventual-consistency races
-//     (the resources were minutes old), but the failure mode and fix are
-//     identical: a strongly-consistent native Describe wired fallback-on-empty.
+//     while the probe saw count=1, and the v2 clean-baseline sweep caught
+//     AWS::DynamoDB::Table dropping the same way across two variants. These
+//     aren't eventual-consistency races (the resources were minutes old), but
+//     the failure mode and fix are identical: a strongly-consistent native
+//     Describe wired fallback-on-empty.
 //
 // Each fallback calls the service's native API and synthesises the same
 // CFN-shape rawResource records, so the resource flows through
