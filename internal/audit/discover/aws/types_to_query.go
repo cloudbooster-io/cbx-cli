@@ -123,7 +123,14 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// reachable from the internet (any constituent subnet routable
 	// via an IGW route).
 	{Type: "AWS::RDS::DBSubnetGroup"},
-	{Type: "AWS::DynamoDB::Table"},
+	// DynamoDB::Table is CloudControl-listable and strongly consistent, but the
+	// v2 clean-baseline sweep (2026-06-03) watched it silently vanish from the
+	// audit-time list in variants 00 (−2 findings) and 03 (−3) — the same
+	// non-deterministic CloudControl silent-empty defect, now on a type that
+	// carries CB-curated findings (no-PITR, provisioned-capacity, AWS-owned-key
+	// encryption, no-deletion-protection). dynamodb:ListTables + DescribeTable
+	// (+ DescribeContinuousBackups for PITR) is the authoritative fallback-on-empty.
+	{Type: "AWS::DynamoDB::Table", FallbackLister: listDynamoDBTablesNative},
 	{Type: "AWS::ElastiCache::ReplicationGroup"},
 	{Type: "AWS::ElastiCache::CacheCluster"},
 
@@ -209,9 +216,9 @@ type cfnTypeSpec struct {
 	// under-returned AWS::IAM::ManagedPolicy. A live run additionally caught the
 	// same silent-empty miss on strongly-consistent types that carry planted
 	// findings — AWS::ECR::Repository, AWS::ECS::TaskDefinition,
-	// AWS::Backup::BackupVault, AWS::Backup::BackupPlan — so each of those is
-	// wired too. The load balancer and target group themselves need no
-	// fallback: CloudControl lists them reliably.
+	// AWS::Backup::BackupVault, AWS::Backup::BackupPlan, and AWS::DynamoDB::Table
+	// — so each of those is wired too. The load balancer and target group
+	// themselves need no fallback: CloudControl lists them reliably.
 	//
 	// Semantics are deliberately fallback-on-empty rather than full
 	// replacement (the CustomLister model): when CloudControl *does*
