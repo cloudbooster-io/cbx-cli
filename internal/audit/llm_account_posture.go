@@ -44,6 +44,26 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 		fmt.Fprintf(sb, "IAM password policy configured: %t\n\n", *p.PasswordPolicyPresent)
 	}
 
+	if len(p.GlueCatalogPolicyByRegion) > 0 {
+		sb.WriteString("Glue Data Catalog resource policy (per region; only regions that HAVE a policy are listed — grants_wildcard_principal=true means the whole catalog is open to Principal \"*\" with no scoping condition):\n")
+		regions := make([]string, 0, len(p.GlueCatalogPolicyByRegion))
+		for r := range p.GlueCatalogPolicyByRegion {
+			regions = append(regions, r)
+		}
+		sort.Strings(regions)
+		for _, r := range regions {
+			pol := p.GlueCatalogPolicyByRegion[r]
+			if pol == nil {
+				continue
+			}
+			fmt.Fprintf(sb, "  %s: grants_wildcard_principal=%t\n", r, pol.GrantsWildcardPrincipal)
+			if doc := strings.TrimSpace(pol.Document); doc != "" {
+				fmt.Fprintf(sb, "    document: %s\n", doc)
+			}
+		}
+		sb.WriteString("\n")
+	}
+
 	if len(p.TrailCoverageByRegion) > 0 {
 		sb.WriteString("CloudTrail coverage (per audited region; false = no trail covers this region):\n")
 		regions := make([]string, 0, len(p.TrailCoverageByRegion))
