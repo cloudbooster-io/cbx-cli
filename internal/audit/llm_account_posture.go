@@ -57,6 +57,46 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 		sb.WriteString("\n")
 	}
 
+	if len(p.GuardDutyByRegion) > 0 {
+		sb.WriteString("GuardDuty detector (per audited region; \"disabled\" = a detector exists but is suspended — a real regression; \"absent\" = no detector; \"enabled\" = active):\n")
+		regions := make([]string, 0, len(p.GuardDutyByRegion))
+		anyEnabled := false
+		for r := range p.GuardDutyByRegion {
+			regions = append(regions, r)
+		}
+		sort.Strings(regions)
+		for _, r := range regions {
+			fmt.Fprintf(sb, "  %s: %s\n", r, p.GuardDutyByRegion[r])
+			if p.GuardDutyByRegion[r] == "enabled" {
+				anyEnabled = true
+			}
+		}
+		fmt.Fprintf(sb, "  (GuardDuty enabled in at least one audited region: %t)\n\n", anyEnabled)
+	}
+
+	if len(p.ConfigRecorderByRegion) > 0 {
+		sb.WriteString("AWS Config recorder (per audited region; records_global_types=false means IAM/global resources are NOT captured in that region):\n")
+		regions := make([]string, 0, len(p.ConfigRecorderByRegion))
+		for r := range p.ConfigRecorderByRegion {
+			regions = append(regions, r)
+		}
+		sort.Strings(regions)
+		presentAnywhere := false
+		globalAnywhere := false
+		for _, r := range regions {
+			st := p.ConfigRecorderByRegion[r]
+			fmt.Fprintf(sb, "  %s: present=%t records_global_types=%t\n", r, st.Present, st.RecordsGlobalTypes)
+			if st.Present {
+				presentAnywhere = true
+			}
+			if st.RecordsGlobalTypes {
+				globalAnywhere = true
+			}
+		}
+		fmt.Fprintf(sb, "  (AWS Config recorder present in at least one audited region: %t)\n", presentAnywhere)
+		fmt.Fprintf(sb, "  (global resource types recorded in at least one audited region: %t)\n\n", globalAnywhere)
+	}
+
 	if len(p.IAMSummary) > 0 {
 		sb.WriteString("IAM account summary (selected keys from iam:GetAccountSummary):\n")
 		keys := make([]string, 0, len(p.IAMSummary))
