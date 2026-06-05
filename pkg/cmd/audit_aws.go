@@ -279,6 +279,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			awsCtx := &audit.AWSAuditContext{
 				AccountID:                  discResult.Identity.AccountID,
 				Identity:                   discResult.Identity.ARN,
+				CallerARN:                  discResult.Identity.ARN,
 				Regions:                    discResult.Regions,
 				EventCount:                 discResult.EventCount,
 				AccountPosture:             discResult.AccountPosture,
