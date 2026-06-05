@@ -33,6 +33,7 @@ var allDescribers = []Describer{
 	&rdsInstanceDescriber{},
 	&rdsClusterDescriber{},
 	&lambdaFunctionDescriber{},
+	&apiGatewayV2ApiDescriber{},
 	&ec2InstanceDescriber{},
 	&securityGroupDescriber{},
 	&ebsVolumeDescriber{},
