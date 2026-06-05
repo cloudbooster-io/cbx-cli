@@ -54,6 +54,17 @@ type AccountPosture struct {
 	// derived "recorded in at least one region" line for that reason).
 	ConfigRecorderByRegion map[string]ConfigRecorderState `json:"config_recorder_by_region,omitempty"`
 
+	// GlueCatalogPolicyByRegion maps each audited region that has a Glue
+	// Data Catalog resource policy → its summary. The Data Catalog has
+	// at most one resource policy per account per region; it has no CFN
+	// type, so it can't ride in through CloudControl discovery and is
+	// fetched account-side via glue:GetResourcePolicy (see
+	// discover/aws/account_posture.go). Regions with no resource policy
+	// are omitted from the map (the common case) — a region whose entry
+	// reports GrantsWildcardPrincipal=true exposes the entire catalog to
+	// a wildcard principal and is a finding.
+	GlueCatalogPolicyByRegion map[string]*GlueCatalogPolicy `json:"glue_catalog_policy_by_region,omitempty"`
+
 	Errors []string `json:"errors,omitempty"`
 }
 
@@ -67,6 +78,22 @@ type AccountPosture struct {
 type ConfigRecorderState struct {
 	Present            bool `json:"present"`
 	RecordsGlobalTypes bool `json:"records_global_types"`
+}
+
+// GlueCatalogPolicy summarises the AWS Glue Data Catalog resource
+// policy discovered in one region. Populated only for regions where a
+// policy is actually set; see discover/aws/account_posture.go.
+type GlueCatalogPolicy struct {
+	// GrantsWildcardPrincipal is true when an Allow statement names a
+	// wildcard principal ("*" or {"AWS":"*"}) with no scoping Condition
+	// — the cross-account / public Data Catalog exposure pattern. Same
+	// analysis the S3 describer applies to bucket policies.
+	GrantsWildcardPrincipal bool `json:"grants_wildcard_principal"`
+
+	// Document is the raw resource-policy JSON, surfaced so the grounded
+	// analyzer can cite the offending statement (mirrors the S3
+	// describer's cb_describer_bucket_policy_document).
+	Document string `json:"document,omitempty"`
 }
 
 // IaC type constants used by Options.IaCType.
