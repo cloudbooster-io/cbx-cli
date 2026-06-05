@@ -35,7 +35,38 @@ type AccountPosture struct {
 	// discovered at all); a region with value=false is a finding.
 	TrailCoverageByRegion map[string]bool `json:"trail_coverage_by_region,omitempty"`
 
+	// GuardDutyByRegion maps each audited region → the GuardDuty
+	// detector state: "enabled" (a detector exists and is actively
+	// monitoring), "disabled" (a detector exists but is suspended — a
+	// real regression: someone turned threat detection off), or
+	// "absent" (no detector in the region). See
+	// discover/aws/account_posture.go:probeGuardDuty. A region absent
+	// from the map means the probe failed (recorded in Errors).
+	GuardDutyByRegion map[string]string `json:"guardduty_by_region,omitempty"`
+
+	// ConfigRecorderByRegion maps each audited region → AWS Config
+	// configuration-recorder coverage. The load-bearing signal is
+	// whether global (account-wide) resource types like IAM are
+	// captured — see ConfigRecorderState and
+	// discover/aws/account_posture.go:probeConfigRecorders. Global
+	// types only need recording in ONE region, so consumers must
+	// aggregate across regions before flagging (the prompt renders a
+	// derived "recorded in at least one region" line for that reason).
+	ConfigRecorderByRegion map[string]ConfigRecorderState `json:"config_recorder_by_region,omitempty"`
+
 	Errors []string `json:"errors,omitempty"`
+}
+
+// ConfigRecorderState is the per-region AWS Config configuration-recorder
+// shape carried in AccountPosture.ConfigRecorderByRegion. Present is
+// false when no recorder exists in the region (still a recorded entry so
+// the LLM knows the region was probed). RecordsGlobalTypes collapses the
+// AWS RecordingGroup nuance (AllSupported+IncludeGlobalResourceTypes, or
+// an inclusion strategy that lists a global IAM type) into one signal so
+// the prompt doesn't have to reason over AWS schema details.
+type ConfigRecorderState struct {
+	Present            bool `json:"present"`
+	RecordsGlobalTypes bool `json:"records_global_types"`
 }
 
 // IaC type constants used by Options.IaCType.
