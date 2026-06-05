@@ -348,6 +348,18 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 		return nil, scanErr
 	}
 
+	// Deterministic severity post-process over the final LLM findings, before
+	// grouping / rendering / exit-code so the report bucket, the JSON envelope,
+	// and the exit code stay consistent from one mutation. Ordering is load-
+	// bearing: (A) drops the auditor's own IAM-user finding (the #1 FP), then
+	// (B) raises the unambiguous account-takeover / audit-integrity classes —
+	// (A) first so the floor never promotes the caller's own admin user to
+	// critical. Scoped to AWS audits (awsCtx != nil); see severity_floor.go.
+	if awsCtx != nil {
+		findings = dropSelfIdentityFindings(findings, awsCtx.CallerARN)
+		findings = applySeverityFloor(findings, resources)
+	}
+
 	components := group.Group(resources, group.Options{
 		LookupPrimitive: CFNTypeToCBPrimitive,
 	})
