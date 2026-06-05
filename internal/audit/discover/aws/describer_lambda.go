@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"regexp"
+	"strings"
 )
 
 // lambdaFunctionDescriber post-processes CloudControl's
@@ -12,6 +13,17 @@ import (
 // VpcConfig, MemorySize, Timeout, EphemeralStorage, Architectures,
 // Layers, KmsKeyArn, LoggingConfig are all in CC's response — so the
 // describer makes no SDK call and reads only from r.Inputs.
+//
+// Two operational-resilience signals are surfaced as explicit booleans
+// the grounded prompt's baseline rule keys off — cb_describer_dlq_configured
+// (DeadLetterConfig.TargetArn present) and cb_describer_reserved_concurrency_set
+// (ReservedConcurrentExecutions present). Both source properties are
+// normal readable CFN properties — NOT writeOnly, verified against the
+// AWS::Lambda::Function registry schema — so CloudControl returns them
+// when set and omits them when unset; absence is a reliable "not
+// configured" signal. Emitting the booleans rather than relying on the
+// LLM to notice a *missing* key is the whole point: absence is invisible
+// in the raw Properties JSON, a present `false` is not.
 //
 // One detection lives here that CC can't compute on its own:
 // cb_describer_env_has_plaintext_secrets. It's a key-shape heuristic
@@ -46,7 +58,28 @@ func (lambdaFunctionDescriber) Enrich(_ context.Context, _ awsCfg, r *Discovered
 	envVars := lambdaEnvVars(r.Inputs)
 	r.Inputs["cb_describer_env_var_count"] = float64(len(envVars))
 	r.Inputs["cb_describer_env_has_plaintext_secrets"] = anyKeyLooksLikeSecret(envVars)
+
+	r.Inputs["cb_describer_dlq_configured"] = lambdaHasDLQ(r.Inputs)
+	if rc, ok := readNumericPtr(r.Inputs, "ReservedConcurrentExecutions"); ok {
+		r.Inputs["cb_describer_reserved_concurrency_set"] = true
+		r.Inputs["cb_describer_reserved_concurrency"] = rc
+	} else {
+		r.Inputs["cb_describer_reserved_concurrency_set"] = false
+	}
 	return nil
+}
+
+// lambdaHasDLQ reports whether the function declares a dead-letter
+// target. CloudControl returns DeadLetterConfig only when one is
+// configured; a real DLQ carries a non-empty TargetArn (an SNS topic or
+// SQS queue ARN). A missing block or empty TargetArn means failed async
+// invocations are silently dropped — the missing-DLQ footgun.
+func lambdaHasDLQ(m map[string]any) bool {
+	dlc, ok := m["DeadLetterConfig"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(readStr(dlc, "TargetArn")) != ""
 }
 
 // lambdaSubnetIDs returns the subnet-id list under VpcConfig.SubnetIds
