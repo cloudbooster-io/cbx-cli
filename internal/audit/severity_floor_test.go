@@ -203,6 +203,14 @@ func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
 			{RuleID: "LLM-lifecycle", Title: "S3 bucket has no lifecycle policy",
 				Description: "objects are never transitioned to cheaper storage or expired",
 				Resource:    bpaBucketURN, Severity: SeverityInfo},
+			// !31 regression: a hygiene INFO whose text contains the bare token
+			// "public" ("public-facing") but is NOT the BPA finding (no "block
+			// public access" / "publicly accessible" / "bpa"). The old gate keyed
+			// on bare "public" and promoted this INFO→CRITICAL; the tightened gate
+			// must leave it at info.
+			{RuleID: "LLM-hygiene", Title: "S3 server access logging not enabled",
+				Description: "enable access logging to audit requests to this public-facing bucket",
+				Resource:    bpaBucketURN, Severity: SeverityInfo},
 		}, []DiscoveredResource{bpaAllDisabledRes(bpaBucketURN)})
 
 		for _, f := range out {
@@ -214,6 +222,10 @@ func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
 			case "LLM-lifecycle":
 				if f.Severity != SeverityInfo {
 					t.Fatalf("orthogonal lifecycle finding must keep info, got %q", f.Severity)
+				}
+			case "LLM-hygiene":
+				if f.Severity != SeverityInfo {
+					t.Fatalf("hygiene finding mentioning \"public\" must keep info, got %q", f.Severity)
 				}
 			}
 		}

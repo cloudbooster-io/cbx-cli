@@ -184,8 +184,18 @@ func findingConcernsAdminGrant(f *Finding) bool {
 	return findingTextHasAny(f, "admin", "wildcard", "full access", "fullaccess", "privilege", "*:*")
 }
 
+// findingConcernsPublicAccess gates the S3 Block-Public-Access promotion on
+// BPA-SPECIFIC phrasing only — deliberately NOT the bare token "public". The
+// LLM sprinkles "public" across orthogonal S3-hygiene recs ("public-facing
+// bucket", "publicly listed prefix", …); on a BPA-all-disabled bucket the floor
+// joins by URN over the full finding set, so gating on bare "public" promoted
+// those INFO hygiene findings to CRITICAL — inverting the "hygiene = info"
+// contract. The real BPA-all-disabled finding always says "block public access"
+// / "publicly accessible", so the tighter phrase set keeps it matched while
+// leaving the hygiene findings at their own severity. This is the one gate where
+// over-permissiveness is NOT benign (see the findingTextHasAny note).
 func findingConcernsPublicAccess(f *Finding) bool {
-	return findingTextHasAny(f, "public", "bpa", "block public")
+	return findingTextHasAny(f, "block public access", "public access block", "publicly accessible", "bpa")
 }
 
 func findingConcernsEncryption(f *Finding) bool {
