@@ -348,6 +348,14 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 		return nil, scanErr
 	}
 
+	// Merge the deterministic discovery-integrity warnings (computed Go-side
+	// during discovery) into the finding set BEFORE grouping / rendering /
+	// severity so they reach the report, the JSON envelope, and the exit
+	// code — not just the returned Result. See DiscoveryIntegrityFinding.
+	if awsCtx != nil && len(awsCtx.DiscoveryIntegrityFindings) > 0 {
+		findings = append(findings, awsCtx.DiscoveryIntegrityFindings...)
+	}
+
 	components := group.Group(resources, group.Options{
 		LookupPrimitive: CFNTypeToCBPrimitive,
 	})
