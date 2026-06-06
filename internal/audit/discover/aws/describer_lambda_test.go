@@ -96,6 +96,78 @@ func TestLambdaDescriber_DetectsPlaintextSecretEnvKey(t *testing.T) {
 	}
 }
 
+func TestLambdaDescriber_DLQAndReservedConcurrency(t *testing.T) {
+	cases := []struct {
+		name              string
+		inputs            map[string]any
+		wantDLQ           bool
+		wantReservedSet   bool
+		wantReservedValue float64 // checked only when wantReservedSet
+	}{
+		{
+			name:            "no DLQ, no reserved concurrency (the 03-serverless-api shape)",
+			inputs:          map[string]any{"Runtime": "python3.12"},
+			wantDLQ:         false,
+			wantReservedSet: false,
+		},
+		{
+			name: "DLQ with TargetArn is configured",
+			inputs: map[string]any{
+				"DeadLetterConfig": map[string]any{"TargetArn": "arn:aws:sqs:eu-central-1:123:dlq"},
+			},
+			wantDLQ:         true,
+			wantReservedSet: false,
+		},
+		{
+			name: "empty DeadLetterConfig block is not a DLQ",
+			inputs: map[string]any{
+				"DeadLetterConfig": map[string]any{"TargetArn": "  "},
+			},
+			wantDLQ:         false,
+			wantReservedSet: false,
+		},
+		{
+			name: "reserved concurrency 0 (throttle-to-zero) still counts as set",
+			inputs: map[string]any{
+				"ReservedConcurrentExecutions": float64(0),
+			},
+			wantDLQ:           false,
+			wantReservedSet:   true,
+			wantReservedValue: 0,
+		},
+		{
+			name: "reserved concurrency set to a positive value",
+			inputs: map[string]any{
+				"ReservedConcurrentExecutions": float64(10),
+			},
+			wantDLQ:           false,
+			wantReservedSet:   true,
+			wantReservedValue: 10,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := DiscoveredResource{Type: "AWS::Lambda::Function", ID: "fn", Inputs: tc.inputs}
+			if err := (lambdaFunctionDescriber{}).Enrich(context.Background(), awsCfg{}, &r); err != nil {
+				t.Fatalf("Enrich: %v", err)
+			}
+			if got := r.Inputs["cb_describer_dlq_configured"]; got != tc.wantDLQ {
+				t.Errorf("dlq_configured = %v, want %v", got, tc.wantDLQ)
+			}
+			if got := r.Inputs["cb_describer_reserved_concurrency_set"]; got != tc.wantReservedSet {
+				t.Errorf("reserved_concurrency_set = %v, want %v", got, tc.wantReservedSet)
+			}
+			if tc.wantReservedSet {
+				if got := r.Inputs["cb_describer_reserved_concurrency"]; got != tc.wantReservedValue {
+					t.Errorf("reserved_concurrency = %v, want %v", got, tc.wantReservedValue)
+				}
+			} else if _, present := r.Inputs["cb_describer_reserved_concurrency"]; present {
+				t.Errorf("reserved_concurrency must be absent when not set")
+			}
+		})
+	}
+}
+
 func TestLambdaDescriber_NotVPCAttachedWhenSubnetsEmpty(t *testing.T) {
 	r := DiscoveredResource{
 		Type: "AWS::Lambda::Function",
