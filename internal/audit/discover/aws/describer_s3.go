@@ -119,6 +119,13 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 			"status":     string(vers.Status),
 			"mfa_delete": string(vers.MFADelete),
 		}
+		// Crisp derived booleans so a posture rule has an unambiguous hook
+		// instead of string-matching the raw status (the same de-risking
+		// the wildcard-principal boolean applies, L243+). AWS omits the
+		// MFADelete element entirely until it is configured, so an empty
+		// string is treated identically to "Disabled" — not enabled.
+		r.Inputs["cb_describer_versioning_enabled"] = versioningEnabled(string(vers.Status))
+		r.Inputs["cb_describer_mfa_delete_enabled"] = mfaDeleteEnabled(string(vers.MFADelete))
 	} else if !isS3NotFound(err) {
 		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketVersioning")
 	}
@@ -136,6 +143,11 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 			}
 		}
 		r.Inputs["cb_describer_encryption"] = map[string]any{"algorithms": algos}
+		// Derived hook: true only when a KMS CMK is the default algorithm
+		// (vs SSE-S3/AES256). Deliberately set ONLY on the present branch —
+		// the no-encryption case below stays nil so "no SSE at all" (a
+		// distinct, stronger finding) never collapses into "SSE-S3-not-KMS".
+		r.Inputs["cb_describer_sse_is_kms"] = sseIsKMS(algos)
 	case isNoSuchBucketEncryption(err):
 		r.Inputs["cb_describer_encryption"] = nil
 	default:
@@ -162,6 +174,57 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 		r.Inputs["cb_describer_bucket_policy_present"] = false
 	default:
 		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketPolicy")
+	}
+
+	// Lifecycle configuration — cost/retention hygiene. Like PAB/encryption,
+	// the ABSENCE is the signal: NoSuchLifecycleConfiguration is the explicit
+	// "no lifecycle rules" case worth flagging for data/ingest buckets, so we
+	// emit cb_describer_lifecycle_present=false rather than silently skipping.
+	lc, err := client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &bucket})
+	switch {
+	case err == nil:
+		r.Inputs["cb_describer_lifecycle_present"] = len(lc.Rules) > 0
+		r.Inputs["cb_describer_lifecycle_rule_count"] = len(lc.Rules)
+	case isNoSuchLifecycleConfiguration(err):
+		r.Inputs["cb_describer_lifecycle_present"] = false
+		r.Inputs["cb_describer_lifecycle_rule_count"] = 0
+	default:
+		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketLifecycleConfiguration")
+	}
+
+	// Server-access logging — audit signal. There is NO not-found error code
+	// here: GetBucketLogging succeeds with LoggingEnabled==nil when logging is
+	// off, which is the "off" case. When on, surface the target bucket so the
+	// grounded analyzer can suppress the finding on a bucket that is itself an
+	// access-log destination (a log target logging to itself is recursion, not
+	// a gap).
+	lg, err := client.GetBucketLogging(ctx, &s3.GetBucketLoggingInput{Bucket: &bucket})
+	switch {
+	case err == nil:
+		on := lg.LoggingEnabled != nil
+		r.Inputs["cb_describer_access_logging_enabled"] = on
+		if on && lg.LoggingEnabled.TargetBucket != nil {
+			r.Inputs["cb_describer_access_logging_target_bucket"] = *lg.LoggingEnabled.TargetBucket
+		}
+	case isS3NotFound(err):
+		r.Inputs["cb_describer_access_logging_enabled"] = false
+	default:
+		return classifyS3Error(err, bucket, r.Region, "s3:GetBucketLogging")
+	}
+
+	// Object Lock — WORM/immutability signal for backup/compliance buckets.
+	// A bucket that was NOT created with ObjectLockEnabledForBucket=true
+	// returns ObjectLockConfigurationNotFoundError — that error IS the
+	// finding's absence signal (object lock genuinely off), not a failure, so
+	// it maps to cb_describer_object_lock_enabled=false.
+	ol, err := client.GetObjectLockConfiguration(ctx, &s3.GetObjectLockConfigurationInput{Bucket: &bucket})
+	switch {
+	case err == nil:
+		r.Inputs["cb_describer_object_lock_enabled"] = objectLockEnabled(ol.ObjectLockConfiguration)
+	case isObjectLockNotFound(err):
+		r.Inputs["cb_describer_object_lock_enabled"] = false
+	default:
+		return classifyS3Error(err, bucket, r.Region, "s3:GetObjectLockConfiguration")
 	}
 
 	// Object-count probe — single-key list is the cheapest signal for
@@ -202,6 +265,47 @@ func isNoSuchBucketEncryption(err error) bool {
 	return s3ErrorCode(err) == "ServerSideEncryptionConfigurationNotFoundError"
 }
 
+func isNoSuchLifecycleConfiguration(err error) bool {
+	return s3ErrorCode(err) == "NoSuchLifecycleConfiguration"
+}
+
+func isObjectLockNotFound(err error) bool {
+	return s3ErrorCode(err) == "ObjectLockConfigurationNotFoundError"
+}
+
+// versioningEnabled reports whether the bucket's versioning Status is the
+// AWS "Enabled" value (vs "Suspended" or the empty never-configured case).
+func versioningEnabled(status string) bool {
+	return status == "Enabled"
+}
+
+// mfaDeleteEnabled reports whether MFA-Delete is on. AWS omits the MFADelete
+// element entirely until it has been configured, so an empty string is
+// treated identically to "Disabled" — not enabled.
+func mfaDeleteEnabled(mfaDelete string) bool {
+	return mfaDelete == "Enabled"
+}
+
+// sseIsKMS reports whether any default SSE algorithm is a KMS CMK ("aws:kms"
+// or dual-layer "aws:kms:dsse") as opposed to SSE-S3 ("AES256"). Only
+// meaningful when encryption is present — the no-encryption case is handled
+// separately (a stronger, distinct finding) and must not reach here.
+func sseIsKMS(algorithms []string) bool {
+	for _, a := range algorithms {
+		if a == string(types.ServerSideEncryptionAwsKms) || a == string(types.ServerSideEncryptionAwsKmsDsse) {
+			return true
+		}
+	}
+	return false
+}
+
+// objectLockEnabled reports whether a bucket's Object Lock configuration has
+// WORM protection turned on. nil config (or any non-"Enabled" state) is
+// not-enabled — the absence signal finding 6 grounds on.
+func objectLockEnabled(cfg *types.ObjectLockConfiguration) bool {
+	return cfg != nil && cfg.ObjectLockEnabled == types.ObjectLockEnabledEnabled
+}
+
 func isS3NotFound(err error) bool {
 	switch s3ErrorCode(err) {
 	case "NoSuchBucket", "NoSuchBucketPolicy", "NoSuchTagSet":
@@ -235,10 +339,6 @@ func classifyS3Error(err error, bucket, region, action string) error {
 	}
 	return fmt.Errorf("%s on bucket %s [%s]: %w", action, bucket, region, err)
 }
-
-// _ asserts s3 types is referenced so future field types resolve;
-// remove when a concrete reference replaces it.
-var _ = types.ObjectStorageClassStandard
 
 // bucketPolicyHasWildcardPrincipal returns true when any Statement
 // with Effect=Allow has Principal `*` or `{"AWS":"*"}` AND no

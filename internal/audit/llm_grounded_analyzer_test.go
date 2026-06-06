@@ -188,6 +188,30 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_S3HygieneBaselineRules is a WIRING CHECK only: it
+// confirms the S3-hygiene baseline rules (and their describer-field hooks +
+// the intent-scoping FP guard) are present in the prompt text. It does NOT
+// validate that the findings actually fire or that the FP control bucket
+// stays clean — that is LLM behavior, validated by the deferred live e2e run.
+func TestBuildGroundedPrompt_S3HygieneBaselineRules(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	for _, want := range []string{
+		"cb_describer_versioning_enabled",
+		"cb_describer_sse_is_kms",
+		"cb_describer_mfa_delete_enabled",
+		"cb_describer_lifecycle_present",
+		"cb_describer_access_logging_enabled",
+		"cb_describer_access_logging_target_bucket",
+		"cb_describer_object_lock_enabled",
+		"INTENT-SCOPED", // the FP guard must be stated, not implied
+		"never describe the bucket as unencrypted",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing S3-hygiene wiring %q", want)
+		}
+	}
+}
+
 func TestNewLLMAnalyzer_CBKnowledgeRequiresClaudeCode(t *testing.T) {
 	_, err := newLLMAnalyzer(Options{LLMProvider: "claude", CBKnowledge: true}, IaCTypeTerraform)
 	if err == nil || !strings.Contains(err.Error(), "--cb-knowledge requires --llm claude-code") {
