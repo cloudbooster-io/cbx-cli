@@ -348,12 +348,23 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 		return nil, scanErr
 	}
 
-	// Merge the deterministic discovery-integrity warnings (computed Go-side
-	// during discovery) into the finding set BEFORE grouping / rendering /
-	// severity so they reach the report, the JSON envelope, and the exit
-	// code — not just the returned Result. See DiscoveryIntegrityFinding.
-	if awsCtx != nil && len(awsCtx.DiscoveryIntegrityFindings) > 0 {
+	// Single AWS-scoped finding post-process, run BEFORE grouping / rendering /
+	// exit-code so the report bucket, the JSON envelope, and the exit code stay
+	// consistent. Order is load-bearing:
+	//   1. Merge the deterministic discovery-integrity warnings (computed
+	//      Go-side during discovery) into the finding set so they reach the
+	//      report, the JSON envelope, and the exit code — not just the
+	//      returned Result. See DiscoveryIntegrityFinding.
+	//   2. dropSelfIdentityFindings — drop the auditor's own IAM-user finding
+	//      (the #1 FP) BEFORE the floor, so the floor never promotes the
+	//      caller's own admin user to critical.
+	//   3. applySeverityFloor over the full set (integrity findings included) —
+	//      raise the unambiguous account-takeover / audit-integrity classes.
+	// See severity_floor.go.
+	if awsCtx != nil {
 		findings = append(findings, awsCtx.DiscoveryIntegrityFindings...)
+		findings = dropSelfIdentityFindings(findings, awsCtx.CallerARN)
+		findings = applySeverityFloor(findings, resources)
 	}
 
 	components := group.Group(resources, group.Options{
