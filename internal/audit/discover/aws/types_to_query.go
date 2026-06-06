@@ -150,6 +150,17 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::Backup::BackupVault", FallbackLister: listBackupVaultsNative},
 	{Type: "AWS::Backup::BackupPlan", FallbackLister: listBackupPlansNative},
 
+	// --- regional analytics / data-lake ---
+	// Athena workgroups carry their full WorkGroupConfiguration through
+	// CloudControl's read handler (EnforceWorkGroupConfiguration and
+	// ResultConfiguration.EncryptionConfiguration are read-only-visible,
+	// not write-only) — so the grounded analyzer can flag unenforced /
+	// unencrypted workgroups straight from the discovered shape, no
+	// describer needed. The Glue Data Catalog resource policy, by
+	// contrast, has no CFN type and is fetched account-side via
+	// glue:GetResourcePolicy (see account_posture.go).
+	{Type: "AWS::Athena::WorkGroup"},
+
 	// --- regional messaging ---
 	{Type: "AWS::SQS::Queue"},
 	{Type: "AWS::SNS::Topic"},

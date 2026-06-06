@@ -47,6 +47,8 @@ github.com/aws/aws-sdk-go-v2/service/eks v1.84.3 h1:b9/RIi5gBDVw8PPgV7nsfHfum66N
 github.com/aws/aws-sdk-go-v2/service/eks v1.84.3/go.mod h1:uFsFNxjGhW8MASQ4zpco6ONDlsC6lNZOiADv+hyH67w=
 github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.14 h1:OrWZhXbvIuUUoPP/iKJTk0oK1bQIMP+rDeX+WovV3I4=
 github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.14/go.mod h1:z4WCOQa6Hvgz9es0erR40tJQe1hDHRLPeDlhoUQrGAg=
+github.com/aws/aws-sdk-go-v2/service/glue v1.143.0 h1:WTpCCcVOJeZQ5QcmluWPZ9Zex04ATDra1DP9WlsmepI=
+github.com/aws/aws-sdk-go-v2/service/glue v1.143.0/go.mod h1:iq44pC+BGkrWZJ7QKhm+5LFYpGwNDvHYh5zBwihN9Yo=
 github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.2 h1:oNYOPpnl1tVWrL2VeCAoEExE972TuRrlwBABvRUbdO4=
 github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.2/go.mod h1:dyMJKbV04DLsE7uJ1ttYaap3NLsjIUJOJdmrk7TzQvM=
 github.com/aws/aws-sdk-go-v2/service/iam v1.53.10 h1:kcN3I3llO7VwIY5w3Pc5FmEonpsr23Ou7Cwk4qf7dik=
