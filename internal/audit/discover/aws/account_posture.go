@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/guardduty"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/smithy-go"
 
@@ -24,6 +26,8 @@ import (
 func gatherAccountPosture(ctx context.Context, cfg awsCfg, regions []string) *audit.AccountPosture {
 	out := &audit.AccountPosture{
 		EBSEncryptionByDefault: map[string]bool{},
+		GuardDutyByRegion:      map[string]string{},
+		ConfigRecorderByRegion: map[string]audit.ConfigRecorderState{},
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -44,6 +48,46 @@ func gatherAccountPosture(ctx context.Context, cfg awsCfg, regions []string) *au
 				return
 			}
 			out.EBSEncryptionByDefault[region] = enabled
+		}()
+	}
+
+	// Per-region GuardDuty detector state. GuardDuty is regional; a
+	// detector that exists but is suspended ("disabled") is a real
+	// regression the audit must catch, distinct from never having
+	// enabled it ("absent"). See probeGuardDuty.
+	for _, region := range regions {
+		region := region
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state, err := probeGuardDuty(ctx, cfg.withRegion(region))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				out.Errors = append(out.Errors, "guardduty:ListDetectors "+region+": "+errSummary(err))
+				return
+			}
+			out.GuardDutyByRegion[region] = state
+		}()
+	}
+
+	// Per-region AWS Config recorder coverage. Config is regional but
+	// global resource types (IAM) only need recording in one region —
+	// consumers aggregate before flagging, so we record every region's
+	// state (including "no recorder").
+	for _, region := range regions {
+		region := region
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state, err := probeConfigRecorders(ctx, cfg.withRegion(region))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				out.Errors = append(out.Errors, "config:DescribeConfigurationRecorders "+region+": "+errSummary(err))
+				return
+			}
+			out.ConfigRecorderByRegion[region] = state
 		}()
 	}
 
@@ -126,6 +170,97 @@ func probePasswordPolicy(ctx context.Context, cfg awsCfg) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// GuardDuty detector states surfaced in AccountPosture.GuardDutyByRegion.
+const (
+	guardDutyEnabled  = "enabled"
+	guardDutyDisabled = "disabled"
+	guardDutyAbsent   = "absent"
+)
+
+// probeGuardDuty reports the GuardDuty detector state for the region the
+// cfg is pinned to: "absent" when no detector exists, otherwise the
+// classified status of the (single) detector. GuardDuty allows at most
+// one detector per region per account, so the first id is authoritative.
+func probeGuardDuty(ctx context.Context, cfg awsCfg) (string, error) {
+	client := guardduty.NewFromConfig(cfg.cfg)
+	list, err := client.ListDetectors(ctx, &guardduty.ListDetectorsInput{})
+	if err != nil {
+		return "", err
+	}
+	if len(list.DetectorIds) == 0 {
+		return guardDutyAbsent, nil
+	}
+	det, err := client.GetDetector(ctx, &guardduty.GetDetectorInput{
+		DetectorId: &list.DetectorIds[0],
+	})
+	if err != nil {
+		return "", err
+	}
+	return classifyDetectorStatus(string(det.Status)), nil
+}
+
+// classifyDetectorStatus maps a GuardDuty detector's Status to the
+// posture vocabulary. ENABLED → "enabled"; anything else (DISABLED, or
+// any future suspended state) → "disabled". A detector that exists is
+// never "absent" — absence is decided by the caller from ListDetectors.
+func classifyDetectorStatus(status string) string {
+	if strings.EqualFold(status, "ENABLED") {
+		return guardDutyEnabled
+	}
+	return guardDutyDisabled
+}
+
+// probeConfigRecorders reports AWS Config configuration-recorder coverage
+// for the region the cfg is pinned to. Present is false when the region
+// has no recorder. RecordsGlobalTypes is true when any recorder in the
+// region captures global (IAM) resource types — see recorderRecordsGlobalTypes.
+func probeConfigRecorders(ctx context.Context, cfg awsCfg) (audit.ConfigRecorderState, error) {
+	client := configservice.NewFromConfig(cfg.cfg)
+	out, err := client.DescribeConfigurationRecorders(ctx, &configservice.DescribeConfigurationRecordersInput{})
+	if err != nil {
+		return audit.ConfigRecorderState{}, err
+	}
+	st := audit.ConfigRecorderState{}
+	for _, rec := range out.ConfigurationRecorders {
+		st.Present = true
+		rg := rec.RecordingGroup
+		if rg == nil {
+			continue
+		}
+		resourceTypes := make([]string, 0, len(rg.ResourceTypes))
+		for _, t := range rg.ResourceTypes {
+			resourceTypes = append(resourceTypes, string(t))
+		}
+		if recorderRecordsGlobalTypes(rg.AllSupported, rg.IncludeGlobalResourceTypes, resourceTypes) {
+			st.RecordsGlobalTypes = true
+		}
+	}
+	return st, nil
+}
+
+// recorderRecordsGlobalTypes decides whether a Config RecordingGroup
+// captures global (account-wide) resource types — IAM users, roles,
+// policies, groups. Two shapes cover the real world:
+//
+//   - Classic: AllSupported=true with IncludeGlobalResourceTypes=true.
+//     AllSupported alone excludes global types unless the flag is set.
+//   - Inclusion strategy: AllSupported=false but the explicit
+//     resourceTypes list names a global IAM type.
+//
+// Kept pure (primitive args, no SDK types) so it's unit-testable without
+// an AWS mock.
+func recorderRecordsGlobalTypes(allSupported, includeGlobal bool, resourceTypes []string) bool {
+	if allSupported && includeGlobal {
+		return true
+	}
+	for _, t := range resourceTypes {
+		if strings.HasPrefix(t, "AWS::IAM::") {
+			return true
+		}
+	}
+	return false
 }
 
 // errSummary trims the verbose AWS SDK error wrapping to a short

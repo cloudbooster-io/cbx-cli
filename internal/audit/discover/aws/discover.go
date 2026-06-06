@@ -218,6 +218,13 @@ func Discover(ctx context.Context, p DiscoverParams) (*DiscoverResult, error) {
 	// "no trail in <region>" finding.
 	computeTrailCoverage(deduped, regions, posture)
 
+	// VPC flow-log coverage: probe ec2:DescribeFlowLogs in each region
+	// that hosts a discovered VPC and annotate cb_describer_flow_logs_enabled.
+	// One extra API call per VPC-bearing region — deliberately left out
+	// of estimateEventCount (like the other posture probes) since the
+	// estimate targets order-of-magnitude, not ±1.
+	annotateFlowLogs(ctx, cfg, deduped, posture)
+
 	emitProgress(p.OnProgress, ProgressEvent{Phase: ProgressPhaseDiscoverDone})
 
 	return &DiscoverResult{

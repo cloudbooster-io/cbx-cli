@@ -241,3 +241,133 @@ func TestBuildGrounding_404IsPlaceholder(t *testing.T) {
 		t.Errorf("expected Missing=true for 404'd primitive, got %+v", bundle.Primitives[0])
 	}
 }
+
+// TestBuildGroundedPrompt_RendersObservabilityPosture asserts the
+// GuardDuty and AWS Config posture blocks reach the prompt — including
+// the derived aggregate lines the FP-safe rules key on (per-region facts
+// alone aren't enough: the LLM must not flag a single-region absence /
+// global-types gap when another region covers it).
+func TestBuildGroundedPrompt_RendersObservabilityPosture(t *testing.T) {
+	posture := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1":    "disabled",
+			"eu-central-1": "absent",
+		},
+		ConfigRecorderByRegion: map[string]ConfigRecorderState{
+			"us-east-1":    {Present: true, RecordsGlobalTypes: false},
+			"eu-central-1": {Present: false, RecordsGlobalTypes: false},
+		},
+	}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	for _, want := range []string{
+		"GuardDuty detector",
+		"us-east-1: disabled",
+		"eu-central-1: absent",
+		// us-east-1 holds a DISABLED detector, so a detector IS present
+		// account-wide → present-anywhere is true even though no region is
+		// "enabled". This is the gate that stops the absent-everywhere
+		// WARNING from double-firing alongside the per-region disabled HIGH.
+		"GuardDuty detector present in at least one audited region: true",
+		"AWS Config recorder",
+		"us-east-1: present=true records_global_types=false",
+		"AWS Config recorder present in at least one audited region: true",
+		"global resource types recorded in at least one audited region: false",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
+// TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent locks the
+// disabled↔absent distinction that the absent-everywhere WARNING keys on.
+// Live validation of the observability rules found that WARNING
+// double-firing on a DISABLED detector: the old aggregate was true only
+// for exactly "enabled", so a disabled-everywhere account derived
+// enabled-anywhere=false and the LLM read "no GuardDuty in the account"
+// — even though a detector demonstrably exists. The fix mirrors the AWS
+// Config recorder gate: present-anywhere counts a disabled detector as
+// present, so only a TRUE no-detector-anywhere account trips the warning.
+//
+// This asserts the deterministic render GATE (the present-anywhere line
+// the rule tells the LLM to key on), not the LLM's finding emission —
+// that's the layer a unit test can pin. A disabled-only account must
+// render present=true (no absent-everywhere warning; the per-region HIGH
+// still fires off its own "disabled" line); an all-absent account must
+// render present=false (warning preserved).
+func TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent(t *testing.T) {
+	disabledOnly := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1":    "disabled",
+			"eu-central-1": "absent",
+		},
+	}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, disabledOnly)
+	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: true") {
+		t.Errorf("a disabled detector must keep present-anywhere=true (a detector exists; only the per-region HIGH should fire, not the account-wide absent warning)")
+	}
+	if strings.Contains(prompt, "GuardDuty detector present in at least one audited region: false") {
+		t.Errorf("present-anywhere must not be false while a disabled detector exists")
+	}
+
+	absentEverywhere := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1":    "absent",
+			"eu-central-1": "absent",
+		},
+	}
+	prompt = buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, absentEverywhere)
+	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: false") {
+		t.Errorf("a genuinely no-detector-anywhere account must render present-anywhere=false so the absent-everywhere WARNING still fires")
+	}
+}
+
+// TestBuildGroundedPrompt_RendersVPCFlowLogsEnrichment guards the link
+// the annotateVPCFlowLogs unit test can't see: that
+// cb_describer_flow_logs_enabled actually reaches the DISCOVERED
+// RESOURCES table the LLM reads (writeResourceTable → serialiseInputs
+// dumps the whole Inputs map as JSON). If a refactor ever curated that
+// to an allow-list, the VPC flow-logs rule would fire on a field the LLM
+// never sees — a silent recall miss — and this test catches it. We
+// assert the JSON form ("...": false) so a match can only come from the
+// resource table, never the rule prose (which uses the backtick form).
+func TestBuildGroundedPrompt_RendersVPCFlowLogsEnrichment(t *testing.T) {
+	resources := []DiscoveredResource{
+		{
+			Type:   "AWS::EC2::VPC",
+			URN:    "aws://us-east-1/AWS::EC2::VPC/vpc-nolog",
+			ID:     "vpc-nolog",
+			Region: "us-east-1",
+			Inputs: map[string]any{"cb_describer_flow_logs_enabled": false},
+		},
+	}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, nil, nil)
+	table := prompt[strings.Index(prompt, "==== DISCOVERED RESOURCES ===="):]
+	if !strings.Contains(table, `"cb_describer_flow_logs_enabled": false`) {
+		t.Errorf("resource table missing rendered cb_describer_flow_logs_enabled=false")
+	}
+}
+
+// TestBuildGroundedPrompt_ObservabilityPostureDeterministic guards the
+// sorted-key rendering of the new maps. Map iteration order is random,
+// so an unsorted render would diverge across builds — and the existing
+// determinism test passes a nil posture, so it can't catch this.
+func TestBuildGroundedPrompt_ObservabilityPostureDeterministic(t *testing.T) {
+	posture := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1": "enabled", "eu-central-1": "disabled",
+			"ap-south-1": "absent", "us-west-2": "enabled",
+		},
+		ConfigRecorderByRegion: map[string]ConfigRecorderState{
+			"us-east-1":    {Present: true, RecordsGlobalTypes: true},
+			"eu-central-1": {Present: true, RecordsGlobalTypes: false},
+			"ap-south-1":   {Present: false}, "us-west-2": {Present: true, RecordsGlobalTypes: true},
+		},
+	}
+	first := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	for i := 0; i < 20; i++ {
+		if got := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture); got != first {
+			t.Fatalf("observability posture render not deterministic across builds")
+		}
+	}
+}
