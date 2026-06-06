@@ -33,6 +33,7 @@ var allDescribers = []Describer{
 	&rdsInstanceDescriber{},
 	&rdsClusterDescriber{},
 	&lambdaFunctionDescriber{},
+	&apiGatewayV2ApiDescriber{},
 	&ec2InstanceDescriber{},
 	&securityGroupDescriber{},
 	&ebsVolumeDescriber{},
@@ -42,6 +43,7 @@ var allDescribers = []Describer{
 	&ecrRepositoryDescriber{},
 	&backupVaultDescriber{},
 	&backupPlanDescriber{},
+	&athenaWorkGroupDescriber{},
 }
 
 // describerFor returns the Describer registered for cfnType, or nil if

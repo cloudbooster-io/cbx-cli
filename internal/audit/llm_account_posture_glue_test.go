@@ -69,6 +69,11 @@ func TestBuildGroundedPrompt_HasGlueAndAthenaRules(t *testing.T) {
 		"AWS::Athena::WorkGroup",
 		"EnforceWorkGroupConfiguration",
 		"EncryptionConfiguration",
+		// The `primary`-workgroup carve-out must key on the describer
+		// flag (computed deterministically in Go), not on the literal
+		// name — otherwise the LLM is left re-deciding "is this the
+		// default" and the false positive returns.
+		"cb_describer_is_default_workgroup",
 		"Glue Data Catalog exposure",
 		"grants_wildcard_principal=true",
 	} {
