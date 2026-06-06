@@ -276,6 +276,15 @@ func perResourceDescriberCost(cfnType string) int {
 		// count and not folded in here — usually 0-2 per role; coarse
 		// estimate stays useful at order-of-magnitude.
 		return 3
+	case "AWS::ECR::Repository":
+		// ecrRepositoryDescriber: GetLifecyclePolicy.
+		return 1
+	case "AWS::Backup::BackupVault":
+		// backupVaultDescriber: DescribeBackupVault + GetBackupVaultAccessPolicy.
+		return 2
+	case "AWS::Backup::BackupPlan":
+		// backupPlanDescriber: GetBackupPlan.
+		return 1
 	}
 	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
 	// make no SDK calls.
@@ -400,6 +409,30 @@ func runJob(ctx context.Context, c awsCfg, region string, spec cfnTypeSpec, onPr
 	}
 	if lerr != nil {
 		r.listErr = lerr
+	}
+
+	// Fallback-on-empty: CloudControl's ListResources silently returns an
+	// empty set (not an error) for freshly-created workload resources and a
+	// couple of persistently under-returned types. When the primary path found
+	// nothing and a strongly-consistent native Describe is wired for this type,
+	// try it. Only firing on a genuinely empty result means CloudControl's
+	// richer payload wins whenever it does list the type, and there's no
+	// double-counting. See cfnTypeSpec.FallbackLister.
+	if len(raws) == 0 && spec.FallbackLister != nil {
+		fraws, ferr := spec.FallbackLister(ctx, c, region)
+		if ferr != nil {
+			if pe, ok := asPermissionError(ferr); ok {
+				r.permErrs = append(r.permErrs, pe)
+			} else {
+				r.otherErrs = append(r.otherErrs, ferr)
+			}
+		}
+		if len(fraws) > 0 {
+			raws = fraws
+			// The fallback recovered the resources, so the primary's
+			// emptiness wasn't a fatal miss — don't surface its error.
+			r.listErr = nil
+		}
 	}
 
 	total := len(raws)
