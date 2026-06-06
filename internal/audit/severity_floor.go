@@ -181,7 +181,16 @@ func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Fi
 // generates (and which cbx itself derives from a hash of the title), so it
 // drifts run-to-run and cannot identify a rule.
 func findingConcernsAdminGrant(f *Finding) bool {
-	return findingTextHasAny(f, "admin", "wildcard", "full access", "fullaccess", "privilege", "*:*")
+	// IAM policy JSON writes Action and Resource separately, so the literal
+	// "*:*" almost never appears in an LLM finding, and an admin-equivalent
+	// grant is more often phrased "full control" / "unrestricted" / "all
+	// actions on all resources" / "(overly) permissive" than "full access".
+	// These widen which findings the promotion CAN reach; the structural
+	// isFullAdminWildcardGrant(res) gate still proves the resource genuinely
+	// has the grant, so a non-admin resource is never promoted (no over-fire).
+	return findingTextHasAny(f,
+		"admin", "wildcard", "full access", "fullaccess", "privilege", "*:*",
+		"unrestricted", "all actions", "full control", "permissive")
 }
 
 // findingConcernsPublicAccess gates the S3 Block-Public-Access promotion on
