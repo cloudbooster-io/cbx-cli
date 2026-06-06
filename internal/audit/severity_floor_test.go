@@ -257,6 +257,59 @@ func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
 	})
 }
 
+// T5c — the admin-grant text gate widened beyond admin/wildcard/full-access to
+// the phrasings the LLM actually uses for an admin-equivalent grant: IAM policy
+// JSON writes Action/Resource separately so "*:*" almost never appears, and the
+// finding says "full control" / "unrestricted" / "all actions" / "permissive"
+// rather than "full access". On an admin-equivalent resource (structural gate
+// true) each new phrasing now promotes a below-critical finding to critical; on
+// a NON-admin resource the very same wording promotes nothing — proof the
+// widening only relaxes WHICH findings the promotion can reach, while the
+// structural isFullAdminWildcardGrant predicate still decides IF it fires.
+func TestSeverityFloor_AdminGrantWideKeywords(t *testing.T) {
+	// admin-equivalent user — isFullAdminWildcardGrant(res) == true.
+	adminRes := adminUserRes(siblingURN)
+	// plain role with no admin/wildcard signal — isFullAdminWildcardGrant == false.
+	nonAdminRole := DiscoveredResource{
+		Type: "AWS::IAM::Role", URN: taskRoleURN, ID: lastSeg(taskRoleURN),
+		Inputs: map[string]any{
+			"cb_describer_inline_policy_has_wildcard_allow": false,
+		},
+	}
+
+	// Each description exercises a keyword the OLD gate MISSED — none contain
+	// admin / wildcard / full access / fullaccess / privilege / "*:*".
+	cases := []struct {
+		name string
+		desc string
+	}{
+		{"unrestricted", "the attached policy grants unrestricted permissions to every API"},
+		{"all actions", "the policy statement allows all actions on all resources"},
+		{"full control", "this role grants full control over all resources in the account"},
+		{"permissive", "an overly permissive policy is attached to this role"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+"/admin-equivalent→critical", func(t *testing.T) {
+			out := applySeverityFloor([]Finding{
+				{RuleID: "LLM-new", Title: "IAM policy too broad", Description: tc.desc,
+					Resource: siblingURN, Severity: SeverityHigh},
+			}, []DiscoveredResource{adminRes})
+			if out[0].Severity != SeverityCritical {
+				t.Fatalf("%q on admin-equivalent resource: want critical, got %q", tc.desc, out[0].Severity)
+			}
+		})
+		t.Run(tc.name+"/non-admin→unchanged", func(t *testing.T) {
+			out := applySeverityFloor([]Finding{
+				{RuleID: "LLM-new", Title: "IAM policy too broad", Description: tc.desc,
+					Resource: taskRoleURN, Severity: SeverityHigh},
+			}, []DiscoveredResource{nonAdminRole})
+			if out[0].Severity != SeverityHigh {
+				t.Fatalf("%q on NON-admin resource must not promote (structural gate holds): want high, got %q", tc.desc, out[0].Severity)
+			}
+		})
+	}
+}
+
 // T6 — account-level findings skip the structural floor (no URN match).
 func TestSeverityFloor_AccountScopedSkips(t *testing.T) {
 	resources := []DiscoveredResource{adminUserRes(siblingURN)}
