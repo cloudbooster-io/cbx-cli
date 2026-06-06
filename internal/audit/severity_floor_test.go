@@ -188,6 +188,63 @@ func TestSeverityFloor_ECSExecTextHeuristic(t *testing.T) {
 	}
 }
 
+// T5b — the regression for the resource-keyed over-promotion defect: when a
+// single resource carries BOTH the condition-bearing finding AND an orthogonal
+// finding, ONLY the condition-bearing one is promoted; the orthogonal finding
+// keeps its own rule severity. Before the fix the floor keyed on the resource
+// URN alone and raised EVERY finding on the resource (e.g. an S3 lifecycle
+// finding on a BPA-all-disabled bucket → wrongly critical).
+func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
+	t.Run("BPA-all-disabled bucket: only the public-access finding is promoted", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{
+			{RuleID: "LLM-bpa", Title: "S3 Block Public Access disabled",
+				Description: "all four block-public-access controls are turned off",
+				Resource:    bpaBucketURN, Severity: SeverityWarning},
+			{RuleID: "LLM-lifecycle", Title: "S3 bucket has no lifecycle policy",
+				Description: "objects are never transitioned to cheaper storage or expired",
+				Resource:    bpaBucketURN, Severity: SeverityInfo},
+		}, []DiscoveredResource{bpaAllDisabledRes(bpaBucketURN)})
+
+		for _, f := range out {
+			switch f.RuleID {
+			case "LLM-bpa":
+				if f.Severity != SeverityCritical {
+					t.Fatalf("condition-bearing BPA finding: want critical, got %q", f.Severity)
+				}
+			case "LLM-lifecycle":
+				if f.Severity != SeverityInfo {
+					t.Fatalf("orthogonal lifecycle finding must keep info, got %q", f.Severity)
+				}
+			}
+		}
+	})
+
+	t.Run("admin-equivalent user: only the admin-grant finding is promoted", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{
+			{RuleID: "LLM-admin", Title: "User has AdministratorAccess attached",
+				Description: "the managed admin policy grants full account access",
+				Resource:    siblingURN, Severity: SeverityHigh},
+			// Orthogonal: text dodges admin/wildcard/full access/privilege/*:*.
+			{RuleID: "LLM-keyrot", Title: "IAM access key not rotated",
+				Description: "the active access key is older than 365 days",
+				Resource:    siblingURN, Severity: SeverityWarning},
+		}, []DiscoveredResource{adminUserRes(siblingURN)})
+
+		for _, f := range out {
+			switch f.RuleID {
+			case "LLM-admin":
+				if f.Severity != SeverityCritical {
+					t.Fatalf("condition-bearing admin finding: want critical, got %q", f.Severity)
+				}
+			case "LLM-keyrot":
+				if f.Severity != SeverityWarning {
+					t.Fatalf("orthogonal key-rotation finding must keep warning, got %q", f.Severity)
+				}
+			}
+		}
+	})
+}
+
 // T6 — account-level findings skip the structural floor (no URN match).
 func TestSeverityFloor_AccountScopedSkips(t *testing.T) {
 	resources := []DiscoveredResource{adminUserRes(siblingURN)}
