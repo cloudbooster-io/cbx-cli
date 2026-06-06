@@ -277,8 +277,8 @@ func perResourceDescriberCost(cfnType string) int {
 		// estimate stays useful at order-of-magnitude.
 		return 3
 	}
-	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
-	// make no SDK calls.
+	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2,
+	// Athena workgroup) make no SDK calls.
 	return 0
 }
 
