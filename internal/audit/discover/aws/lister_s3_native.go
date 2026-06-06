@@ -30,21 +30,64 @@ import (
 // no-AWS unit test can't exercise a live call, so grounding the fallback on the
 // already-validated call family keeps it from shipping an unverified code path.
 func listS3BucketsNative(ctx context.Context, c awsCfg, region string) ([]rawResource, error) {
-	client := s3.NewFromConfig(c.cfg)
+	// NewFromConfig(c.cfg) — NOT c.withRegion(region): S3 is a global service, so
+	// ListBuckets returns the whole account regardless of the client's region and
+	// each bucket's home region is resolved per-bucket below. (The other native
+	// listers pin a regional client; this one deliberately must not.)
+	return collectInRegionS3Buckets(ctx, s3.NewFromConfig(c.cfg), region)
+}
 
+// s3FallbackAPI is the narrow slice of the S3 client collectInRegionS3Buckets
+// needs — just the two already-validated calls (ListBuckets + the legacy
+// GetBucketLocation). The concrete *s3.Client satisfies it, and the seam lets
+// the per-bucket region-resolution loop (and its partial-failure handling) be
+// unit-tested with a fake instead of a live call.
+type s3FallbackAPI interface {
+	ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+}
+
+// collectInRegionS3Buckets enumerates buckets via ListBuckets and keeps only the
+// ones whose home region matches the audited region (see the listS3BucketsNative
+// doc for why global-service scoping matters).
+//
+// A ListBuckets failure is fatal — we have nothing to recover. But a single
+// bucket's GetBucketLocation failing must NOT black out the whole fallback. Two
+// real triggers: an SCP / permission-boundary denying s3:GetBucketLocation
+// (fails every run for a restricted org), and a TOCTOU NoSuchBucket from a
+// bucket deleted between ListBuckets and the lookup. Aborting on the first such
+// error would discard every already-collected in-region bucket and reintroduce
+// the exact silent-empty miss this fallback exists to kill. So we skip the
+// offending bucket and continue (partial recovery), recording the first failure
+// in locErr.
+//
+// The tail `return results, locErr` mirrors listDynamoDBTablesNative's
+// `return results, pitrErr` and the runJob fallback contract (discover.go:421):
+//   - any in-region buckets collected  → runJob keeps them and clears the
+//     primary's emptiness; locErr (if any) is still surfaced to --diagnose so a
+//     denied lookup isn't silently swallowed.
+//   - zero results but a lookup failed → the error surfaces alone, so an
+//     all-deny shows up in --diagnose instead of masquerading as a clean empty
+//     account.
+//   - zero results, no error           → a genuinely empty account.
+func collectInRegionS3Buckets(ctx context.Context, client s3FallbackAPI, region string) ([]rawResource, error) {
 	out, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if err != nil {
 		return nil, classifyAWSError(err, "s3", "s3:ListBuckets", region)
 	}
 
 	var results []rawResource
+	var locErr error
 	for _, b := range out.Buckets {
 		if b.Name == nil || *b.Name == "" {
 			continue
 		}
 		loc, lerr := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: b.Name})
 		if lerr != nil {
-			return nil, classifyAWSError(lerr, "s3", "s3:GetBucketLocation", region)
+			if locErr == nil {
+				locErr = classifyAWSError(lerr, "s3", "s3:GetBucketLocation", region)
+			}
+			continue
 		}
 		if normalizeBucketLocation(string(loc.LocationConstraint)) != region {
 			continue
@@ -53,7 +96,7 @@ func listS3BucketsNative(ctx context.Context, c awsCfg, region string) ([]rawRes
 			results = append(results, raw)
 		}
 	}
-	return results, nil
+	return results, locErr
 }
 
 // normalizeBucketLocation maps GetBucketLocation's LocationConstraint to a real
