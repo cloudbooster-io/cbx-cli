@@ -198,6 +198,26 @@ func TestBuildGroundedPrompt_RendersAccountPosture(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesLambdaApigwHygieneRules pins the
+// baseline cues for the Lambda DLQ / reserved-concurrency and APIGW
+// access-logging findings into the grounded prompt. Without these the
+// describer booleans would land in the resource table but the model
+// would have no instruction to act on them — these three operational
+// gaps were MISSED on the 03-serverless-api fixture for exactly that
+// reason.
+func TestBuildGroundedPrompt_IncludesLambdaApigwHygieneRules(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		"cb_describer_dlq_configured",
+		"cb_describer_reserved_concurrency_set",
+		"cb_describer_access_logging_enabled",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing baseline cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
