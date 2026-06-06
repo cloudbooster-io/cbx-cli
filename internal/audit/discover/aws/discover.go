@@ -293,8 +293,8 @@ func perResourceDescriberCost(cfnType string) int {
 		// backupPlanDescriber: GetBackupPlan.
 		return 1
 	}
-	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2)
-	// make no SDK calls.
+	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2,
+	// Athena workgroup) make no SDK calls.
 	return 0
 }
 
