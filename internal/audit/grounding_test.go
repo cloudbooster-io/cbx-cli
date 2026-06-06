@@ -263,7 +263,11 @@ func TestBuildGroundedPrompt_RendersObservabilityPosture(t *testing.T) {
 		"GuardDuty detector",
 		"us-east-1: disabled",
 		"eu-central-1: absent",
-		"GuardDuty enabled in at least one audited region: false",
+		// us-east-1 holds a DISABLED detector, so a detector IS present
+		// account-wide → present-anywhere is true even though no region is
+		// "enabled". This is the gate that stops the absent-everywhere
+		// WARNING from double-firing alongside the per-region disabled HIGH.
+		"GuardDuty detector present in at least one audited region: true",
 		"AWS Config recorder",
 		"us-east-1: present=true records_global_types=false",
 		"AWS Config recorder present in at least one audited region: true",
@@ -272,6 +276,49 @@ func TestBuildGroundedPrompt_RendersObservabilityPosture(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+}
+
+// TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent locks the
+// disabled↔absent distinction that the absent-everywhere WARNING keys on.
+// Live validation of the observability rules found that WARNING
+// double-firing on a DISABLED detector: the old aggregate was true only
+// for exactly "enabled", so a disabled-everywhere account derived
+// enabled-anywhere=false and the LLM read "no GuardDuty in the account"
+// — even though a detector demonstrably exists. The fix mirrors the AWS
+// Config recorder gate: present-anywhere counts a disabled detector as
+// present, so only a TRUE no-detector-anywhere account trips the warning.
+//
+// This asserts the deterministic render GATE (the present-anywhere line
+// the rule tells the LLM to key on), not the LLM's finding emission —
+// that's the layer a unit test can pin. A disabled-only account must
+// render present=true (no absent-everywhere warning; the per-region HIGH
+// still fires off its own "disabled" line); an all-absent account must
+// render present=false (warning preserved).
+func TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent(t *testing.T) {
+	disabledOnly := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1":    "disabled",
+			"eu-central-1": "absent",
+		},
+	}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, disabledOnly)
+	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: true") {
+		t.Errorf("a disabled detector must keep present-anywhere=true (a detector exists; only the per-region HIGH should fire, not the account-wide absent warning)")
+	}
+	if strings.Contains(prompt, "GuardDuty detector present in at least one audited region: false") {
+		t.Errorf("present-anywhere must not be false while a disabled detector exists")
+	}
+
+	absentEverywhere := &AccountPosture{
+		GuardDutyByRegion: map[string]string{
+			"us-east-1":    "absent",
+			"eu-central-1": "absent",
+		},
+	}
+	prompt = buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, absentEverywhere)
+	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: false") {
+		t.Errorf("a genuinely no-detector-anywhere account must render present-anywhere=false so the absent-everywhere WARNING still fires")
 	}
 }
 
