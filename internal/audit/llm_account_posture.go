@@ -60,18 +60,24 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 	if len(p.GuardDutyByRegion) > 0 {
 		sb.WriteString("GuardDuty detector (per audited region; \"disabled\" = a detector exists but is suspended — a real regression; \"absent\" = no detector; \"enabled\" = active):\n")
 		regions := make([]string, 0, len(p.GuardDutyByRegion))
-		anyEnabled := false
 		for r := range p.GuardDutyByRegion {
 			regions = append(regions, r)
 		}
 		sort.Strings(regions)
+		presentAnywhere := false
 		for _, r := range regions {
-			fmt.Fprintf(sb, "  %s: %s\n", r, p.GuardDutyByRegion[r])
-			if p.GuardDutyByRegion[r] == "enabled" {
-				anyEnabled = true
+			st := p.GuardDutyByRegion[r]
+			fmt.Fprintf(sb, "  %s: %s\n", r, st)
+			// "disabled" still counts as present — a detector exists, it
+			// is merely suspended. Only "absent" means no detector. This
+			// mirrors the AWS Config recorder gate below (present-anywhere)
+			// so a disabled detector trips the per-region HIGH WITHOUT also
+			// tripping the account-wide absent-everywhere WARNING.
+			if st != "absent" {
+				presentAnywhere = true
 			}
 		}
-		fmt.Fprintf(sb, "  (GuardDuty enabled in at least one audited region: %t)\n\n", anyEnabled)
+		fmt.Fprintf(sb, "  (GuardDuty detector present in at least one audited region: %t)\n\n", presentAnywhere)
 	}
 
 	if len(p.ConfigRecorderByRegion) > 0 {
