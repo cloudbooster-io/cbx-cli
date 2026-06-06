@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/glue"
 	"github.com/aws/aws-sdk-go-v2/service/guardduty"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/smithy-go"
@@ -25,9 +26,10 @@ import (
 // existing --diagnose path.
 func gatherAccountPosture(ctx context.Context, cfg awsCfg, regions []string) *audit.AccountPosture {
 	out := &audit.AccountPosture{
-		EBSEncryptionByDefault: map[string]bool{},
-		GuardDutyByRegion:      map[string]string{},
-		ConfigRecorderByRegion: map[string]audit.ConfigRecorderState{},
+		EBSEncryptionByDefault:    map[string]bool{},
+		GuardDutyByRegion:         map[string]string{},
+		ConfigRecorderByRegion:    map[string]audit.ConfigRecorderState{},
+		GlueCatalogPolicyByRegion: map[string]*audit.GlueCatalogPolicy{},
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -48,6 +50,24 @@ func gatherAccountPosture(ctx context.Context, cfg awsCfg, regions []string) *au
 				return
 			}
 			out.EBSEncryptionByDefault[region] = enabled
+		}()
+
+		// Glue Data Catalog resource policy is also a per-region account
+		// singleton — probe it in the same per-region fan-out. Absent in
+		// most regions, so only present policies land in the map.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pol, err := probeGlueCatalogPolicy(ctx, cfg.withRegion(region))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				out.Errors = append(out.Errors, "glue:GetResourcePolicy "+region+": "+errSummary(err))
+				return
+			}
+			if pol != nil {
+				out.GlueCatalogPolicyByRegion[region] = pol
+			}
 		}()
 	}
 
@@ -261,6 +281,45 @@ func recorderRecordsGlobalTypes(allSupported, includeGlobal bool, resourceTypes 
 		}
 	}
 	return false
+}
+
+// probeGlueCatalogPolicy fetches the Glue Data Catalog resource policy
+// for one region. The Data Catalog has at most one resource policy per
+// account per region; glue:GetResourcePolicy with no ResourceArn
+// returns the catalog-level policy. EntityNotFoundException is the
+// "no policy configured" signal (the common case, identical in spirit
+// to probePasswordPolicy's NoSuchEntity) — returned as (nil, nil), NOT
+// an error, so Glue-less regions don't spam posture.Errors. A present
+// policy is summarised with a precomputed wildcard-principal flag (the
+// cross-account exposure trigger) plus the raw document for citation.
+func probeGlueCatalogPolicy(ctx context.Context, cfg awsCfg) (*audit.GlueCatalogPolicy, error) {
+	client := glue.NewFromConfig(cfg.cfg)
+	out, err := client.GetResourcePolicy(ctx, &glue.GetResourcePolicyInput{})
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "EntityNotFoundException" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if out.PolicyInJson == nil || *out.PolicyInJson == "" {
+		return nil, nil
+	}
+	doc := *out.PolicyInJson
+	return &audit.GlueCatalogPolicy{
+		GrantsWildcardPrincipal: policyGrantsPublicPrincipal(doc),
+		Document:                doc,
+	}, nil
+}
+
+// policyGrantsPublicPrincipal reports whether an IAM resource-policy
+// document has an Allow statement naming an unconditional wildcard
+// principal. The analysis is policy-type-agnostic (S3 bucket policies,
+// Glue Data Catalog resource policies, …); bucketPolicyHasWildcardPrincipal
+// (describer_s3.go) holds the implementation — this name just documents
+// the reuse at the Glue call site.
+func policyGrantsPublicPrincipal(doc string) bool {
+	return bucketPolicyHasWildcardPrincipal(doc)
 }
 
 // errSummary trims the verbose AWS SDK error wrapping to a short
