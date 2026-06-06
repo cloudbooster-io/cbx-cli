@@ -3,6 +3,10 @@ package aws
 import (
 	"context"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // s3BucketToRaw must synthesise the CloudControl AWS::S3::Bucket shape: the
@@ -118,5 +122,140 @@ func TestRunJob_S3BucketFallbackNotFiredWhenPrimaryReturns(t *testing.T) {
 	}
 	if len(res.resources) != 1 || res.resources[0].ID != "cc-listed-bucket" {
 		t.Fatalf("expected only the CloudControl bucket, got %+v", res.resources)
+	}
+}
+
+// fakeS3Fallback implements s3FallbackAPI so the per-bucket region-resolution
+// loop can be exercised without a live call. ListBuckets always returns the
+// configured buckets; GetBucketLocation reports loc[name] unless failLoc[name],
+// in which case it returns an AccessDenied APIError — the SCP/permission-boundary
+// deny (or a TOCTOU NoSuchBucket) the partial-recovery path exists for.
+type fakeS3Fallback struct {
+	buckets []s3types.Bucket
+	loc     map[string]string // bucket name → LocationConstraint to report
+	failLoc map[string]bool   // bucket name → GetBucketLocation returns AccessDenied
+}
+
+func (f *fakeS3Fallback) ListBuckets(context.Context, *s3.ListBucketsInput, ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
+	return &s3.ListBucketsOutput{Buckets: f.buckets}, nil
+}
+
+func (f *fakeS3Fallback) GetBucketLocation(_ context.Context, in *s3.GetBucketLocationInput, _ ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+	name := ""
+	if in.Bucket != nil {
+		name = *in.Bucket
+	}
+	if f.failLoc[name] {
+		return nil, &smithy.GenericAPIError{Code: "AccessDenied", Message: "denied by SCP"}
+	}
+	return &s3.GetBucketLocationOutput{LocationConstraint: s3types.BucketLocationConstraint(f.loc[name])}, nil
+}
+
+func bucketNames(raws []rawResource) map[string]bool {
+	m := make(map[string]bool, len(raws))
+	for _, r := range raws {
+		m[r.Identifier] = true
+	}
+	return m
+}
+
+// One bucket's GetBucketLocation failing (an SCP deny, or a TOCTOU NoSuchBucket
+// from a bucket deleted between ListBuckets and the lookup) must NOT black out
+// the whole S3 fallback: the buckets whose region DID resolve are still returned,
+// so a single bad lookup can't reintroduce the silent-empty miss this lister
+// exists to kill. The error is still handed back — partial recovery, so runJob
+// keeps the resources and surfaces the denied lookup to --diagnose.
+func TestCollectInRegionS3Buckets_PartialRecoveryOnLocationError(t *testing.T) {
+	client := &fakeS3Fallback{
+		buckets: []s3types.Bucket{
+			{Name: strp("alpha")},
+			{Name: strp("bravo")}, // middle bucket's location lookup is denied
+			{Name: strp("charlie")},
+		},
+		loc: map[string]string{
+			"alpha":   "eu-central-1",
+			"charlie": "eu-central-1",
+		},
+		failLoc: map[string]bool{"bravo": true},
+	}
+
+	results, err := collectInRegionS3Buckets(context.Background(), client, "eu-central-1")
+
+	if results == nil {
+		t.Fatal("results nil — one bad GetBucketLocation blacked out the whole fallback")
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected the 2 resolvable in-region buckets, got %d", len(results))
+	}
+	names := bucketNames(results)
+	if !names["alpha"] || !names["charlie"] {
+		t.Errorf("expected alpha+charlie recovered, got %v", names)
+	}
+	if names["bravo"] {
+		t.Error("bravo (denied lookup) must be skipped, not synthesised")
+	}
+	// Partial recovery still surfaces the denied lookup for --diagnose (the
+	// listDynamoDBTablesNative pitrErr idiom: keep the resources, return the error).
+	if err == nil {
+		t.Error("expected the GetBucketLocation error surfaced alongside the recovered buckets")
+	}
+}
+
+// When EVERY bucket's location lookup is denied (a fully restricted org), the
+// fallback recovers nothing — and that total failure must surface as an error so
+// --diagnose flags the permission gap instead of it looking like a clean empty
+// account. The error classifies as *PermissionError, the same shape the
+// CloudControl path collects.
+func TestCollectInRegionS3Buckets_AllLocationErrorsSurface(t *testing.T) {
+	client := &fakeS3Fallback{
+		buckets: []s3types.Bucket{
+			{Name: strp("alpha")},
+			{Name: strp("bravo")},
+		},
+		failLoc: map[string]bool{"alpha": true, "bravo": true},
+	}
+
+	results, err := collectInRegionS3Buckets(context.Background(), client, "eu-central-1")
+
+	if len(results) != 0 {
+		t.Fatalf("expected no resources when every location lookup failed, got %d", len(results))
+	}
+	if err == nil {
+		t.Fatal("expected a non-nil error so the all-deny surfaces in --diagnose")
+	}
+	if _, ok := asPermissionError(err); !ok {
+		t.Errorf("expected the AccessDenied to classify as *PermissionError, got %T", err)
+	}
+}
+
+// The region filter (the load-bearing global-service scoping) drops cross-region
+// buckets so a single-region audit doesn't flood every other region's buckets in.
+// Exercises normalizeBucketLocation through the loop — a null constraint ("") is
+// us-east-1 and stays out of an eu-central-1 audit; an empty-name bucket is
+// skipped; the verbatim region match stays in — all with no error.
+func TestCollectInRegionS3Buckets_RegionFilter(t *testing.T) {
+	client := &fakeS3Fallback{
+		buckets: []s3types.Bucket{
+			{Name: strp("in-region")},
+			{Name: strp("other-region")},
+			{Name: strp("us-east-1-bucket")},
+			{Name: nil}, // skipped: no name
+		},
+		loc: map[string]string{
+			"in-region":        "eu-central-1",
+			"other-region":     "us-west-2",
+			"us-east-1-bucket": "", // null constraint == us-east-1
+		},
+	}
+
+	results, err := collectInRegionS3Buckets(context.Background(), client, "eu-central-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected only the in-region bucket, got %d", len(results))
+	}
+	if results[0].Identifier != "in-region" {
+		t.Errorf("expected in-region bucket, got %q", results[0].Identifier)
 	}
 }
