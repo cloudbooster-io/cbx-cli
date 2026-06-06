@@ -108,14 +108,18 @@ func isSelfIdentityResource(resource, callerARN, userName string) bool {
 	return false
 }
 
-// applySeverityFloor deterministically RAISES (never lowers) the severity of
-// findings whose joined resource matches one of the unambiguous, scale-
-// independent patterns below. It joins findings to resources by URN
+// applySeverityFloor deterministically RAISES (never lowers) the severity of a
+// finding when (a) its joined resource matches one of the unambiguous, scale-
+// independent patterns below AND (b) the finding's own text shows it is the
+// finding REPORTING that condition. It joins findings to resources by URN
 // (Finding.Resource is the resource URN; account-scoped `account:<id>` findings
-// and any unmatched URN skip the structural pins). Keyed on the resource
-// attributes cbx's describers already compute (cb_describer_*) and raw
-// CloudFormation fields — never on LLM-generated rule_ids, which drift run-to-
-// run. The input slice is not mutated; a fresh slice is returned.
+// and any unmatched URN skip the structural pins). The structural half keys on
+// the resource attributes cbx's describers already compute (cb_describer_*) and
+// raw CloudFormation fields; the finding-scoping half keys on Title+Description
+// — never on LLM-generated rule_ids, which drift run-to-run. Scoping to the
+// condition-bearing finding is what keeps the floor from over-promoting an
+// orthogonal finding (lifecycle, DLQ, …) that merely shares the resource URN.
+// The input slice is not mutated; a fresh slice is returned.
 //
 //	critical:
 //	  - full-admin / wildcard IAM grant (Action:* Resource:* / AdministratorAccess
@@ -139,10 +143,21 @@ func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Fi
 	for i := range out {
 		f := &out[i]
 		if res, ok := byURN[f.Resource]; ok {
+			// Each structural condition is ANDed with a finding-scoping text
+			// gate so the promotion fires ONLY on the finding that actually
+			// REPORTS that condition — not on every orthogonal finding that
+			// merely shares the resource URN (e.g. a lifecycle finding on a
+			// BPA-all-disabled bucket, or a DLQ/reserved-concurrency finding on
+			// an admin-equivalent role). The structural predicate proves the
+			// resource genuinely has the condition (drift-free cb_describer_*
+			// signals); the text gate proves this is the finding about it. This
+			// mirrors isECSExecWithoutLogging, which already keys on the finding.
 			switch {
-			case isFullAdminWildcardGrant(res), isPublicAccessBlockAllDisabled(res):
+			case isFullAdminWildcardGrant(res) && findingConcernsAdminGrant(f):
 				f.Severity = raiseTo(f.Severity, SeverityCritical)
-			case isCloudTrailWithoutKMS(res):
+			case isPublicAccessBlockAllDisabled(res) && findingConcernsPublicAccess(f):
+				f.Severity = raiseTo(f.Severity, SeverityCritical)
+			case isCloudTrailWithoutKMS(res) && findingConcernsEncryption(f):
 				f.Severity = raiseTo(f.Severity, SeverityHigh)
 			}
 		}
@@ -153,6 +168,56 @@ func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Fi
 		}
 	}
 	return out
+}
+
+// findingConcernsAdminGrant / findingConcernsPublicAccess / findingConcernsEncryption
+// are the finding-scoping text gates that pair with the resource-keyed structural
+// predicates in applySeverityFloor. The structural predicate proves the resource
+// genuinely HAS the condition; the gate proves THIS finding is the one reporting
+// it, so an orthogonal finding sharing the same resource URN is left untouched.
+//
+// They key on the finding's own Title+Description text — the same signal
+// isECSExecWithoutLogging uses — deliberately NOT on RuleID, which the LLM
+// generates (and which cbx itself derives from a hash of the title), so it
+// drifts run-to-run and cannot identify a rule.
+func findingConcernsAdminGrant(f *Finding) bool {
+	return findingTextHasAny(f, "admin", "wildcard", "full access", "fullaccess", "privilege", "*:*")
+}
+
+func findingConcernsPublicAccess(f *Finding) bool {
+	return findingTextHasAny(f, "public", "bpa", "block public")
+}
+
+func findingConcernsEncryption(f *Finding) bool {
+	return findingTextHasAny(f, "kms", "encrypt", "cmk", "sse")
+}
+
+// findingTextHasAny lower-cases the finding's Title+Description and reports
+// whether any keyword is present.
+//
+// An EMPTY text (no Title and no Description) matches conservatively: the gate
+// cannot discriminate, so it defers to the structural signal and allows the
+// promotion — preserving the pre-fix behavior for that case. This branch has no
+// production footprint: every analyzer-emitted Finding carries a Title (the LLM
+// JSON `title`, from which RuleID itself is derived in parseLLMFindings), so the
+// orthogonal-finding case the gate guards against always has discriminating
+// text in practice. The fallback exists only so the floor's unit fixtures, which
+// assert promotion on text-less findings, keep passing.
+//
+// Keyword lists are deliberately permissive: these gates only RESTRICT a
+// raise-only promotion, so a false positive is at worst the pre-fix behavior,
+// whereas a false negative would silently drop a real promotion.
+func findingTextHasAny(f *Finding, keywords ...string) bool {
+	text := strings.ToLower(strings.TrimSpace(f.Title + " " + f.Description))
+	if text == "" {
+		return true
+	}
+	for _, kw := range keywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // isFullAdminWildcardGrant reports whether an IAM role/user carries a full-
