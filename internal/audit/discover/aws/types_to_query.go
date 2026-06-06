@@ -42,7 +42,10 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::Route53::HostedZone", Global: true},
 
 	// --- regional storage ---
-	{Type: "AWS::S3::Bucket"}, // S3 is regional but listable globally; treat as regional and dedupe by ARN
+	// S3 is regional but listable globally; treat as regional and dedupe by ARN.
+	// The fallback re-scopes ListBuckets to the audited region on a silent-empty
+	// CloudControl list (fixtures-01 measured 2/9 from dropped buckets).
+	{Type: "AWS::S3::Bucket", FallbackLister: listS3BucketsNative},
 	// ec2:DescribeVolumes is the strongly-consistent fallback for
 	// CloudControl's eventually-consistent (often empty) Volume list.
 	{Type: "AWS::EC2::Volume", FallbackLister: listVolumesNative},
