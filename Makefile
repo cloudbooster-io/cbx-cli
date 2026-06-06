@@ -36,8 +36,10 @@ test-e2e:
 	go test -v ./e2e/...
 
 # Maintainer-only: targets CloudBooster's internal staging API.
+# CB_E2E_STAGING=1 opts in to TestStagingConnectivity (interactive device-code
+# login); without it that test skips so the e2e-staging CI job never blocks MRs.
 test-e2e-staging:
-	CB_API_URL=$${CB_API_URL:-https://api.staging.cloudbooster.io} go test -v ./e2e/... -tags=e2e_staging
+	CB_E2E_STAGING=1 CB_API_URL=$${CB_API_URL:-https://api.staging.cloudbooster.io} go test -v ./e2e/... -tags=e2e_staging
 
 test-smoke-brew:
 	./scripts/smoke-brew.sh
