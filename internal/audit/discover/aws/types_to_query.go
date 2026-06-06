@@ -29,8 +29,11 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::IAM::Role", Global: true, KeepIdentifier: keepCustomerIAMRole},
 	// CloudControl's AWS::IAM::ManagedPolicy ListResources returns ALL
 	// policies, including ~1,400 AWS-managed ones (arn:aws:iam::aws:policy/…).
-	// Filter to customer-managed only.
-	{Type: "AWS::IAM::ManagedPolicy", Global: true, KeepIdentifier: keepCustomerIAMPolicy},
+	// Filter to customer-managed only. When CloudControl's list comes back
+	// empty (observed: it under-returns customer policies even though IAM
+	// is strongly consistent and permission_errors==0), fall back to the
+	// authoritative iam:ListPolicies(Scope=Local).
+	{Type: "AWS::IAM::ManagedPolicy", Global: true, KeepIdentifier: keepCustomerIAMPolicy, FallbackLister: listLocalManagedPoliciesNative},
 	{Type: "AWS::IAM::User", Global: true},
 	{Type: "AWS::IAM::Group", Global: true},
 
@@ -39,8 +42,13 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::Route53::HostedZone", Global: true},
 
 	// --- regional storage ---
-	{Type: "AWS::S3::Bucket"}, // S3 is regional but listable globally; treat as regional and dedupe by ARN
-	{Type: "AWS::EC2::Volume"},
+	// S3 is regional but listable globally; treat as regional and dedupe by ARN.
+	// The fallback re-scopes ListBuckets to the audited region on a silent-empty
+	// CloudControl list (fixtures-01 measured 2/9 from dropped buckets).
+	{Type: "AWS::S3::Bucket", FallbackLister: listS3BucketsNative},
+	// ec2:DescribeVolumes is the strongly-consistent fallback for
+	// CloudControl's eventually-consistent (often empty) Volume list.
+	{Type: "AWS::EC2::Volume", FallbackLister: listVolumesNative},
 	// CloudControl's AWS::EC2::Snapshot ListResources is unreliable —
 	// in some accounts it returns no results, in others it dumps tens
 	// of thousands of public AMI snapshots and times out. We bypass
@@ -51,13 +59,30 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::EFS::FileSystem"},
 
 	// --- regional compute ---
-	{Type: "AWS::EC2::Instance"},
+	// All four workload-instance types below get a native-Describe fallback:
+	// CloudControl's audit-time list silently returns empty for them right
+	// after create (the probe artifact is a separate call and doesn't reflect
+	// this — see lister_native.go). The fallback fires only on empty, so it's
+	// inert when CC works.
+	{Type: "AWS::EC2::Instance", FallbackLister: listInstancesNative},
 	{Type: "AWS::Lambda::Function"},
 	{Type: "AWS::ECS::Cluster"},
-	{Type: "AWS::ECS::Service"},
-	{Type: "AWS::ECS::TaskDefinition"},
+	{Type: "AWS::ECS::Service", FallbackLister: listECSServicesNative},
+	// TaskDefinition is CloudControl-listable, but a live run dropped it from
+	// the audit-time list (probe saw it, audit saw none) — so the privileged-
+	// container / writable-rootfs / plaintext-env / no-log-driver findings went
+	// dark. The fallback enumerates ACTIVE task defs, deduped to the latest
+	// revision per family, via ecs:ListTaskDefinitions + DescribeTaskDefinition.
+	{Type: "AWS::ECS::TaskDefinition", FallbackLister: listECSTaskDefinitionsNative},
 	{Type: "AWS::AutoScaling::AutoScalingGroup"},
-	{Type: "AWS::EKS::Cluster"},
+	{Type: "AWS::EKS::Cluster", FallbackLister: listEKSClustersNative},
+	// ECR repositories are CloudControl-listable (fixtures-08 probe = 1) but
+	// were absent from this set, so the scan-on-push / tag-mutability /
+	// lifecycle findings on the discovered repo never surfaced. GetResource
+	// returns ImageScanningConfiguration + ImageTagMutability inline. A live 09
+	// run additionally showed the audit-time list silently empty for this type,
+	// so ecr:DescribeRepositories is wired as the fallback-on-empty.
+	{Type: "AWS::ECR::Repository", FallbackLister: listECRRepositoriesNative},
 
 	// --- regional networking ---
 	{Type: "AWS::EC2::VPC"},
@@ -72,8 +97,14 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// for "is this subnet internet-routable" defaults to MapPublicIpOnLaunch.
 	{Type: "AWS::EC2::SubnetRouteTableAssociation"},
 	{Type: "AWS::EC2::VPCEndpoint"},
+	// The load balancer + target group themselves get NO fallback: CloudControl
+	// lists them reliably (confirmed in a clean 08 run where the ALB findings
+	// fired without one). The Listener is the exception — CloudControl returns
+	// the LB but an empty listener list for a fresh ALB (07, 08), so it carries
+	// the HTTP-only-listener finding only via the fallback. DescribeListeners
+	// is per-LB, so the fallback enumerates load balancers first.
 	{Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"},
-	{Type: "AWS::ElasticLoadBalancingV2::Listener"},
+	{Type: "AWS::ElasticLoadBalancingV2::Listener", FallbackLister: listListenersNative},
 	{Type: "AWS::ElasticLoadBalancingV2::TargetGroup"},
 
 	// --- regional APIs ---
@@ -85,16 +116,39 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::ApiGatewayV2::Authorizer"},
 
 	// --- regional data ---
-	{Type: "AWS::RDS::DBInstance"},
-	{Type: "AWS::RDS::DBCluster"},
+	// RDS is the type whose silent CloudControl-empty miss was caught live
+	// (09-backup-dr, 2026-06-03): probe saw the instance, the audit didn't,
+	// rds-backup-retention went MISSED. rds:DescribeDB* is the fallback.
+	{Type: "AWS::RDS::DBInstance", FallbackLister: listRDSInstancesNative},
+	{Type: "AWS::RDS::DBCluster", FallbackLister: listRDSClustersNative},
 	// DBSubnetGroup carries the SubnetIds we need to compute whether
 	// an RDS instance with PubliclyAccessible=true is actually
 	// reachable from the internet (any constituent subnet routable
 	// via an IGW route).
 	{Type: "AWS::RDS::DBSubnetGroup"},
-	{Type: "AWS::DynamoDB::Table"},
+	// DynamoDB::Table is CloudControl-listable and strongly consistent, but the
+	// v2 clean-baseline sweep (2026-06-03) watched it silently vanish from the
+	// audit-time list in variants 00 (−2 findings) and 03 (−3) — the same
+	// non-deterministic CloudControl silent-empty defect, now on a type that
+	// carries CB-curated findings (no-PITR, provisioned-capacity, AWS-owned-key
+	// encryption, no-deletion-protection). dynamodb:ListTables + DescribeTable
+	// (+ DescribeContinuousBackups for PITR) is the authoritative fallback-on-empty.
+	{Type: "AWS::DynamoDB::Table", FallbackLister: listDynamoDBTablesNative},
 	{Type: "AWS::ElastiCache::ReplicationGroup"},
 	{Type: "AWS::ElastiCache::CacheCluster"},
+
+	// --- regional backup / DR ---
+	// AWS Backup vault + plan are CloudControl-listable (fixtures-09 probe =
+	// 1 each) but were absent from this set, so the vault-lock / vault-CMK /
+	// vault-access-policy / plan-secondary-region-copy findings never
+	// surfaced. GetResource returns EncryptionKeyArn (vault) and the
+	// rule/copyAction tree (plan) inline. A live run additionally showed the
+	// audit-time list silently empty for both, so backup:ListBackupVaults /
+	// ListBackupPlans are wired as fallback-on-empty. The absence-of-config
+	// posture (AWS-managed key, no access policy, no cross-region copy) is
+	// surfaced by backupVaultDescriber / backupPlanDescriber.
+	{Type: "AWS::Backup::BackupVault", FallbackLister: listBackupVaultsNative},
+	{Type: "AWS::Backup::BackupPlan", FallbackLister: listBackupPlansNative},
 
 	// --- regional messaging ---
 	{Type: "AWS::SQS::Queue"},
@@ -148,6 +202,35 @@ type cfnTypeSpec struct {
 	// that flow through the same mapToDiscovered + describer path as
 	// CloudControl-listed types, so downstream code is identical.
 	CustomLister func(ctx context.Context, c awsCfg, region string) ([]rawResource, error)
+
+	// FallbackLister, when non-nil, is invoked only when the primary
+	// list path (CloudControl ListResources, or CustomLister) returns
+	// an *empty* result set for this type in this region. It performs a
+	// strongly-consistent native Describe and synthesises the same
+	// CFN-shape rawResource records.
+	//
+	// This exists because CloudControl's ListResources silently under-returns
+	// — it answers with an empty list, not an error, so discovery drops the
+	// resource with permission_errors == 0. Wired for the workload-instance
+	// types (EC2 instance/volume, RDS instance/cluster, ECS service, EKS
+	// cluster) where the list is eventually consistent and comes back empty
+	// right after create — proven live, not theoretical (see lister_native.go)
+	// — plus the ELBv2 Listener of a fresh ALB and the persistently
+	// under-returned AWS::IAM::ManagedPolicy. A live run additionally caught the
+	// same silent-empty miss on strongly-consistent types that carry planted
+	// findings — AWS::ECR::Repository, AWS::ECS::TaskDefinition,
+	// AWS::Backup::BackupVault, AWS::Backup::BackupPlan, and AWS::DynamoDB::Table
+	// — so each of those is wired too. The load balancer and target group
+	// themselves need no fallback: CloudControl lists them reliably.
+	//
+	// Semantics are deliberately fallback-on-empty rather than full
+	// replacement (the CustomLister model): when CloudControl *does*
+	// list the type its richer CFN payload is used unchanged, so wiring a
+	// FallbackLister can never regress a type CloudControl already
+	// discovers. A partial-stale list (CloudControl returning older
+	// resources but not the just-created one) won't trigger the fallback;
+	// the observed failure mode is a fully empty list, which this covers.
+	FallbackLister func(ctx context.Context, c awsCfg, region string) ([]rawResource, error)
 }
 
 // keepCustomerIAMPolicy returns false for AWS-managed policy ARNs
