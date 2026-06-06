@@ -233,6 +233,24 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				})
 			}
 
+			// Discovery-integrity probe results: a type the audit pass
+			// dropped that an independent re-list saw (CloudControl's
+			// silent-empty miss). These become deterministic `warning`
+			// findings in the report; an advisory mirrors them in the
+			// end-of-run card so the operator can't miss that the audit
+			// may be a false-clean for those types.
+			integrityFindings := make([]audit.Finding, 0, len(discResult.IntegrityWarnings))
+			for _, w := range discResult.IntegrityWarnings {
+				integrityFindings = append(integrityFindings, audit.DiscoveryIntegrityFinding(w.Type, w.Region, w.Count))
+			}
+			if len(integrityFindings) > 0 {
+				output.Advise(output.Advisory{
+					Code:  "aws-discovery-integrity",
+					Title: fmt.Sprintf("%d type(s) may be under-reported by CloudControl discovery", len(integrityFindings)),
+					Hint:  "re-run; the miss is non-deterministic. See the CBX-DISCOVERY-INTEGRITY findings.",
+				})
+			}
+
 			// CB-grounded LLM analysis is always-on for `cbx audit aws`:
 			// the value of the audit IS the grounding in CB's curated
 			// knowledge, so the native-rules / mock-scanners path is no
@@ -259,11 +277,12 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			// decorations (preflight header, diagnose summary) remain
 			// here in the subcommand since they're CLI-only.
 			awsCtx := &audit.AWSAuditContext{
-				AccountID:      discResult.Identity.AccountID,
-				Identity:       discResult.Identity.ARN,
-				Regions:        discResult.Regions,
-				EventCount:     discResult.EventCount,
-				AccountPosture: discResult.AccountPosture,
+				AccountID:                  discResult.Identity.AccountID,
+				Identity:                   discResult.Identity.ARN,
+				Regions:                    discResult.Regions,
+				EventCount:                 discResult.EventCount,
+				AccountPosture:             discResult.AccountPosture,
+				DiscoveryIntegrityFindings: integrityFindings,
 			}
 
 			// Grounding-phase spinner. RunFromResources spawns claude -p
@@ -299,6 +318,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 					"findings":                   result.Findings,
 					"components":                 result.Components,
 					"permission_errors":          permErrsToJSON(discResult.PermissionErr),
+					"discovery_integrity":        integrityWarningsToJSON(discResult.IntegrityWarnings),
 				}
 				if err := output.PrintJSON(payload, nil); err != nil {
 					return err
@@ -631,6 +651,22 @@ func permErrsToJSON(in []*awsdisc.PermissionError) []map[string]string {
 			"action":  e.Action,
 			"region":  e.Region,
 			"error":   fmt.Sprintf("%v", e.Cause),
+		})
+	}
+	return out
+}
+
+// integrityWarningsToJSON converts the discovery-integrity probe results
+// into the JSON-friendly shape for the `--json` envelope, so machine
+// consumers can detect a possibly-incomplete discovery without parsing the
+// CBX-DISCOVERY-INTEGRITY findings out of the findings array.
+func integrityWarningsToJSON(in []awsdisc.IntegrityWarning) []map[string]any {
+	out := make([]map[string]any, 0, len(in))
+	for _, w := range in {
+		out = append(out, map[string]any{
+			"type":   w.Type,
+			"region": w.Region,
+			"count":  w.Count,
 		})
 	}
 	return out

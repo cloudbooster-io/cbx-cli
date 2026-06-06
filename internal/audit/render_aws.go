@@ -23,6 +23,14 @@ type AWSAuditContext struct {
 	// builder renders as an `==== ACCOUNT POSTURE ====` block.
 	// Populated by the AWS discovery layer (see discover/aws/account_posture.go).
 	AccountPosture *AccountPosture
+
+	// DiscoveryIntegrityFindings are deterministic `warning` findings
+	// the discovery-integrity probe produced (see DiscoveryIntegrityFinding
+	// and discover/aws/integrity.go). They're carried on the context — not
+	// appended to the returned Result — because RunFromResources renders the
+	// report inline, so the findings must be merged BEFORE rendering. Empty
+	// on a healthy run.
+	DiscoveryIntegrityFindings []Finding
 }
 
 // RenderAWSMarkdown emits the AWS-mode report shape per plan §7.7 +
