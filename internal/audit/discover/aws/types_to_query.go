@@ -65,7 +65,7 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// this — see lister_native.go). The fallback fires only on empty, so it's
 	// inert when CC works.
 	{Type: "AWS::EC2::Instance", FallbackLister: listInstancesNative},
-	{Type: "AWS::Lambda::Function"},
+	{Type: "AWS::Lambda::Function", FallbackLister: listLambdaFunctionsNative},
 	{Type: "AWS::ECS::Cluster"},
 	{Type: "AWS::ECS::Service", FallbackLister: listECSServicesNative},
 	// TaskDefinition is CloudControl-listable, but a live run dropped it from
