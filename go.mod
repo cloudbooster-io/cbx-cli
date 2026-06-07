@@ -6,7 +6,6 @@ require (
 	github.com/99designs/keyring v1.2.2
 	github.com/aws/aws-sdk-go-v2 v1.41.12
 	github.com/aws/aws-sdk-go-v2/config v1.32.18
-	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.5
 	github.com/aws/aws-sdk-go-v2/service/backup v1.57.4
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0
@@ -16,7 +15,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.82.1
 	github.com/aws/aws-sdk-go-v2/service/eks v1.84.3
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.14
-	github.com/aws/aws-sdk-go-v2/service/glue v1.143.0
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.2
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/kms v1.52.0
