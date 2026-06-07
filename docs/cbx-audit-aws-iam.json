@@ -1,5 +1,5 @@
 {
-  "_comment": "Minimum read-only IAM policy for `cbx audit aws`. It authorizes two layers: (1) the explicit per-service AWS SDK calls the discovery code makes directly — STS preflight, ec2:DescribeRegions, the S3/IAM/KMS describers, the account-posture probes (ec2:GetEbsEncryptionByDefault, iam:GetAccountSummary, iam:GetAccountPasswordPolicy), the observability-posture probes (guardduty:ListDetectors, guardduty:GetDetector, config:DescribeConfigurationRecorders, ec2:DescribeFlowLogs), the EBS snapshot lister/describer; and (2) the Cloud Control discovery path (cloudformation:ListResources/GetResource), where Cloud Control invokes each CFN resource type's List/Read handler under the *caller's* identity, so the caller needs read access to every service in internal/audit/discover/aws/types_to_query.go (EC2, S3, IAM, RDS, Lambda, ECS, EKS, ELBv2, EFS, ApiGateway, DynamoDB, ElastiCache, SQS, SNS, Events, Cognito, WAFv2, ACM, Logs, CloudWatch, SecretsManager, KMS, CloudFront, Route53, CloudTrail). It is strictly read-only and deliberately avoids data-plane reads (e.g. secretsmanager:GetSecretValue, s3:GetObject). The AWS-managed AWSReadOnlyAccess policy is a valid superset; use this curated policy when a least-privilege grant is required. Plan §7.6.",
+  "_comment": "Minimum read-only IAM policy for `cbx audit aws`. It authorizes two layers: (1) the explicit per-service AWS SDK calls the discovery code makes directly — STS preflight, ec2:DescribeRegions, the S3/IAM/KMS describers, the account-posture probes (ec2:GetEbsEncryptionByDefault, iam:GetAccountSummary, iam:GetAccountPasswordPolicy, glue:GetResourcePolicy for the per-region Glue Data Catalog resource policy), the observability-posture probes (guardduty:ListDetectors, guardduty:GetDetector, config:DescribeConfigurationRecorders, ec2:DescribeFlowLogs), the EBS snapshot lister/describer; and (2) the Cloud Control discovery path (cloudformation:ListResources/GetResource), where Cloud Control invokes each CFN resource type's List/Read handler under the *caller's* identity, so the caller needs read access to every service in internal/audit/discover/aws/types_to_query.go (EC2, S3, IAM, RDS, Lambda, ECS, EKS, ELBv2, EFS, ApiGateway, DynamoDB, ElastiCache, Athena, SQS, SNS, Events, Cognito, WAFv2, ACM, Logs, CloudWatch, SecretsManager, KMS, CloudFront, Route53, CloudTrail). It is strictly read-only and deliberately avoids data-plane reads (e.g. secretsmanager:GetSecretValue, s3:GetObject). The AWS-managed AWSReadOnlyAccess policy is a valid superset; use this curated policy when a least-privilege grant is required. Plan §7.6.",
   "Version": "2012-10-17",
   "Statement": [
     {
@@ -69,6 +69,7 @@
         "ec2:DescribeSnapshotAttribute",
         "ec2:DescribeSnapshots",
         "ec2:GetEbsEncryptionByDefault",
+        "glue:GetResourcePolicy",
         "kms:GetKeyRotationStatus"
       ],
       "Resource": "*"
@@ -90,6 +91,9 @@
         "acm:Describe*",
         "acm:List*",
         "apigateway:GET",
+        "athena:GetWorkGroup",
+        "athena:ListTagsForResource",
+        "athena:ListWorkGroups",
         "autoscaling:Describe*",
         "cloudfront:Get*",
         "cloudfront:List*",
