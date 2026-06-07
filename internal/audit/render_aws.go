@@ -14,8 +14,14 @@ import (
 // (plan §7.7). State and source mode runs don't have an equivalent
 // context, so they keep using the mode-agnostic RenderMarkdown.
 type AWSAuditContext struct {
-	AccountID  string
-	Identity   string
+	AccountID string
+	Identity  string
+	// CallerARN is the raw ARN of the identity the audit ran as
+	// (discResult.Identity.ARN). Distinct from Identity, which may be a
+	// rendered display string. Threaded through so the post-LLM severity
+	// post-process can drop the auditor's own IAM-user finding (the
+	// recurring #1 false positive). Empty disables that drop.
+	CallerARN  string
 	Regions    []string
 	EventCount int
 
