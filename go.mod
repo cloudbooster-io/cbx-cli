@@ -8,12 +8,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.18
 	github.com/aws/aws-sdk-go-v2/service/backup v1.57.4
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0
+	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.8
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.1
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.82.1
 	github.com/aws/aws-sdk-go-v2/service/eks v1.84.3
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.14
+	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.2
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/kms v1.52.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.118.5
