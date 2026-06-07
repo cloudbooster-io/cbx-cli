@@ -36,6 +36,11 @@ codegen-check:
 test:
   stage: test
   image: golang:${GO_VERSION}
+  # Shares the e2e_compile resource_group with `e2e`/`e2e-staging`: `go test ./...`
+  # also compiles aws-sdk-go-v2, so a concurrent run alongside an e2e job (e.g. a
+  # post-merge `main` pipeline) OOM-wedges the 2-slot runner pool. Serializing all
+  # three heavy compiles project-wide closes the gap the e2e-only fix left open.
+  resource_group: e2e_compile
   script:
     - go test -v ./...
   rules:
