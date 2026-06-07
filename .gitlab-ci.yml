@@ -73,6 +73,10 @@ mermaid-validate:
 e2e:
   stage: e2e
   image: golang:${GO_VERSION}
+  # Serialized against e2e-staging via a shared resource_group: both compile
+  # aws-sdk-go-v2, and running them concurrently OOM-wedges the 2-slot runner
+  # pool (~60min un-cancellable hangs). resource_group caps it at one at a time.
+  resource_group: e2e_compile
   script:
     - go test -v ./e2e/...
   rules:
@@ -93,6 +97,9 @@ e2e:
 e2e-staging:
   stage: e2e
   image: golang:${GO_VERSION}
+  # Shares the e2e_compile resource_group with `e2e` so the two never compile
+  # aws-sdk-go-v2 concurrently — see the note on the `e2e` job above.
+  resource_group: e2e_compile
   variables:
     CB_API_URL: "https://api.staging.cloudbooster.io"
   script:
