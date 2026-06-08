@@ -110,7 +110,16 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// --- regional APIs ---
 	{Type: "AWS::ApiGateway::RestApi"},
 	{Type: "AWS::ApiGateway::Stage"},
-	{Type: "AWS::ApiGatewayV2::Api"},
+	// AWS::ApiGatewayV2::Api was the last flaky-discovery type behind variant
+	// 03's headline swing (3→7→8): CloudControl's audit-time list silently
+	// returned empty for a freshly-created HTTP API the same way it did for
+	// Lambda/DynamoDB. apigatewayv2:GetApis is the fallback-on-empty, so the
+	// access-logging WARNING (apiGatewayV2ApiDescriber re-derives it via its own
+	// GetStages call) survives the silent miss. NOTE: this restores only the
+	// Api — the compound "unauthenticated API + admin Lambda" rule additionally
+	// needs the Route + Integration siblings, which have no fallback yet (see
+	// lister_apigw_native.go's SCOPE note).
+	{Type: "AWS::ApiGatewayV2::Api", FallbackLister: listAPIGatewayV2APIsNative},
 	{Type: "AWS::ApiGatewayV2::Stage"},
 	{Type: "AWS::ApiGatewayV2::Route"},
 	{Type: "AWS::ApiGatewayV2::Authorizer"},
