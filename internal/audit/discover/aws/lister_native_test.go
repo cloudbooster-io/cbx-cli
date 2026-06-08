@@ -10,6 +10,7 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/rds"
 	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 )
 
@@ -202,6 +203,12 @@ func TestVolumeToRaw_RoundTripThroughDescriber(t *testing.T) {
 // RDS DBInstance: the public/unencrypted/backup-0 posture must survive the
 // native shape, AND DBSubnetGroupName must drive cb_describer_effectively_public.
 func TestRDSInstanceToRaw_RoundTripThroughDescriberAndCrossref(t *testing.T) {
+	// The instance describer now runs a best-effort rds:DescribeDBInstances
+	// role probe; inject a fake so this round-trip test stays network-free and
+	// focused on CC-field reconstruction + crossref (probe behaviour is covered
+	// in describer_rds_test.go).
+	installFakeRDSClient(t, &fakeRDSReplicaClient{out: &rds.DescribeDBInstancesOutput{}})
+
 	inst := rdstypes.DBInstance{
 		DBInstanceIdentifier:  strp("cbx-db"),
 		Engine:                strp("postgres"),

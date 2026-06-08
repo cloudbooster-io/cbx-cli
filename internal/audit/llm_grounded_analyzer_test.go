@@ -212,6 +212,57 @@ func TestBuildGroundedPrompt_S3HygieneBaselineRules(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_RDSBackupRetentionBaselineRule is a WIRING CHECK: it
+// confirms the replica-aware RDS backup-retention bullet (and its two carve-out
+// describer hooks) is present in the prompt text. Whether the finding fires is
+// LLM behavior, validated by the deferred live run.
+func TestBuildGroundedPrompt_RDSBackupRetentionBaselineRule(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	for _, want := range []string{
+		"cb_describer_backup_retention_days <= 1",
+		"cb_describer_is_read_replica",
+		"cb_describer_is_cluster_member",
+		"read replicas legitimately run retention 0", // the replica carve-out rationale
+		"Multi-AZ DB cluster members",                // the cluster-member carve-out covers Multi-AZ DB clusters
+		"UNKNOWN and do NOT flag",                    // absence polarity must be explicit
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing RDS backup-retention wiring %q", want)
+		}
+	}
+}
+
+// TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields guards the path
+// the LLM actually reads: the carve-out booleans and the retention number must
+// serialize into the resource table (serialiseInputs → JSON) as `false` / `0`,
+// NOT be dropped as zero-values. If the serializer ever started omitting them,
+// a standalone primary would render with the keys absent and the rule (which
+// keys off `== false` / `<= 1`) would silently become a no-op on exactly the
+// cases it targets — including the headline `backup_retention_days: 0` "backups
+// disabled" finding.
+func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
+	resources := []DiscoveredResource{{
+		Type: "AWS::RDS::DBInstance",
+		URN:  "arn:aws:rds:us-east-1:111122223333:db:db-standalone",
+		ID:   "db-standalone",
+		Inputs: map[string]any{
+			"cb_describer_is_read_replica":       false,
+			"cb_describer_is_cluster_member":     false,
+			"cb_describer_backup_retention_days": float64(0),
+		},
+	}}
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil)
+	for _, want := range []string{
+		`"cb_describer_is_read_replica": false`,
+		`"cb_describer_is_cluster_member": false`,
+		`"cb_describer_backup_retention_days": 0`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("resource table dropped a zero/false describer field — prompt missing %q", want)
+		}
+	}
+}
+
 func TestNewLLMAnalyzer_CBKnowledgeRequiresClaudeCode(t *testing.T) {
 	_, err := newLLMAnalyzer(Options{LLMProvider: "claude", CBKnowledge: true}, IaCTypeTerraform)
 	if err == nil || !strings.Contains(err.Error(), "--cb-knowledge requires --llm claude-code") {
