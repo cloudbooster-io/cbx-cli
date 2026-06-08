@@ -787,3 +787,175 @@ func TestSeverityFloor_AdminCrossAccountRoleGetsCritical(t *testing.T) {
 		t.Fatalf("admin+cross-account role: want critical (admin wins), got %q", out[0].Severity)
 	}
 }
+
+// ===========================================================================
+// Canonical OrganizationAccountAccessRole downgrade (FP discipline).
+// ===========================================================================
+
+// canonical trust shapes used by the org-role downgrade tests. The management
+// account (999…) differs from the audited account (auditedAcct, 111…), so this is a
+// genuine cross-account :root trust — exactly the confused-deputy shape the floor
+// raises, which is why the canonical AWS-managed role is a guaranteed top-severity FP.
+const (
+	orgMgmtRootTrust   = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999999999999:root"},"Action":"sts:AssumeRole"}]}`
+	orgMgmtBareIDTrust = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"999999999999"},"Action":"sts:AssumeRole"}]}`
+)
+
+// orgRoleRes builds an AWS::IAM::Role whose ID (the CloudControl primary identifier)
+// is roleName, carrying the decoded trust policy and, optionally, the
+// admin-managed-policy signal AWS's real OrganizationAccountAccessRole sets.
+func orgRoleRes(roleName, trustJSON string, adminAttached bool) DiscoveredResource {
+	in := map[string]any{}
+	if trustJSON != "" {
+		in["cb_describer_assume_role_policy_raw"] = trustJSON
+	}
+	if adminAttached {
+		in["cb_describer_admin_managed_policy_attached"] = true
+	}
+	return DiscoveredResource{
+		Type:   "AWS::IAM::Role",
+		URN:    "aws://global/AWS::IAM::Role/" + roleName,
+		ID:     roleName,
+		Inputs: in,
+	}
+}
+
+// The canonical role's cross-account-admin trust finding is capped to info — from
+// the LLM's HIGH base AND from a floor-raised CRITICAL — proving the downgrade
+// handles severities a raise-only guard cannot lower.
+func TestDowngradeCanonicalOrgRole_CappedToInfo(t *testing.T) {
+	role := orgRoleRes(orgAccessRoleName, orgMgmtRootTrust, true)
+	out := downgradeCanonicalOrgRoleFindings([]Finding{
+		{RuleID: "LLM-trust", Title: "Role trusts another account with no ExternalId",
+			Description: "OrganizationAccountAccessRole allows cross-account assume-role from the management account",
+			Resource:    role.URN, Severity: SeverityHigh},
+		{RuleID: "LLM-admin", Title: "Role has AdministratorAccess",
+			Description: "the role grants unrestricted admin access to the account",
+			Resource:    role.URN, Severity: SeverityCritical},
+	}, []DiscoveredResource{role})
+	for _, f := range out {
+		if f.Severity != SeverityInfo {
+			t.Fatalf("%s: canonical org-role finding must be capped to info, got %q", f.RuleID, f.Severity)
+		}
+	}
+}
+
+// End-to-end ordering: a HIGH finding on the canonical role is raised to CRITICAL by
+// the admin floor, then capped to info by the downgrade — proving the downgrade runs
+// after the floor and overrides it (the production runner.go order).
+func TestDowngradeCanonicalOrgRole_EndToEndAfterFloor(t *testing.T) {
+	role := orgRoleRes(orgAccessRoleName, orgMgmtRootTrust, true)
+	in := []Finding{
+		{RuleID: "LLM-trust", Title: "Cross-account trust with admin access",
+			Description: "OrganizationAccountAccessRole trusts the management account with AdministratorAccess",
+			Resource:    role.URN, Severity: SeverityHigh},
+	}
+	raised := applySeverityFloor(in, []DiscoveredResource{role}, auditedAcct)
+	if raised[0].Severity != SeverityCritical {
+		t.Fatalf("precondition: floor should raise admin+xacct role to critical, got %q", raised[0].Severity)
+	}
+	out := downgradeCanonicalOrgRoleFindings(raised, []DiscoveredResource{role})
+	if out[0].Severity != SeverityInfo {
+		t.Fatalf("after floor+downgrade: want info, got %q", out[0].Severity)
+	}
+}
+
+// A role NAMED OrganizationAccountAccessRole but whose trust deviates from the
+// canonical account-root-only shape (foreign user/role ARN, `*`, a service principal,
+// or a root mixed with a foreign ARN) is NOT recognized — its HIGH finding survives.
+func TestDowngradeCanonicalOrgRole_SpoofStillFires(t *testing.T) {
+	cases := map[string]string{
+		"foreign-role-arn":  `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:role/attacker"},"Action":"sts:AssumeRole"}]}`,
+		"wildcard":          `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}`,
+		"wildcard-string":   `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"sts:AssumeRole"}]}`,
+		"service":           `{"Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`,
+		"root-plus-service": `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999999999999:root","Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`,
+		"root-plus-foreign": `{"Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam::999999999999:root","arn:aws:iam::222222222222:role/attacker"]},"Action":"sts:AssumeRole"}]}`,
+	}
+	for name, trust := range cases {
+		t.Run(name, func(t *testing.T) {
+			role := orgRoleRes(orgAccessRoleName, trust, true)
+			if isCanonicalOrgAccessRole(role) {
+				t.Fatalf("spoofed trust %q must NOT be recognized as the canonical role", name)
+			}
+			out := downgradeCanonicalOrgRoleFindings([]Finding{
+				{RuleID: "LLM-trust", Title: "Cross-account trust policy with no ExternalId",
+					Description: "role allows cross-account assume-role", Resource: role.URN, Severity: SeverityHigh},
+			}, []DiscoveredResource{role})
+			if out[0].Severity != SeverityHigh {
+				t.Fatalf("spoof %q: finding must stay high, got %q", name, out[0].Severity)
+			}
+		})
+	}
+}
+
+// A genuine, org-unrelated cross-account role (canonical account-root-only trust but a
+// DIFFERENT name) still fires HIGH through floor+downgrade — the downgrade is scoped
+// to the exact canonical name, so it never suppresses real cross-account findings.
+func TestDowngradeCanonicalOrgRole_GenuineXAcctNoRegression(t *testing.T) {
+	role := orgRoleRes("cbx-partner-integration-role", orgMgmtRootTrust, false)
+	if isCanonicalOrgAccessRole(role) {
+		t.Fatalf("a differently-named cross-account role must NOT be recognized as the canonical org role")
+	}
+	raised := applySeverityFloor([]Finding{
+		{RuleID: "LLM-trust", Title: "Role trusts another account with no ExternalId",
+			Description: "add an sts:ExternalId condition to the trust policy", Resource: role.URN, Severity: SeverityWarning},
+	}, []DiscoveredResource{role}, auditedAcct)
+	out := downgradeCanonicalOrgRoleFindings(raised, []DiscoveredResource{role})
+	if out[0].Severity != SeverityHigh {
+		t.Fatalf("genuine non-org cross-account role: want high (no regression), got %q", out[0].Severity)
+	}
+}
+
+// Orthogonal findings sharing the canonical role's URN are left untouched — an
+// "unused role" info finding (no trust/admin keyword) and a text-less WARNING finding
+// both keep their severity, proving the downgrade's empty/ambiguous-text default is
+// NOT to suppress (the polarity hazard a raise-side gate would invert).
+func TestDowngradeCanonicalOrgRole_OrthogonalUntouched(t *testing.T) {
+	role := orgRoleRes(orgAccessRoleName, orgMgmtRootTrust, true)
+	out := downgradeCanonicalOrgRoleFindings([]Finding{
+		{RuleID: "LLM-unused", Title: "IAM role not used in 90 days",
+			Description: "the role has no recent activity and may be removable", Resource: role.URN, Severity: SeverityInfo},
+		{RuleID: "LLM-blank", Title: "", Description: "", Resource: role.URN, Severity: SeverityWarning},
+	}, []DiscoveredResource{role})
+	for _, f := range out {
+		switch f.RuleID {
+		case "LLM-unused":
+			if f.Severity != SeverityInfo {
+				t.Fatalf("orthogonal unused-role finding must keep info, got %q", f.Severity)
+			}
+		case "LLM-blank":
+			if f.Severity != SeverityWarning {
+				t.Fatalf("text-less finding must NOT be downgraded, got %q", f.Severity)
+			}
+		}
+	}
+}
+
+// Recognizer unit coverage: exact name + account-root-only trust (root ARN or bare
+// account id) is recognized; every structural deviation is rejected.
+func TestIsCanonicalOrgAccessRole(t *testing.T) {
+	cases := []struct {
+		name string
+		res  DiscoveredResource
+		want bool
+	}{
+		{"canonical-root-arn", orgRoleRes(orgAccessRoleName, orgMgmtRootTrust, true), true},
+		{"canonical-bare-account-id", orgRoleRes(orgAccessRoleName, orgMgmtBareIDTrust, true), true},
+		{"canonical-no-admin-attached", orgRoleRes(orgAccessRoleName, orgMgmtRootTrust, false), true},
+		{"wrong-name", orgRoleRes("organizationaccountaccessrole", orgMgmtRootTrust, true), false},
+		{"missing-trust", orgRoleRes(orgAccessRoleName, "", true), false},
+		{"wildcard-principal", orgRoleRes(orgAccessRoleName, `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}`, true), false},
+		{"service-principal", orgRoleRes(orgAccessRoleName, `{"Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}`, true), false},
+		{"foreign-user-arn", orgRoleRes(orgAccessRoleName, `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:user/bob"},"Action":"sts:AssumeRole"}]}`, true), false},
+		{"deny-statement", orgRoleRes(orgAccessRoleName, `{"Statement":[{"Effect":"Deny","Principal":{"AWS":"arn:aws:iam::999999999999:root"},"Action":"sts:AssumeRole"}]}`, true), false},
+		{"wrong-type", DiscoveredResource{Type: "AWS::IAM::User", ID: orgAccessRoleName, URN: "aws://global/AWS::IAM::User/" + orgAccessRoleName, Inputs: map[string]any{"cb_describer_assume_role_policy_raw": orgMgmtRootTrust}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isCanonicalOrgAccessRole(c.res); got != c.want {
+				t.Fatalf("isCanonicalOrgAccessRole(%s) = %v, want %v", c.name, got, c.want)
+			}
+		})
+	}
+}

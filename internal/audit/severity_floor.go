@@ -844,3 +844,222 @@ func isAllDigits(s string) bool {
 	}
 	return true
 }
+
+// ===========================================================================
+// Canonical AWS-Organizations org-access-role downgrade (FP discipline).
+//
+// AWS Organizations auto-creates `OrganizationAccountAccessRole` in EVERY member
+// account: a cross-account admin trust to the management account root, carrying
+// AdministratorAccess. It is expected, unavoidable, and cannot be removed while the
+// account is an Org member — yet it lands at the TOP of the report because it is
+// exactly the shape two raise paths target (the full-admin floor → critical, the
+// cross-account-trust floor → high) layered on an LLM the prompt instructs to emit a
+// HIGH cross-account-no-ExternalId finding (buildGroundedPrompt, off-limits this
+// round). In a real Org member account that is a guaranteed top-severity false
+// positive.
+//
+// A guard INSIDE the raise-only floor cannot fix this: the LLM rates the role HIGH
+// on its own, so suppressing the floor still leaves a HIGH FP. This pass instead
+// DOWNGRADES (caps to info) the role's cross-account-admin trust finding. It runs
+// AFTER applySeverityFloor (wired in RunFromResources) so it overrides BOTH the
+// floor's raise AND the LLM's base severity — robust to the model's run-to-run
+// severity choices. It caps rather than DROPs (unlike dropSelfIdentityFindings,
+// which removes the auditor's own identity as pure noise): a powerful cross-account
+// admin role is worth an informational note, so the finding stays visible — just not
+// at a tier that demands action.
+//
+// Because it LOWERS severity, its match must be conservative in the OPPOSITE
+// direction to the floor: a floor over-match is benign (worst case = pre-fix
+// severity), but a downgrade over-match SILENTLY BURIES a real finding. So the
+// recognizer demands the exact canonical NAME *and* the exact canonical TRUST SHAPE
+// (account-root-only principals), and the finding-text gate fires ONLY on a positive
+// keyword hit — a text-less or orthogonal finding sharing the role's URN is left
+// untouched (the inverse of the raise-side gates' empty-text default).
+
+// orgAccessRoleName is the canonical name AWS Organizations gives the role it
+// auto-creates in every member account. Matched case-sensitively: AWS always
+// creates it with this exact casing, and an exact match is the tightest guard
+// against a look-alike spoof.
+const orgAccessRoleName = "OrganizationAccountAccessRole"
+
+// downgradeCanonicalOrgRoleFindings caps to info the severity of the finding that
+// reports the cross-account-admin trust on a canonical AWS-managed
+// OrganizationAccountAccessRole. It joins findings to resources by URN (like
+// applySeverityFloor) and edits only findings whose resource is the canonical role
+// AND whose text is the trust/admin finding (findingIsCanonicalOrgRoleTrust) — an
+// orthogonal finding sharing the role's URN keeps its own severity. The input slice
+// is not mutated; a fresh slice is returned. MUST run after applySeverityFloor so it
+// overrides the floor's raise.
+func downgradeCanonicalOrgRoleFindings(findings []Finding, resources []DiscoveredResource) []Finding {
+	if len(findings) == 0 {
+		return findings
+	}
+	byURN := make(map[string]DiscoveredResource, len(resources))
+	for _, r := range resources {
+		byURN[r.URN] = r
+	}
+	out := make([]Finding, len(findings))
+	copy(out, findings)
+	for i := range out {
+		f := &out[i]
+		res, ok := byURN[f.Resource]
+		if !ok || !isCanonicalOrgAccessRole(res) {
+			continue
+		}
+		if findingIsCanonicalOrgRoleTrust(f) {
+			f.Severity = capTo(f.Severity, SeverityInfo)
+		}
+	}
+	return out
+}
+
+// capTo returns target when it is strictly LESS severe than current, otherwise
+// current — the downgrade's lower-only mirror of raiseTo. It never raises a finding
+// already below the cap.
+func capTo(current, target string) string {
+	if severityRank(target) < severityRank(current) {
+		return target
+	}
+	return current
+}
+
+// isCanonicalOrgAccessRole reports whether a discovered role is the genuine,
+// AWS-Organizations-created OrganizationAccountAccessRole: the exact canonical NAME
+// (its CloudControl primary identifier, surfaced as DiscoveredResource.ID, with a
+// RoleName input fallback) AND the canonical TRUST SHAPE — every assume-role Allow
+// statement trusts ONLY AWS-account-root principal(s). The name alone is spoofable,
+// so a role merely NAMED OrganizationAccountAccessRole that trusts a foreign
+// user/role ARN, the `*` wildcard, or an AWS service is NOT recognized and keeps
+// firing. Conditions are deliberately NOT policed: a trust condition only RESTRICTS
+// who may assume the role, so it cannot make root-trust more dangerous (and an
+// ExternalId-scoped role never reaches the floor anyway).
+//
+// We cannot tell the real management account from an attacker's account without the
+// Organizations API (not called here), so a single-account-root trust is recognized
+// regardless of which account it names — the downgrade is to info (not a drop), so
+// even a hypothetical look-alike persistence role stays visible in the report.
+func isCanonicalOrgAccessRole(r DiscoveredResource) bool {
+	if r.Type != "AWS::IAM::Role" {
+		return false
+	}
+	name := strings.TrimSpace(r.ID)
+	if name == "" {
+		name = strings.TrimSpace(inputsStringCI(r.Inputs, "rolename"))
+	}
+	if name != orgAccessRoleName {
+		return false
+	}
+	raw, ok := r.Inputs["cb_describer_assume_role_policy_raw"].(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	return trustIsAccountRootOnly(raw)
+}
+
+// trustIsAccountRootOnly reports whether a decoded JSON trust policy matches the
+// canonical org-role shape: at least one statement, and EVERY statement is an Allow
+// of an sts:AssumeRole-class action whose Principal trusts ONLY AWS-account-root
+// principal(s). Any deviation — a Deny, a non-assume-role action, a `*`, a service/
+// federated principal, or a non-root AWS ARN — makes it NOT canonical (so it keeps
+// firing). Strictness here is the safe direction for a downgrade.
+func trustIsAccountRootOnly(raw string) bool {
+	var doc struct {
+		Statement json.RawMessage `json:"Statement"`
+	}
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return false
+	}
+	stmts := decodePolicyStatements(doc.Statement)
+	if len(stmts) == 0 {
+		return false
+	}
+	for _, st := range stmts {
+		if !strings.EqualFold(strings.TrimSpace(st.Effect), "Allow") {
+			return false
+		}
+		if !actionsIncludeAssumeRole(st.Action) {
+			return false
+		}
+		if !principalIsAccountRootOnly(st.Principal) {
+			return false
+		}
+	}
+	return true
+}
+
+// principalIsAccountRootOnly reports whether a statement's Principal trusts ONLY
+// AWS-account-root principal(s): the Principal must be an object whose SOLE key is
+// "AWS", and every "AWS" value an account-root form. A bare-string Principal (only
+// ever "*" in practice), any additional key (Service / Federated / CanonicalUser),
+// or any non-root AWS ARN (`:user/`, `:role/`, …) makes it NOT root-only.
+func principalIsAccountRootOnly(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	// Principal: "*" (or any bare string) — never account-root-only.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return false
+	}
+	if len(obj) != 1 {
+		return false
+	}
+	awsRaw, ok := obj["AWS"]
+	if !ok {
+		return false
+	}
+	vals := stringOrStringSlice(awsRaw)
+	if len(vals) == 0 {
+		return false
+	}
+	for _, v := range vals {
+		if !isAccountRootPrincipal(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// isAccountRootPrincipal reports whether an AWS-principal value names an ENTIRE
+// account root: a bare 12-digit account id, or an `arn:<partition>:iam::<acct>:root`
+// ARN. A non-root ARN (`:user/<name>`, `:role/<name>`) or the `*` wildcard returns
+// false.
+func isAccountRootPrincipal(p string) bool {
+	p = strings.TrimSpace(p)
+	if len(p) == 12 && isAllDigits(p) {
+		return true
+	}
+	if strings.HasPrefix(p, "arn:") {
+		parts := strings.Split(p, ":")
+		return len(parts) == 6 && parts[2] == "iam" && parts[5] == "root"
+	}
+	return false
+}
+
+// findingIsCanonicalOrgRoleTrust reports whether a finding is the one REPORTING the
+// canonical org-role's cross-account-admin trust — the FP downgradeCanonicalOrgRoleFindings
+// caps. Unlike the raise-side text gates (which default to TRUE on empty text — safe
+// because they only widen a raise-only promotion), this gate defaults to FALSE: it
+// RESTRICTS a downgrade, and an over-match would silently bury a real finding sharing
+// the role's URN. So it fires ONLY on a positive cross-account-trust / admin-grant
+// keyword hit; a text-less or orthogonal finding is left at its own severity.
+func findingIsCanonicalOrgRoleTrust(f *Finding) bool {
+	text := strings.ToLower(strings.TrimSpace(f.Title + " " + f.Description))
+	if text == "" {
+		return false
+	}
+	for _, kw := range []string{
+		"cross-account", "cross account", "assume role", "assumerole",
+		"trust policy", "trust relationship", "externalid", "external id",
+		"confused deputy", "admin", "administratoraccess",
+	} {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}

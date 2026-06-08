@@ -362,12 +362,17 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 	//  3. Raise the unambiguous account-takeover / audit-integrity classes
 	//     over the full set (which now includes the integrity findings from
 	//     step 1). See severity_floor.go.
+	//  4. Cap the canonical AWS-managed OrganizationAccountAccessRole's
+	//     cross-account-admin trust finding to info — done AFTER the floor so it
+	//     overrides both the floor's raise and the LLM's HIGH base. See
+	//     downgradeCanonicalOrgRoleFindings in severity_floor.go.
 	if awsCtx != nil {
 		if len(awsCtx.DiscoveryIntegrityFindings) > 0 {
 			findings = append(findings, awsCtx.DiscoveryIntegrityFindings...)
 		}
 		findings = dropSelfIdentityFindings(findings, awsCtx.CallerARN)
 		findings = applySeverityFloor(findings, resources, awsCtx.AccountID)
+		findings = downgradeCanonicalOrgRoleFindings(findings, resources)
 	}
 
 	components := group.Group(resources, group.Options{
