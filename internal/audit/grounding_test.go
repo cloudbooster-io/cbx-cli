@@ -218,6 +218,36 @@ func TestBuildGroundedPrompt_IncludesLambdaApigwHygieneRules(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_SeverityCalibration pins the 5-bucket SEVERITY SCALE
+// rubric and the two prompt-side severity calibrations into the grounded
+// prompt. The AWS-Config-globals reconcile (WARNING→HIGH) has NO deterministic
+// floor (it is an account-level finding that skips the URN floor by design), so
+// this substring assertion is its only regression guard — without it a later
+// prompt edit could silently revert the HIGH back to WARNING and every other
+// test would still pass.
+func TestBuildGroundedPrompt_SeverityCalibration(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// the 5-bucket rubric marker and its wire-value mapping
+		"SEVERITY SCALE",
+		"`MEDIUM` maps to `warning`",
+		// Config recorder excluding IAM/global types → HIGH (06 capstone drift)
+		"emit ONE HIGH account-level finding `account:<accountId>` titled `AWS Config not recording global (IAM) resource types`",
+		// ECR MUTABLE image tags → HIGH (08 capstone drift)
+		"`AWS::ECR::Repository` has `ImageTagMutability` == `MUTABLE`, emit a HIGH finding",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing severity-calibration text %q", want)
+		}
+	}
+	// The absent-Config case is DELIBERATELY left at WARNING (account-baseline
+	// noise; no spec HIGH anchor). Guard that decision so a well-meaning later
+	// edit doesn't sweep it up to HIGH along with the globals-excluded case.
+	if !strings.Contains(prompt, "emit ONE WARNING `account:<accountId>` finding that AWS Config is not enabled") {
+		t.Errorf("grounded prompt must keep the Config-absent case at WARNING")
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.

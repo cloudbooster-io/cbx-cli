@@ -13,8 +13,19 @@ const (
 	trailURN       = "aws://us-east-1/AWS::CloudTrail::Trail/org-trail"
 	taskRoleURN    = "aws://global/AWS::IAM::Role/cbx-ecs-task-role"
 	benignSGURN    = "aws://us-east-1/AWS::EC2::SecurityGroup/sg-internet"
+	ecrRepoURN     = "aws://us-east-1/AWS::ECR::Repository/cbx-ecs-app"
 	accountFinding = "account:123456789012"
 )
+
+// ecrRepoRes builds an ECR repository carrying the raw CloudFormation
+// `ImageTagMutability` prop (the value CloudControl/the native lister surface),
+// the shape isECRMutableTags reads.
+func ecrRepoRes(urn, mutability string) DiscoveredResource {
+	return DiscoveredResource{
+		Type: "AWS::ECR::Repository", URN: urn, ID: lastSeg(urn),
+		Inputs: map[string]any{"ImageTagMutability": mutability},
+	}
+}
 
 func adminUserRes(urn string) DiscoveredResource {
 	return DiscoveredResource{
@@ -143,6 +154,16 @@ func TestSeverityFloor_Pins(t *testing.T) {
 			Finding{Resource: trailURN, Severity: SeverityInfo}, SeverityHigh},
 		{"cloudtrail-with-kms→unchanged", trailWithKMS,
 			Finding{Resource: trailURN, Severity: SeverityInfo}, SeverityInfo},
+		{"ecr-mutable-tags→high", ecrRepoRes(ecrRepoURN, "MUTABLE"),
+			Finding{Resource: ecrRepoURN, Title: "ECR repository allows mutable image tags",
+				Description: "ImageTagMutability=MUTABLE — tags can be overwritten", Severity: SeverityInfo}, SeverityHigh},
+		{"ecr-mutable-lowercase-value→high (case-insensitive)", ecrRepoRes(ecrRepoURN, "mutable"),
+			Finding{Resource: ecrRepoURN, Title: "ECR mutable image tags", Severity: SeverityInfo}, SeverityHigh},
+		{"ecr-immutable→unchanged", ecrRepoRes(ecrRepoURN, "IMMUTABLE"),
+			Finding{Resource: ecrRepoURN, Title: "ECR mutable image tags", Severity: SeverityInfo}, SeverityInfo},
+		{"ecr-mutability-absent→unchanged (no infer from missing key)",
+			DiscoveredResource{Type: "AWS::ECR::Repository", URN: ecrRepoURN, Inputs: map[string]any{}},
+			Finding{Resource: ecrRepoURN, Title: "ECR mutable image tags", Severity: SeverityInfo}, SeverityInfo},
 		{"full-admin-user→critical", adminUserRes(siblingURN),
 			Finding{Resource: siblingURN, Severity: SeverityHigh}, SeverityCritical},
 		{"service-wildcard-task-role→unchanged (deferred)", taskRole,
@@ -186,6 +207,58 @@ func TestSeverityFloor_ECSExecTextHeuristic(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The ECR MUTABLE-tags floor is STRUCT-backed (raw ImageTagMutability) AND
+// text-gated. The text gate is what stops the structural URN join from raising
+// the OTHER findings the same repo draws — scan-on-push (already HIGH, so a
+// no-op) and lifecycle (spec MEDIUM, the real over-raise risk). Only the
+// mutability finding may move.
+func TestSeverityFloor_ECRMutableTextGate(t *testing.T) {
+	mutableRepo := []DiscoveredResource{ecrRepoRes(ecrRepoURN, "MUTABLE")}
+
+	t.Run("only the mutability finding is promoted on a MUTABLE repo", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{
+			{RuleID: "LLM-mutab", Title: "ECR repository allows mutable image tags",
+				Description: "ImageTagMutability=MUTABLE lets a release tag be overwritten",
+				Resource:    ecrRepoURN, Severity: SeverityInfo},
+			// Orthogonal MEDIUM lifecycle finding — no "mutab" in its text; must stay.
+			{RuleID: "LLM-lifecycle", Title: "ECR repository has no lifecycle policy",
+				Description: "untagged images accumulate and are never expired",
+				Resource:    ecrRepoURN, Severity: SeverityWarning},
+			// Orthogonal scan-on-push finding (already high) — must stay high, not be lowered.
+			{RuleID: "LLM-scan", Title: "ECR image scanning on push disabled",
+				Description: "scanOnPush=false — vulnerabilities are not detected at push time",
+				Resource:    ecrRepoURN, Severity: SeverityHigh},
+		}, mutableRepo)
+
+		for _, f := range out {
+			switch f.RuleID {
+			case "LLM-mutab":
+				if f.Severity != SeverityHigh {
+					t.Fatalf("mutability finding: want high, got %q", f.Severity)
+				}
+			case "LLM-lifecycle":
+				if f.Severity != SeverityWarning {
+					t.Fatalf("orthogonal lifecycle finding must keep warning, got %q", f.Severity)
+				}
+			case "LLM-scan":
+				if f.Severity != SeverityHigh {
+					t.Fatalf("orthogonal scan-on-push finding must keep high, got %q", f.Severity)
+				}
+			}
+		}
+	})
+
+	t.Run("a non-ECR resource with \"mutable\" in the text is not promoted (structural gate holds)", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{
+			{RuleID: "LLM-x", Title: "S3 object lock allows mutable retention",
+				Resource: bpaBucketURN, Severity: SeverityInfo},
+		}, []DiscoveredResource{{Type: "AWS::S3::Bucket", URN: bpaBucketURN, Inputs: map[string]any{}}})
+		if out[0].Severity != SeverityInfo {
+			t.Fatalf("non-ECR resource must not be promoted by mutability text alone, got %q", out[0].Severity)
+		}
+	})
 }
 
 // T5b — the regression for the resource-keyed over-promotion defect: when a

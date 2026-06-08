@@ -127,6 +127,7 @@ func isSelfIdentityResource(resource, callerARN, userName string) bool {
 //	  - S3 bucket with Block-Public-Access all four controls disabled
 //	high:
 //	  - CloudTrail trail with no SSE-KMS encryption
+//	  - ECR repository permitting MUTABLE image tags (raw CFN ImageTagMutability)
 //	  - ECS Exec enabled with no session logging (TEXT heuristic; no structured
 //	    attribute exists)
 func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Finding {
@@ -158,6 +159,8 @@ func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Fi
 			case isPublicAccessBlockAllDisabled(res) && findingConcernsPublicAccess(f):
 				f.Severity = raiseTo(f.Severity, SeverityCritical)
 			case isCloudTrailWithoutKMS(res) && findingConcernsEncryption(f):
+				f.Severity = raiseTo(f.Severity, SeverityHigh)
+			case isECRMutableTags(res) && findingConcernsImageTagMutability(f):
 				f.Severity = raiseTo(f.Severity, SeverityHigh)
 			}
 		}
@@ -209,6 +212,18 @@ func findingConcernsPublicAccess(f *Finding) bool {
 
 func findingConcernsEncryption(f *Finding) bool {
 	return findingTextHasAny(f, "kms", "encrypt", "cmk", "sse")
+}
+
+// findingConcernsImageTagMutability gates the ECR promotion on
+// mutability-SPECIFIC phrasing — the "mutab" stem covers the finding the LLM
+// actually emits ("ECR repository allows mutable image tags" /
+// "ImageTagMutability=MUTABLE"). The same repo also draws orthogonal
+// scan-on-push and lifecycle findings; neither says "mutab", so the gate leaves
+// them at their own severity. Lifecycle in particular is the real over-raise
+// risk (spec MEDIUM) — the structural isECRMutableTags(res) join alone would
+// reach it; the text gate is what keeps it untouched.
+func findingConcernsImageTagMutability(f *Finding) bool {
+	return findingTextHasAny(f, "mutab")
 }
 
 // findingTextHasAny lower-cases the finding's Title+Description and reports
@@ -304,6 +319,22 @@ func isCloudTrailWithoutKMS(r DiscoveredResource) bool {
 		return false
 	}
 	return strings.TrimSpace(inputsStringCI(r.Inputs, "kmskeyid")) == ""
+}
+
+// isECRMutableTags reports whether an ECR repository permits MUTABLE image tags
+// — the `08 ecr-image-tag-mutability-mutable` case the capstone under-rated to
+// `info` (spec: HIGH; a published release/deploy tag can be overwritten with
+// different image content, undermining supply-chain integrity, provenance, and
+// reproducible deploys). Like isCloudTrailWithoutKMS there is NO cb_describer_*
+// key — the value is the raw CloudFormation `ImageTagMutability` property
+// CloudControl returns inline (and the native ECR lister synthesises verbatim),
+// an SDK enum string ("MUTABLE"/"IMMUTABLE"). An absent value is NOT pinned (the
+// repo wasn't enriched — never infer the gap from a missing key).
+func isECRMutableTags(r DiscoveredResource) bool {
+	if r.Type != "AWS::ECR::Repository" {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(inputsStringCI(r.Inputs, "imagetagmutability")), "MUTABLE")
 }
 
 // inputsStringCI does a case-insensitive lookup of a string-valued raw input,
