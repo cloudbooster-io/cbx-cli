@@ -96,7 +96,7 @@ func TestSeverityFloor_HarnessFPNotPromoted(t *testing.T) {
 	}
 
 	// Step (A) then (B), exactly as RunFromResources wires them.
-	out := applySeverityFloor(dropSelfIdentityFindings(findings, callerARN), resources)
+	out := applySeverityFloor(dropSelfIdentityFindings(findings, callerARN), resources, "")
 
 	if _, present := sevOf(out, harnessURN); present {
 		t.Fatalf("harness self-identity finding must be dropped, but it is present")
@@ -117,7 +117,7 @@ func TestSeverityFloor_Variant02DeterministicCritical(t *testing.T) {
 	for _, in := range []string{SeverityHigh, SeverityHigh, SeverityCritical, SeverityHigh} {
 		out := applySeverityFloor([]Finding{
 			{RuleID: "LLM-x", Title: "wildcard role", Resource: wildcardURN, Severity: in},
-		}, resources)
+		}, resources, "")
 		if out[0].Severity != SeverityCritical {
 			t.Fatalf("wildcard role from %q: want critical, got %q", in, out[0].Severity)
 		}
@@ -176,7 +176,7 @@ func TestSeverityFloor_Pins(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := applySeverityFloor([]Finding{tc.finding}, []DiscoveredResource{tc.res})
+			out := applySeverityFloor([]Finding{tc.finding}, []DiscoveredResource{tc.res}, "")
 			if out[0].Severity != tc.wantSev {
 				t.Fatalf("%s: want %q, got %q", tc.name, tc.wantSev, out[0].Severity)
 			}
@@ -201,7 +201,7 @@ func TestSeverityFloor_ECSExecTextHeuristic(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := applySeverityFloor([]Finding{tc.f}, nil)
+			out := applySeverityFloor([]Finding{tc.f}, nil, "")
 			if out[0].Severity != tc.wantSev {
 				t.Fatalf("%s: want %q, got %q", tc.name, tc.wantSev, out[0].Severity)
 			}
@@ -230,7 +230,7 @@ func TestSeverityFloor_ECRMutableTextGate(t *testing.T) {
 			{RuleID: "LLM-scan", Title: "ECR image scanning on push disabled",
 				Description: "scanOnPush=false — vulnerabilities are not detected at push time",
 				Resource:    ecrRepoURN, Severity: SeverityHigh},
-		}, mutableRepo)
+		}, mutableRepo, "")
 
 		for _, f := range out {
 			switch f.RuleID {
@@ -254,7 +254,7 @@ func TestSeverityFloor_ECRMutableTextGate(t *testing.T) {
 		out := applySeverityFloor([]Finding{
 			{RuleID: "LLM-x", Title: "S3 object lock allows mutable retention",
 				Resource: bpaBucketURN, Severity: SeverityInfo},
-		}, []DiscoveredResource{{Type: "AWS::S3::Bucket", URN: bpaBucketURN, Inputs: map[string]any{}}})
+		}, []DiscoveredResource{{Type: "AWS::S3::Bucket", URN: bpaBucketURN, Inputs: map[string]any{}}}, "")
 		if out[0].Severity != SeverityInfo {
 			t.Fatalf("non-ECR resource must not be promoted by mutability text alone, got %q", out[0].Severity)
 		}
@@ -284,7 +284,7 @@ func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
 			{RuleID: "LLM-hygiene", Title: "S3 server access logging not enabled",
 				Description: "enable access logging to audit requests to this public-facing bucket",
 				Resource:    bpaBucketURN, Severity: SeverityInfo},
-		}, []DiscoveredResource{bpaAllDisabledRes(bpaBucketURN)})
+		}, []DiscoveredResource{bpaAllDisabledRes(bpaBucketURN)}, "")
 
 		for _, f := range out {
 			switch f.RuleID {
@@ -313,7 +313,7 @@ func TestSeverityFloor_OrthogonalFindingNotPromoted(t *testing.T) {
 			{RuleID: "LLM-keyrot", Title: "IAM access key not rotated",
 				Description: "the active access key is older than 365 days",
 				Resource:    siblingURN, Severity: SeverityWarning},
-		}, []DiscoveredResource{adminUserRes(siblingURN)})
+		}, []DiscoveredResource{adminUserRes(siblingURN)}, "")
 
 		for _, f := range out {
 			switch f.RuleID {
@@ -366,7 +366,7 @@ func TestSeverityFloor_AdminGrantWideKeywords(t *testing.T) {
 			out := applySeverityFloor([]Finding{
 				{RuleID: "LLM-new", Title: "IAM policy too broad", Description: tc.desc,
 					Resource: siblingURN, Severity: SeverityHigh},
-			}, []DiscoveredResource{adminRes})
+			}, []DiscoveredResource{adminRes}, "")
 			if out[0].Severity != SeverityCritical {
 				t.Fatalf("%q on admin-equivalent resource: want critical, got %q", tc.desc, out[0].Severity)
 			}
@@ -375,7 +375,7 @@ func TestSeverityFloor_AdminGrantWideKeywords(t *testing.T) {
 			out := applySeverityFloor([]Finding{
 				{RuleID: "LLM-new", Title: "IAM policy too broad", Description: tc.desc,
 					Resource: taskRoleURN, Severity: SeverityHigh},
-			}, []DiscoveredResource{nonAdminRole})
+			}, []DiscoveredResource{nonAdminRole}, "")
 			if out[0].Severity != SeverityHigh {
 				t.Fatalf("%q on NON-admin resource must not promote (structural gate holds): want high, got %q", tc.desc, out[0].Severity)
 			}
@@ -388,7 +388,7 @@ func TestSeverityFloor_AccountScopedSkips(t *testing.T) {
 	resources := []DiscoveredResource{adminUserRes(siblingURN)}
 	out := applySeverityFloor([]Finding{
 		{RuleID: "LLM-acct", Title: "root has no MFA", Resource: accountFinding, Severity: SeverityHigh},
-	}, resources)
+	}, resources, "")
 	if out[0].Severity != SeverityHigh {
 		t.Fatalf("account-scoped finding must be unchanged, got %q", out[0].Severity)
 	}
@@ -415,7 +415,7 @@ func TestSeverityFloor_RecallNeutral(t *testing.T) {
 	if len(dropped) != len(in)-1 {
 		t.Fatalf("drop should remove exactly 1 (the self-identity), got len %d from %d", len(dropped), len(in))
 	}
-	floored := applySeverityFloor(dropped, resources)
+	floored := applySeverityFloor(dropped, resources, "")
 	if len(floored) != len(dropped) {
 		t.Fatalf("floor must not add/remove findings: got %d, want %d", len(floored), len(dropped))
 	}
@@ -494,4 +494,267 @@ func TestDropSelfIdentityFindings(t *testing.T) {
 			t.Errorf("a different user whose name merely ends with the caller name must NOT be dropped")
 		}
 	})
+}
+
+// ===========================================================================
+// §4.2 structural HIGH floors — RDS/EBS at-rest encryption, IMDSv1, cross-account
+// trust without ExternalId. Pure-function table tests (no AWS, no LLM), each with
+// the absent-default / over-raise / raise-only guards the FP discipline requires.
+// ===========================================================================
+
+const (
+	rdsURN       = "aws://us-east-1/AWS::RDS::DBInstance/cbx-db"
+	ebsURN       = "aws://us-east-1/AWS::EC2::Volume/vol-0abc"
+	ec2URN       = "aws://us-east-1/AWS::EC2::Instance/i-0abc"
+	trustRoleURN = "aws://global/AWS::IAM::Role/cbx-cross-acct-role"
+	auditedAcct  = "111111111111"
+)
+
+func rdsInstanceRes(urn string, storageEncrypted any) DiscoveredResource {
+	in := map[string]any{}
+	if storageEncrypted != nil {
+		in["cb_describer_storage_encrypted"] = storageEncrypted
+	}
+	return DiscoveredResource{Type: "AWS::RDS::DBInstance", URN: urn, ID: lastSeg(urn), Inputs: in}
+}
+
+func ebsVolRes(urn string, encrypted, attached any) DiscoveredResource {
+	in := map[string]any{}
+	if encrypted != nil {
+		in["Encrypted"] = encrypted
+	}
+	if attached != nil {
+		in["cb_describer_is_attached"] = attached
+	}
+	return DiscoveredResource{Type: "AWS::EC2::Volume", URN: urn, ID: lastSeg(urn), Inputs: in}
+}
+
+func ec2InstanceRes(urn string, metadataOptions map[string]any) DiscoveredResource {
+	in := map[string]any{}
+	if metadataOptions != nil {
+		in["MetadataOptions"] = metadataOptions
+	}
+	return DiscoveredResource{Type: "AWS::EC2::Instance", URN: urn, ID: lastSeg(urn), Inputs: in}
+}
+
+func roleWithTrust(urn, trustJSON string) DiscoveredResource {
+	in := map[string]any{}
+	if trustJSON != "" {
+		in["cb_describer_assume_role_policy_raw"] = trustJSON
+	}
+	return DiscoveredResource{Type: "AWS::IAM::Role", URN: urn, ID: lastSeg(urn), Inputs: in}
+}
+
+// Rule 1 — RDS storage / attached-EBS at-rest encryption off → HIGH.
+func TestSeverityFloor_EncryptionAtRest(t *testing.T) {
+	encFinding := func(urn, sev string) Finding {
+		return Finding{RuleID: "LLM-enc", Title: "storage unencrypted at rest",
+			Description: "the volume is not encrypted", Resource: urn, Severity: sev}
+	}
+	rdsCluster := rdsInstanceRes(rdsURN, false)
+	rdsCluster.Type = "AWS::RDS::DBCluster"
+
+	cases := []struct {
+		name    string
+		res     DiscoveredResource
+		finding Finding
+		wantSev string
+	}{
+		{"rds-instance-unencrypted→high", rdsInstanceRes(rdsURN, false), encFinding(rdsURN, SeverityWarning), SeverityHigh},
+		{"rds-cluster-unencrypted→high", rdsCluster, encFinding(rdsURN, SeverityWarning), SeverityHigh},
+		{"rds-encrypted→unchanged", rdsInstanceRes(rdsURN, true), encFinding(rdsURN, SeverityWarning), SeverityWarning},
+		{"rds-encryption-absent→unchanged (no infer from missing key)", rdsInstanceRes(rdsURN, nil), encFinding(rdsURN, SeverityWarning), SeverityWarning},
+		{"ebs-attached-unencrypted→high", ebsVolRes(ebsURN, false, true), encFinding(ebsURN, SeverityInfo), SeverityHigh},
+		{"ebs-unattached-unencrypted→unchanged (cost/hygiene, not this HIGH)", ebsVolRes(ebsURN, false, false), encFinding(ebsURN, SeverityInfo), SeverityInfo},
+		{"ebs-encrypted→unchanged", ebsVolRes(ebsURN, true, true), encFinding(ebsURN, SeverityInfo), SeverityInfo},
+		{"ebs-encrypted-absent→unchanged (no infer; unconditional describer key would default false)", ebsVolRes(ebsURN, nil, true), encFinding(ebsURN, SeverityInfo), SeverityInfo},
+		{"raise-only: already-critical encryption finding not lowered", rdsInstanceRes(rdsURN, false), encFinding(rdsURN, SeverityCritical), SeverityCritical},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := applySeverityFloor([]Finding{tc.finding}, []DiscoveredResource{tc.res}, auditedAcct)
+			if out[0].Severity != tc.wantSev {
+				t.Fatalf("%s: want %q, got %q", tc.name, tc.wantSev, out[0].Severity)
+			}
+		})
+	}
+}
+
+// Rule 1 over-raise guard — only the encryption finding on an unencrypted RDS is
+// raised; an orthogonal backup-retention finding sharing the URN keeps its sev.
+func TestSeverityFloor_EncryptionOverRaiseGuard(t *testing.T) {
+	out := applySeverityFloor([]Finding{
+		{RuleID: "LLM-enc", Title: "RDS storage unencrypted at rest",
+			Description: "enable KMS storage encryption", Resource: rdsURN, Severity: SeverityWarning},
+		{RuleID: "LLM-backup", Title: "RDS automated backup retention too low",
+			Description: "retention is 1 day, below the workload RPO", Resource: rdsURN, Severity: SeverityWarning},
+	}, []DiscoveredResource{rdsInstanceRes(rdsURN, false)}, auditedAcct)
+	for _, f := range out {
+		switch f.RuleID {
+		case "LLM-enc":
+			if f.Severity != SeverityHigh {
+				t.Fatalf("encryption finding: want high, got %q", f.Severity)
+			}
+		case "LLM-backup":
+			if f.Severity != SeverityWarning {
+				t.Fatalf("orthogonal backup finding must keep warning, got %q", f.Severity)
+			}
+		}
+	}
+}
+
+// Rule 2 — EC2 instance still allowing IMDSv1 → HIGH.
+func TestSeverityFloor_IMDSv1(t *testing.T) {
+	imdsFinding := func(urn, sev string) Finding {
+		return Finding{RuleID: "LLM-imds", Title: "EC2 instance allows IMDSv1",
+			Description: "HttpTokens is optional; IMDSv2 is not enforced", Resource: urn, Severity: sev}
+	}
+	cases := []struct {
+		name    string
+		res     DiscoveredResource
+		finding Finding
+		wantSev string
+	}{
+		{"imds-optional→high", ec2InstanceRes(ec2URN, map[string]any{"HttpTokens": "optional"}), imdsFinding(ec2URN, SeverityWarning), SeverityHigh},
+		{"options-present-tokens-unset→high (AWS default is optional)", ec2InstanceRes(ec2URN, map[string]any{"HttpEndpoint": "enabled"}), imdsFinding(ec2URN, SeverityWarning), SeverityHigh},
+		{"imds-required→unchanged", ec2InstanceRes(ec2URN, map[string]any{"HttpTokens": "required"}), imdsFinding(ec2URN, SeverityWarning), SeverityWarning},
+		{"metadata-options-absent→unchanged (no infer from missing key)", ec2InstanceRes(ec2URN, nil), imdsFinding(ec2URN, SeverityWarning), SeverityWarning},
+		{"raise-only: already-critical not lowered", ec2InstanceRes(ec2URN, map[string]any{"HttpTokens": "optional"}), imdsFinding(ec2URN, SeverityCritical), SeverityCritical},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := applySeverityFloor([]Finding{tc.finding}, []DiscoveredResource{tc.res}, auditedAcct)
+			if out[0].Severity != tc.wantSev {
+				t.Fatalf("%s: want %q, got %q", tc.name, tc.wantSev, out[0].Severity)
+			}
+		})
+	}
+}
+
+// Rule 2 over-raise guard — an IMDSv1-allowing instance also draws an orthogonal
+// public-IP finding (no IMDS/metadata phrasing); only the IMDS finding is raised.
+func TestSeverityFloor_IMDSv1OverRaiseGuard(t *testing.T) {
+	out := applySeverityFloor([]Finding{
+		{RuleID: "LLM-imds", Title: "Instance Metadata Service v1 still enabled",
+			Description: "set HttpTokens=required to enforce IMDSv2", Resource: ec2URN, Severity: SeverityWarning},
+		{RuleID: "LLM-pubip", Title: "EC2 instance has a public IP",
+			Description: "the instance is directly addressable from the internet", Resource: ec2URN, Severity: SeverityInfo},
+	}, []DiscoveredResource{ec2InstanceRes(ec2URN, map[string]any{"HttpTokens": "optional"})}, auditedAcct)
+	for _, f := range out {
+		switch f.RuleID {
+		case "LLM-imds":
+			if f.Severity != SeverityHigh {
+				t.Fatalf("imds finding: want high, got %q", f.Severity)
+			}
+		case "LLM-pubip":
+			if f.Severity != SeverityInfo {
+				t.Fatalf("orthogonal public-IP finding must keep info, got %q", f.Severity)
+			}
+		}
+	}
+}
+
+// Rule 4 — IAM role cross-account trust with no sts:ExternalId → HIGH.
+func TestSeverityFloor_CrossAccountTrustNoExternalID(t *testing.T) {
+	const (
+		crossRoot = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
+		sameRoot  = `{"Statement":{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::111111111111:root"},"Action":"sts:AssumeRole"}}`
+		withExtID = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"sts:ExternalId":"shared-secret"}}}]}`
+		svc       = `{"Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`
+		wildcard  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}`
+		bareAcct  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"222222222222"},"Action":"sts:AssumeRole"}]}`
+		mixedList = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam::111111111111:root","arn:aws:iam::222222222222:role/Other"]},"Action":"sts:AssumeRole"}]}`
+		denyCross = `{"Statement":[{"Effect":"Deny","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
+	)
+	trustFinding := func(sev string) Finding {
+		return Finding{RuleID: "LLM-trust", Title: "IAM role allows cross-account AssumeRole without ExternalId",
+			Description: "the trust policy grants assume-role to another account with no external id", Resource: trustRoleURN, Severity: sev}
+	}
+	cases := []struct {
+		name    string
+		trust   string
+		audited string
+		wantSev string
+	}{
+		{"cross-account-root→high", crossRoot, auditedAcct, SeverityHigh},
+		{"same-account→unchanged", sameRoot, auditedAcct, SeverityWarning},
+		{"cross-account-with-externalid→unchanged", withExtID, auditedAcct, SeverityWarning},
+		{"service-principal→unchanged (not an AWS principal)", svc, auditedAcct, SeverityWarning},
+		{"wildcard-principal→high", wildcard, auditedAcct, SeverityHigh},
+		{"bare-account-id→high", bareAcct, auditedAcct, SeverityHigh},
+		{"mixed-list-one-cross-account→high", mixedList, auditedAcct, SeverityHigh},
+		{"deny-statement→unchanged", denyCross, auditedAcct, SeverityWarning},
+		{"empty-audited-account→unchanged (pin disabled, no guess)", crossRoot, "", SeverityWarning},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := applySeverityFloor([]Finding{trustFinding(SeverityWarning)},
+				[]DiscoveredResource{roleWithTrust(trustRoleURN, tc.trust)}, tc.audited)
+			if out[0].Severity != tc.wantSev {
+				t.Fatalf("%s: want %q, got %q", tc.name, tc.wantSev, out[0].Severity)
+			}
+		})
+	}
+
+	t.Run("trust-policy-absent→unchanged (no infer from missing key)", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{trustFinding(SeverityWarning)},
+			[]DiscoveredResource{roleWithTrust(trustRoleURN, "")}, auditedAcct)
+		if out[0].Severity != SeverityWarning {
+			t.Fatalf("absent trust policy must not fire, got %q", out[0].Severity)
+		}
+	})
+
+	t.Run("raise-only: already-critical not lowered", func(t *testing.T) {
+		out := applySeverityFloor([]Finding{trustFinding(SeverityCritical)},
+			[]DiscoveredResource{roleWithTrust(trustRoleURN, crossRoot)}, auditedAcct)
+		if out[0].Severity != SeverityCritical {
+			t.Fatalf("raise-only: want critical, got %q", out[0].Severity)
+		}
+	})
+}
+
+// Rule 4 over-raise guard — a cross-account-trust role also draws an orthogonal
+// unused-role finding (no trust/external-id/assume phrasing); only the trust
+// finding is raised.
+func TestSeverityFloor_CrossAccountTrustOverRaiseGuard(t *testing.T) {
+	const crossRoot = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
+	out := applySeverityFloor([]Finding{
+		{RuleID: "LLM-trust", Title: "Role trusts another account with no ExternalId",
+			Description: "add an sts:ExternalId condition to the trust policy", Resource: trustRoleURN, Severity: SeverityWarning},
+		{RuleID: "LLM-unused", Title: "IAM role not used in 90 days",
+			Description: "the role has no recent activity and may be removable", Resource: trustRoleURN, Severity: SeverityInfo},
+	}, []DiscoveredResource{roleWithTrust(trustRoleURN, crossRoot)}, auditedAcct)
+	for _, f := range out {
+		switch f.RuleID {
+		case "LLM-trust":
+			if f.Severity != SeverityHigh {
+				t.Fatalf("trust finding: want high, got %q", f.Severity)
+			}
+		case "LLM-unused":
+			if f.Severity != SeverityInfo {
+				t.Fatalf("orthogonal unused-role finding must keep info, got %q", f.Severity)
+			}
+		}
+	}
+}
+
+// Ordering guard — a role that is BOTH admin-equivalent AND a cross-account trust
+// lands its admin-grant finding at critical (the admin case is evaluated before
+// the cross-account HIGH case), never capped at high.
+func TestSeverityFloor_AdminCrossAccountRoleGetsCritical(t *testing.T) {
+	const crossRoot = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
+	role := DiscoveredResource{
+		Type: "AWS::IAM::Role", URN: trustRoleURN, ID: lastSeg(trustRoleURN),
+		Inputs: map[string]any{
+			"cb_describer_admin_managed_policy_attached": true,
+			"cb_describer_assume_role_policy_raw":        crossRoot,
+		},
+	}
+	out := applySeverityFloor([]Finding{
+		{RuleID: "LLM-admin", Title: "Role has AdministratorAccess and full control",
+			Description: "the role grants unrestricted admin access to the account", Resource: trustRoleURN, Severity: SeverityHigh},
+	}, []DiscoveredResource{role}, auditedAcct)
+	if out[0].Severity != SeverityCritical {
+		t.Fatalf("admin+cross-account role: want critical (admin wins), got %q", out[0].Severity)
+	}
 }

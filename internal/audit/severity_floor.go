@@ -1,6 +1,9 @@
 package audit
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // This file implements the two-step, deterministic severity post-process that
 // runs over the final LLM findings of an `cbx audit aws` pass, just before
@@ -130,7 +133,15 @@ func isSelfIdentityResource(resource, callerARN, userName string) bool {
 //	  - ECR repository permitting MUTABLE image tags (raw CFN ImageTagMutability)
 //	  - ECS Exec enabled with no session logging (TEXT heuristic; no structured
 //	    attribute exists)
-func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Finding {
+//	  - RDS storage / attached EBS volume unencrypted at rest (§4.2)
+//	  - EC2 instance still allowing IMDSv1 (§4.2)
+//	  - IAM role with cross-account trust and no sts:ExternalId condition (§4.2)
+//
+// auditedAccount is the AWS account the audit ran as (AWSAuditContext.AccountID,
+// a single-account audit). It is used ONLY by the cross-account-trust pin to tell
+// a same-account principal from a cross-account one; an empty value disables that
+// one pin (we never guess "cross-account" without knowing our own account).
+func applySeverityFloor(findings []Finding, resources []DiscoveredResource, auditedAccount string) []Finding {
 	if len(findings) == 0 {
 		return findings
 	}
@@ -161,6 +172,19 @@ func applySeverityFloor(findings []Finding, resources []DiscoveredResource) []Fi
 			case isCloudTrailWithoutKMS(res) && findingConcernsEncryption(f):
 				f.Severity = raiseTo(f.Severity, SeverityHigh)
 			case isECRMutableTags(res) && findingConcernsImageTagMutability(f):
+				f.Severity = raiseTo(f.Severity, SeverityHigh)
+			// §4.2 structural HIGH floors. Each is resource-type-scoped and
+			// mutually exclusive with the cases above by type — except the IAM
+			// role, which the full-admin CRITICAL case handles FIRST, so a role
+			// that is BOTH admin-equivalent AND a cross-account trust lands
+			// critical (the admin case wins), never downgraded to high here.
+			case isRDSStorageUnencrypted(res) && findingConcernsEncryption(f):
+				f.Severity = raiseTo(f.Severity, SeverityHigh)
+			case isEBSAttachedUnencrypted(res) && findingConcernsEncryption(f):
+				f.Severity = raiseTo(f.Severity, SeverityHigh)
+			case isIMDSv1Allowed(res) && findingConcernsIMDSv1(f):
+				f.Severity = raiseTo(f.Severity, SeverityHigh)
+			case isCrossAccountTrustWithoutExternalID(res, auditedAccount) && findingConcernsCrossAccountTrust(f):
 				f.Severity = raiseTo(f.Severity, SeverityHigh)
 			}
 		}
@@ -363,4 +387,291 @@ func isECSExecWithoutLogging(f *Finding) bool {
 		return false
 	}
 	return strings.Contains(text, "ecs") || strings.Contains(text, "session") || strings.Contains(text, "ssm")
+}
+
+// ===========================================================================
+// §4.2 structural HIGH floors (RDS/EBS at-rest encryption, IMDSv1, cross-account
+// trust). Each follows the same shape as the b1 pins above: a drift-free,
+// type-scoped structural predicate over cb_describer_* / raw CFN fields, ANDed in
+// applySeverityFloor with a finding-text gate so only the finding REPORTING the
+// condition is raised — never an orthogonal finding sharing the resource URN.
+// All three deliberately treat an ABSENT signal as "not read", never as the
+// finding (no infer-from-missing-key), mirroring the RDS describer's documented
+// "false != not-read" philosophy.
+// ===========================================================================
+
+// findingConcernsEncryption already gates the RDS / EBS at-rest pins (it keys on
+// "kms"/"encrypt"/"cmk"/"sse", which the unencrypted-storage finding always
+// carries); the two new gates below pair with the IMDSv1 and cross-account pins.
+
+// findingConcernsIMDSv1 gates the IMDSv1 pin on instance-metadata-service
+// phrasing. Permissive by design (it only RESTRICTS a raise-only promotion that
+// the structural isIMDSv1Allowed already proved), but tight enough not to reach
+// orthogonal EC2 findings: it deliberately avoids the bare token "metadata".
+func findingConcernsIMDSv1(f *Finding) bool {
+	return findingTextHasAny(f, "imds", "instance metadata", "metadata service", "http tokens", "httptokens")
+}
+
+// findingConcernsCrossAccountTrust gates the cross-account-trust pin on
+// trust/assume-role/external-id phrasing — not on bare "role", so an orthogonal
+// finding on the same role (unused role, key rotation, …) is left untouched.
+func findingConcernsCrossAccountTrust(f *Finding) bool {
+	return findingTextHasAny(f,
+		"externalid", "external id", "cross-account", "cross account",
+		"assume role", "assumerole", "trust policy", "trust relationship", "confused deputy")
+}
+
+// isRDSStorageUnencrypted reports whether an RDS instance/cluster has storage
+// encryption-at-rest explicitly disabled. The RDS describer lifts StorageEncrypted
+// into cb_describer_storage_encrypted ONLY when CloudControl returned the field
+// (copyBool leaves it absent otherwise — describer_rds.go deliberately keeps
+// "false" distinct from "not read"), so a present-and-false read is a genuine
+// unencrypted-at-rest signal, never a not-enriched default.
+func isRDSStorageUnencrypted(r DiscoveredResource) bool {
+	if !strings.HasPrefix(r.Type, "AWS::RDS::") {
+		return false
+	}
+	enc, ok := r.Inputs["cb_describer_storage_encrypted"].(bool)
+	return ok && !enc
+}
+
+// isEBSAttachedUnencrypted reports whether an ATTACHED EBS volume is unencrypted
+// at rest. Unlike RDS, the EBS describer sets cb_describer_encrypted
+// unconditionally (an absent raw Encrypted defaults it to false), so this gates
+// on the RAW Encrypted being explicitly present-and-false — restoring the RDS
+// "absent != false" guarantee and avoiding a not-read false positive. Scoped to
+// attached volumes: an unattached unencrypted volume is the cost/hygiene item the
+// prompt already covers separately, not this HIGH data-confidentiality finding.
+func isEBSAttachedUnencrypted(r DiscoveredResource) bool {
+	if r.Type != "AWS::EC2::Volume" {
+		return false
+	}
+	enc, ok := r.Inputs["Encrypted"].(bool)
+	if !ok || enc {
+		return false
+	}
+	attached, _ := r.Inputs["cb_describer_is_attached"].(bool)
+	return attached
+}
+
+// isIMDSv1Allowed reports whether an EC2 instance still answers unauthenticated
+// IMDSv1 requests: MetadataOptions present AND HttpTokens != "required". The
+// describer's cb_describer_imdsv2_required key collapses "MetadataOptions absent"
+// and "HttpTokens optional" both to false, so this reads the raw nested
+// MetadataOptions directly and REQUIRES it present — an instance CloudControl
+// didn't enrich with metadata options is "not read", not "IMDSv1 allowed", and
+// must not fire. (When MetadataOptions IS present, an unset/empty HttpTokens means
+// AWS's default of "optional", i.e. IMDSv1 still accepted — correctly flagged.)
+func isIMDSv1Allowed(r DiscoveredResource) bool {
+	if r.Type != "AWS::EC2::Instance" {
+		return false
+	}
+	opts, ok := r.Inputs["MetadataOptions"].(map[string]any)
+	if !ok {
+		return false
+	}
+	tokens, _ := opts["HttpTokens"].(string)
+	return tokens != "required"
+}
+
+// isCrossAccountTrustWithoutExternalID reports whether an IAM role's trust
+// (assume-role) policy Allows a DIFFERENT-account AWS principal — or the wildcard
+// "*" — to assume it with no sts:ExternalId condition: the confused-deputy
+// exposure. auditedAccount is the account the audit ran as (single-account); an
+// empty value disables the pin (we cannot tell same- from cross-account without
+// it). It reads cb_describer_assume_role_policy_raw (the decoded trust policy the
+// IAM describer emits) and is conservative throughout — a malformed document, an
+// unparseable principal account, a service principal, a same-account principal,
+// or a present sts:ExternalId condition all leave the finding untouched.
+func isCrossAccountTrustWithoutExternalID(r DiscoveredResource, auditedAccount string) bool {
+	if r.Type != "AWS::IAM::Role" {
+		return false
+	}
+	auditedAccount = strings.TrimSpace(auditedAccount)
+	if auditedAccount == "" {
+		return false
+	}
+	raw, ok := r.Inputs["cb_describer_assume_role_policy_raw"].(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	return trustPolicyExposesCrossAccount(raw, auditedAccount)
+}
+
+// trustPolicyExposesCrossAccount parses a decoded JSON IAM trust policy and
+// reports whether any Allow statement grants an sts:AssumeRole-class action to a
+// cross-account AWS principal (account != auditedAccount, or the wildcard "*")
+// with no sts:ExternalId condition.
+func trustPolicyExposesCrossAccount(raw, auditedAccount string) bool {
+	var doc struct {
+		Statement json.RawMessage `json:"Statement"`
+	}
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return false
+	}
+	for _, st := range decodePolicyStatements(doc.Statement) {
+		if !strings.EqualFold(strings.TrimSpace(st.Effect), "Allow") {
+			continue
+		}
+		if !actionsIncludeAssumeRole(st.Action) {
+			continue
+		}
+		if conditionHasExternalID(st.Condition) {
+			continue
+		}
+		for _, p := range awsPrincipalARNs(st.Principal) {
+			if principalIsCrossAccount(p, auditedAccount) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// policyStatement is the narrow slice of an IAM statement the trust parse reads.
+type policyStatement struct {
+	Effect    string          `json:"Effect"`
+	Action    json.RawMessage `json:"Action"`
+	Principal json.RawMessage `json:"Principal"`
+	Condition json.RawMessage `json:"Condition"`
+}
+
+// decodePolicyStatements tolerates Statement being a single object OR an array.
+func decodePolicyStatements(raw json.RawMessage) []policyStatement {
+	if len(raw) == 0 {
+		return nil
+	}
+	var arr []policyStatement
+	if json.Unmarshal(raw, &arr) == nil {
+		return arr
+	}
+	var one policyStatement
+	if json.Unmarshal(raw, &one) == nil {
+		return []policyStatement{one}
+	}
+	return nil
+}
+
+// actionsIncludeAssumeRole reports whether the statement's Action (string or
+// []string) includes an sts:AssumeRole-class action or a wildcard. A trust
+// policy's action is always sts:AssumeRole*, but gating defends against a
+// malformed document that an attacker can't exploit anyway.
+func actionsIncludeAssumeRole(raw json.RawMessage) bool {
+	for _, a := range stringOrStringSlice(raw) {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a == "*" || a == "sts:*" || strings.HasPrefix(a, "sts:assumerole") {
+			return true
+		}
+	}
+	return false
+}
+
+// awsPrincipalARNs extracts the AWS-principal values from a statement's
+// Principal. It returns entries ONLY for the "AWS" key (string or []string) and
+// for a bare "*". Principal.Service / Principal.Federated yield nothing — they
+// are not account principals and must never be treated as cross-account.
+func awsPrincipalARNs(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	// Principal: "*"  (any principal, any account).
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if strings.TrimSpace(s) == "*" {
+			return []string{"*"}
+		}
+		return nil
+	}
+	// Principal: {"AWS": "...", "Service": "...", ...}.
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) == nil {
+		if awsRaw, ok := obj["AWS"]; ok {
+			return stringOrStringSlice(awsRaw)
+		}
+	}
+	return nil
+}
+
+// principalIsCrossAccount reports whether an AWS-principal value targets an
+// account other than auditedAccount. "*" is cross-account by definition (anyone);
+// otherwise the account is extracted from a bare 12-digit id or an ARN's account
+// field, and an unparseable principal is conservatively NOT cross-account.
+func principalIsCrossAccount(principal, auditedAccount string) bool {
+	principal = strings.TrimSpace(principal)
+	if principal == "*" {
+		return true
+	}
+	acct := accountIDFromPrincipal(principal)
+	return acct != "" && acct != auditedAccount
+}
+
+// accountIDFromPrincipal pulls the 12-digit account id out of a principal value:
+// a bare account id, or an ARN (arn:aws:iam::<acct>:root|user/…|role/…). Returns
+// "" when no account can be determined.
+func accountIDFromPrincipal(p string) string {
+	p = strings.TrimSpace(p)
+	if len(p) == 12 && isAllDigits(p) {
+		return p
+	}
+	if strings.HasPrefix(p, "arn:") {
+		if parts := strings.Split(p, ":"); len(parts) >= 5 {
+			return parts[4]
+		}
+	}
+	return ""
+}
+
+// conditionHasExternalID reports whether a statement's Condition keys on
+// sts:ExternalId under ANY condition operator (StringEquals, StringLike, …),
+// matched case-insensitively. Its presence means the trust requires a shared
+// secret and is therefore NOT the confused-deputy exposure this floor targets.
+func conditionHasExternalID(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var byOp map[string]json.RawMessage
+	if json.Unmarshal(raw, &byOp) != nil {
+		return false
+	}
+	for _, opRaw := range byOp {
+		var kv map[string]json.RawMessage
+		if json.Unmarshal(opRaw, &kv) != nil {
+			continue
+		}
+		for k := range kv {
+			if strings.EqualFold(strings.TrimSpace(k), "sts:ExternalId") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// stringOrStringSlice unmarshals a JSON value that may be a single string or an
+// array of strings into a []string (nil for neither).
+func stringOrStringSlice(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return []string{one}
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil {
+		return many
+	}
+	return nil
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

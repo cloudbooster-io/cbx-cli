@@ -367,7 +367,7 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 			findings = append(findings, awsCtx.DiscoveryIntegrityFindings...)
 		}
 		findings = dropSelfIdentityFindings(findings, awsCtx.CallerARN)
-		findings = applySeverityFloor(findings, resources)
+		findings = applySeverityFloor(findings, resources, awsCtx.AccountID)
 	}
 
 	components := group.Group(resources, group.Options{
