@@ -46,6 +46,43 @@ func DiscoveryIntegrityFinding(cfnType, region string, count int) Finding {
 	}
 }
 
+// ExitWithSeverityStrict maps findings to a process exit code like
+// ExitWithSeverity, but treats discovery-integrity warnings (RuleID ==
+// DiscoveryIntegrityRuleID) as ADVISORY unless strict is set.
+//
+// The discovery-integrity probe reads two correlated, flaky CloudControl
+// ListResources calls; a transient silent-empty on the first read fires the
+// warning even when nothing is actually wrong (see integrity.go). So by default
+// (strict == false) those findings are excluded from the exit-code calculation —
+// a flaky re-list no longer reddens an otherwise-clean audit. Any non-integrity
+// finding (a real warning/high/critical) still gates exactly as before, so a
+// genuine problem sitting alongside a flaky probe continues to exit non-zero.
+//
+// With strict == true the integrity warnings are included and the result is
+// byte-identical to ExitWithSeverity — restoring the gating for callers (CI) that
+// want a possibly-incomplete discovery to fail the run. Wired to the `--strict`
+// flag on `cbx audit aws`.
+//
+// The filter discriminates on the stable RuleID, NOT on severity, so it is
+// robust even if applySeverityFloor ever promotes an integrity finding above
+// warning. It builds a COPY for the exit calculation only and must never mutate
+// or drop findings from the caller's slice: the integrity finding has to survive
+// into result.Findings so the rendered report and the `discovery_integrity` JSON
+// key keep showing it — only the exit code looks past it.
+func ExitWithSeverityStrict(findings []Finding, strict bool) error {
+	if strict {
+		return ExitWithSeverity(findings)
+	}
+	gating := make([]Finding, 0, len(findings))
+	for _, f := range findings {
+		if f.RuleID == DiscoveryIntegrityRuleID {
+			continue
+		}
+		gating = append(gating, f)
+	}
+	return ExitWithSeverity(gating)
+}
+
 // cfnServiceLabel pulls the service token out of a CFN type name
 // ("AWS::S3::Bucket" → "S3"), falling back to the whole string for
 // non-standard shapes.

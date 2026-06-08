@@ -35,6 +35,7 @@ func newAuditAWSCmd() *cobra.Command {
 		llmMaxCost      float64
 		dryRun          bool
 		noTUI           bool
+		strict          bool
 	)
 
 	cmd := &cobra.Command{
@@ -327,7 +328,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				// JSON mode must still signal severity/partial-failure via the
 				// exit code, exactly like the human path below — otherwise
 				// `cbx audit aws --json` always exits 0 even on critical findings.
-				if severityErr := audit.ExitWithSeverity(result.Findings); severityErr != nil {
+				if severityErr := audit.ExitWithSeverityStrict(result.Findings, strict); severityErr != nil {
 					return severityErr
 				}
 				if runErr != nil {
@@ -377,7 +378,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				}
 			}
 
-			if severityErr := audit.ExitWithSeverity(result.Findings); severityErr != nil {
+			if severityErr := audit.ExitWithSeverityStrict(result.Findings, strict); severityErr != nil {
 				return severityErr
 			}
 			if runErr != nil {
@@ -405,6 +406,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a warning finding is emitted when claude's reported total_cost_usd exceeds the cap. 0 disables the cap")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
+	cmd.Flags().BoolVar(&strict, "strict", false, "Gate the exit code on discovery-integrity warnings too. By default they're advisory — a flaky CloudControl re-list won't fail an otherwise-clean audit; --strict restores the non-zero exit so CI fails on a possibly-incomplete discovery.")
 
 	return cmd
 }
