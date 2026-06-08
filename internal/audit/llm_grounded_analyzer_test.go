@@ -263,6 +263,27 @@ func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
 	}
 }
 
+// The §4.2 structural HIGH rules each pair a deterministic floor with a prompt
+// detection bullet: applySeverityFloor only RAISES findings the LLM emits, so
+// without the bullet the rule is a silent no-op. Guard that the key phrases the
+// floor's text gates expect — and the cb_describer_* keys / raw fields the
+// bullets reference — survive in the grounded prompt.
+func TestBuildGroundedPrompt_MentionsStructural42Rules(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	for _, want := range []string{
+		"cb_describer_storage_encrypted",
+		"unencrypted at rest",
+		"MetadataOptions.HttpTokens",
+		"IMDSv1",
+		"cb_describer_assume_role_policy_raw",
+		"ExternalId",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing §4.2 detection phrase %q (the paired floor would be a silent no-op)", want)
+		}
+	}
+}
+
 func TestNewLLMAnalyzer_CBKnowledgeRequiresClaudeCode(t *testing.T) {
 	_, err := newLLMAnalyzer(Options{LLMProvider: "claude", CBKnowledge: true}, IaCTypeTerraform)
 	if err == nil || !strings.Contains(err.Error(), "--cb-knowledge requires --llm claude-code") {
