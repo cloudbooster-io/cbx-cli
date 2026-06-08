@@ -182,11 +182,20 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// --- regional ops / observability ---
 	{Type: "AWS::Logs::LogGroup"},
 	{Type: "AWS::CloudWatch::Alarm"},
-	{Type: "AWS::SecretsManager::Secret"},
-	// RotationSchedule is a sibling CFN resource — a secret with no
-	// matching RotationSchedule entry has no rotation configured. The
-	// LLM cross-references the two lists rather than us standing up a
-	// separate describer just for rotation state.
+	// CloudControl's audit-time list silently drops the secret right after
+	// create (the same silent-empty miss the workload fallbacks cover, with
+	// permission_errors=[]), taking the secret-no-rotation rule's only input
+	// with it. secretsmanager:ListSecrets is the fallback-on-empty enumeration;
+	// it carries RotationEnabled inline (CloudControl's Secret payload does not),
+	// so a fallback-restored secret is self-describing for rotation and a rotated
+	// one can't false-fire even with its RotationSchedule sibling absent. See
+	// lister_secretsmanager_native.go.
+	{Type: "AWS::SecretsManager::Secret", FallbackLister: listSecretsManagerSecretsNative},
+	// RotationSchedule is a sibling CFN resource — for a CloudControl-listed
+	// secret (whose payload omits RotationEnabled) the LLM cross-references the
+	// two lists rather than us standing up a separate describer just for rotation
+	// state. The ListSecrets fallback above makes its own restored secrets carry
+	// RotationEnabled directly, so no RotationSchedule fallback is needed.
 	{Type: "AWS::SecretsManager::RotationSchedule"},
 	{Type: "AWS::KMS::Key"},
 	// Aliases are a sibling CFN resource; cross-referenced by
