@@ -38,7 +38,13 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	{Type: "AWS::IAM::Group", Global: true},
 
 	// --- global CDN / DNS ---
-	{Type: "AWS::CloudFront::Distribution", Global: true},
+	// CloudFront has NO describer — its findings are LLM-emitted straight off the
+	// raw DistributionConfig — so a silent-empty CloudControl list drops the whole
+	// distribution and every CloudFront finding with it (no describer re-fetches).
+	// cloudfront:ListDistributions (+ GetDistributionConfig for Logging) is the
+	// authoritative fallback-on-empty; the summary carries the WAF / cert-TLS /
+	// origin-endpoint / viewer-protocol fields inline. See lister_cloudfront_native.go.
+	{Type: "AWS::CloudFront::Distribution", Global: true, FallbackLister: listCloudFrontDistributionsNative},
 	{Type: "AWS::Route53::HostedZone", Global: true},
 
 	// --- regional storage ---

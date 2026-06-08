@@ -35,6 +35,8 @@ github.com/aws/aws-sdk-go-v2/service/backup v1.57.4 h1:rniNcJ9IADUE8bsAOvF0lw589
 github.com/aws/aws-sdk-go-v2/service/backup v1.57.4/go.mod h1:S88PiBdjx86jLQggz2qi0xD2kmpAL4zgiXxWf+lQctc=
 github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0 h1:2Ov1YcFJZktFa5ah08gyktZjEjkbLA0g0sbG6ZxV/G4=
 github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0/go.mod h1:qdsQO5+urrlkcsolFWgiNQ0lpFB0UCQbTKK9j79b1Wg=
+github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1 h1:UXPRXa3HLrJolDM098DfXgLJrbB086+Zip3M+4Dy1WI=
+github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1/go.mod h1:Uu2kNhTTM1ZrJcIL3FDLlzaHwOZUugiMmL8K8ibBbvo=
 github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0 h1:2f7JaE5VlsvVEinZD54PVQFr0L/69PtQwWU4DlYwdvA=
 github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0/go.mod h1:aMaXuPqUoImO2rXKCxmQIJvTAYZ1V3cXqJu7N1jqby8=
 github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.8 h1:xM9A74gfqalNsSA7n703Ci2MjlFb0SGbBh6XPqLTcFM=
