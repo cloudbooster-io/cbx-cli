@@ -135,7 +135,8 @@ func isSelfIdentityResource(resource, callerARN, userName string) bool {
 //	    attribute exists)
 //	  - RDS storage / attached EBS volume unencrypted at rest (§4.2)
 //	  - EC2 instance still allowing IMDSv1 (§4.2)
-//	  - IAM role with cross-account trust and no sts:ExternalId condition (§4.2)
+//	  - IAM role with cross-account trust and no scoping condition (ExternalId /
+//	    OrgID / Source*) or enforcing Deny (§4.2)
 //
 // auditedAccount is the AWS account the audit ran as (AWSAuditContext.AccountID,
 // a single-account audit). It is used ONLY by the cross-account-trust pin to tell
@@ -482,7 +483,8 @@ func isIMDSv1Allowed(r DiscoveredResource) bool {
 // it). It reads cb_describer_assume_role_policy_raw (the decoded trust policy the
 // IAM describer emits) and is conservative throughout — a malformed document, an
 // unparseable principal account, a service principal, a same-account principal,
-// or a present sts:ExternalId condition all leave the finding untouched.
+// a present scoping condition (sts:ExternalId / aws:PrincipalOrgID /
+// aws:SourceAccount / aws:SourceArn), or an enforcing Deny all leave it untouched.
 func isCrossAccountTrustWithoutExternalID(r DiscoveredResource, auditedAccount string) bool {
 	if r.Type != "AWS::IAM::Role" {
 		return false
@@ -501,7 +503,13 @@ func isCrossAccountTrustWithoutExternalID(r DiscoveredResource, auditedAccount s
 // trustPolicyExposesCrossAccount parses a decoded JSON IAM trust policy and
 // reports whether any Allow statement grants an sts:AssumeRole-class action to a
 // cross-account AWS principal (account != auditedAccount, or the wildcard "*")
-// with no sts:ExternalId condition.
+// without a mitigating scoping control. A scoping control is EITHER a mitigating
+// Allow-condition (one of the keys in isMitigatingConditionKey, required-present
+// under a positive operator — see conditionHasMitigatingScope) OR an explicit
+// Deny that blocks assume-role precisely when that control is absent (see
+// denyEnforcesMitigationFor). Either defuses the confused-deputy exposure this
+// floor targets. The floor is raise-only, so a mitigated trust simply keeps its
+// LLM-assigned severity — the finding is not deleted.
 func trustPolicyExposesCrossAccount(raw, auditedAccount string) bool {
 	var doc struct {
 		Statement json.RawMessage `json:"Statement"`
@@ -509,20 +517,71 @@ func trustPolicyExposesCrossAccount(raw, auditedAccount string) bool {
 	if json.Unmarshal([]byte(raw), &doc) != nil {
 		return false
 	}
-	for _, st := range decodePolicyStatements(doc.Statement) {
+	stmts := decodePolicyStatements(doc.Statement)
+	for _, st := range stmts {
 		if !strings.EqualFold(strings.TrimSpace(st.Effect), "Allow") {
 			continue
 		}
 		if !actionsIncludeAssumeRole(st.Action) {
 			continue
 		}
-		if conditionHasExternalID(st.Condition) {
+		if conditionHasMitigatingScope(st.Condition) {
 			continue
 		}
 		for _, p := range awsPrincipalARNs(st.Principal) {
-			if principalIsCrossAccount(p, auditedAccount) {
-				return true
+			if !principalIsCrossAccount(p, auditedAccount) {
+				continue
 			}
+			// An explicit Deny that enforces the scoping control for this
+			// principal overrides the Allow in IAM evaluation, so the role is
+			// not exposed even when the Allow itself carries no condition.
+			if denyEnforcesMitigationFor(stmts, p) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// denyEnforcesMitigationFor reports whether an explicit Deny statement protects
+// cross-account principal p by blocking sts:AssumeRole precisely when the scoping
+// control is ABSENT — the canonical `Deny + Null:{"sts:ExternalId":"true"}` guard,
+// or a `Deny + StringNotEquals:{"aws:PrincipalOrgID":…}` org fence. An explicit
+// Deny always overrides an Allow in IAM policy evaluation, so such a Deny defuses
+// the exposure. The Deny must cover p (its Principal is "*", or names p's
+// account) — a Deny scoped to some OTHER account does not protect this principal.
+func denyEnforcesMitigationFor(stmts []policyStatement, p string) bool {
+	for _, st := range stmts {
+		if !strings.EqualFold(strings.TrimSpace(st.Effect), "Deny") {
+			continue
+		}
+		if !actionsIncludeAssumeRole(st.Action) {
+			continue
+		}
+		if !denyConditionEnforcesScope(st.Condition) {
+			continue
+		}
+		if denyCoversPrincipal(st.Principal, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// denyCoversPrincipal reports whether a Deny statement's Principal applies to the
+// exposed principal p: a "*" / {"AWS":"*"} Deny covers everyone, otherwise the
+// Deny must name p exactly or share p's account (by bare id or ARN). A Deny that
+// lists only an unrelated account does not protect p.
+func denyCoversPrincipal(denyPrincipalRaw json.RawMessage, p string) bool {
+	pAcct := accountIDFromPrincipal(p)
+	for _, dp := range awsPrincipalARNs(denyPrincipalRaw) {
+		dp = strings.TrimSpace(dp)
+		if dp == "*" || strings.EqualFold(dp, strings.TrimSpace(p)) {
+			return true
+		}
+		if pAcct != "" && accountIDFromPrincipal(dp) == pAcct {
+			return true
 		}
 	}
 	return false
@@ -570,6 +629,11 @@ func actionsIncludeAssumeRole(raw json.RawMessage) bool {
 // Principal. It returns entries ONLY for the "AWS" key (string or []string) and
 // for a bare "*". Principal.Service / Principal.Federated yield nothing — they
 // are not account principals and must never be treated as cross-account.
+//
+// (D, out of scope) An Allow that uses NotPrincipal — "everyone EXCEPT these" —
+// is an effective cross-account wildcard, but this reads only Principal and so
+// under-fires on it. Left unhandled deliberately: a NotPrincipal trust policy is
+// vanishingly rare, and the miss is a false negative (never a false positive).
 func awsPrincipalARNs(raw json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
@@ -621,11 +685,45 @@ func accountIDFromPrincipal(p string) string {
 	return ""
 }
 
-// conditionHasExternalID reports whether a statement's Condition keys on
-// sts:ExternalId under ANY condition operator (StringEquals, StringLike, …),
-// matched case-insensitively. Its presence means the trust requires a shared
-// secret and is therefore NOT the confused-deputy exposure this floor targets.
-func conditionHasExternalID(raw json.RawMessage) bool {
+// isMitigatingConditionKey reports whether an IAM condition key scopes an
+// assume-role trust to a known org/account and so defuses the cross-account
+// confused-deputy exposure: the per-integration shared secret (sts:ExternalId),
+// the organization fence (aws:PrincipalOrgID), and the calling-service scope
+// (aws:SourceAccount / aws:SourceArn, set by AWS services that assume the role on
+// your behalf — exactly the confused-deputy vector this floor targets).
+func isMitigatingConditionKey(k string) bool {
+	switch strings.ToLower(strings.TrimSpace(k)) {
+	case "sts:externalid", "aws:principalorgid", "aws:sourceaccount", "aws:sourcearn":
+		return true
+	}
+	return false
+}
+
+// conditionHasMitigatingScope reports whether an Allow statement's Condition
+// REQUIRES one of the mitigating scoping keys under a POSITIVE operator —
+// StringEquals / StringLike / ArnLike (incl. ForAnyValue:/ForAllValues:
+// qualifiers) or Null:"false" (require-present). The negated variants
+// (StringNotEquals, …) and Null:"true" (require-ABSENT) do NOT scope the trust
+// and must NOT count as mitigating — reading a require-absent condition as
+// mitigating is exactly the operator-polarity bug that masked a real exposure.
+// ...IfExists is also rejected: it makes the key optional, so it does not enforce
+// the scope.
+func conditionHasMitigatingScope(raw json.RawMessage) bool {
+	return conditionMatches(raw, operatorIsMitigating)
+}
+
+// denyConditionEnforcesScope is the Deny-side mirror of
+// conditionHasMitigatingScope: a Deny that fires when the scoping control is
+// absent enforces it. The polarity is INVERTED relative to an Allow — Null:"true"
+// (deny when key absent) and a negated string/ARN match (deny when key != the
+// allowed value) are the enforcing operators here.
+func denyConditionEnforcesScope(raw json.RawMessage) bool {
+	return conditionMatches(raw, denyOperatorEnforces)
+}
+
+// conditionMatches walks a Condition block ({operator: {key: value}}) and reports
+// whether any (operator, mitigating-key, value) triple satisfies want.
+func conditionMatches(raw json.RawMessage, want func(op string, valueRaw json.RawMessage) bool) bool {
 	if len(raw) == 0 {
 		return false
 	}
@@ -633,18 +731,89 @@ func conditionHasExternalID(raw json.RawMessage) bool {
 	if json.Unmarshal(raw, &byOp) != nil {
 		return false
 	}
-	for _, opRaw := range byOp {
+	for op, opRaw := range byOp {
 		var kv map[string]json.RawMessage
 		if json.Unmarshal(opRaw, &kv) != nil {
 			continue
 		}
-		for k := range kv {
-			if strings.EqualFold(strings.TrimSpace(k), "sts:ExternalId") {
+		for k, vRaw := range kv {
+			if isMitigatingConditionKey(k) && want(op, vRaw) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// operatorIsMitigating reports whether an Allow-side operator REQUIRES the
+// scoping key present with an allowed value: a positive string/ARN match, or
+// Null:"false". Negated (...Not...), require-absent (Null:"true"), and ...IfExists
+// (optional) operators are not mitigating.
+func operatorIsMitigating(op string, valueRaw json.RawMessage) bool {
+	op = normalizeOperator(op)
+	if op == "null" {
+		return nullValueRequiresPresent(valueRaw)
+	}
+	if strings.Contains(op, "ifexists") || strings.Contains(op, "not") {
+		return false
+	}
+	return strings.HasPrefix(op, "string") || strings.HasPrefix(op, "arn")
+}
+
+// denyOperatorEnforces reports whether a Deny-side operator blocks assume-role
+// when the scoping key is absent or wrong: Null:"true" (deny when absent) or a
+// negated string/ARN match (deny when key != the allowed value).
+func denyOperatorEnforces(op string, valueRaw json.RawMessage) bool {
+	op = normalizeOperator(op)
+	if op == "null" {
+		return nullValueRequiresAbsent(valueRaw)
+	}
+	if strings.Contains(op, "ifexists") {
+		return false
+	}
+	return strings.Contains(op, "not") && (strings.HasPrefix(op, "string") || strings.HasPrefix(op, "arn"))
+}
+
+// normalizeOperator lowercases a condition operator and strips a ForAnyValue:/
+// ForAllValues: set-qualifier prefix, leaving the bare comparison name
+// ("stringequals", "null", "arnlike", …).
+func normalizeOperator(op string) string {
+	op = strings.ToLower(strings.TrimSpace(op))
+	if i := strings.LastIndex(op, ":"); i >= 0 {
+		op = op[i+1:]
+	}
+	return op
+}
+
+// nullValueRequiresPresent / nullValueRequiresAbsent decode a Null condition
+// value (JSON string "true"/"false" or bool): Null:"false" means the key must be
+// PRESENT, Null:"true" means it must be ABSENT.
+func nullValueRequiresPresent(valueRaw json.RawMessage) bool {
+	v, ok := nullBool(valueRaw)
+	return ok && !v
+}
+
+func nullValueRequiresAbsent(valueRaw json.RawMessage) bool {
+	v, ok := nullBool(valueRaw)
+	return ok && v
+}
+
+func nullBool(valueRaw json.RawMessage) (val, ok bool) {
+	var s string
+	if json.Unmarshal(valueRaw, &s) == nil {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+		return false, false
+	}
+	var b bool
+	if json.Unmarshal(valueRaw, &b) == nil {
+		return b, true
+	}
+	return false, false
 }
 
 // stringOrStringSlice unmarshals a JSON value that may be a single string or an

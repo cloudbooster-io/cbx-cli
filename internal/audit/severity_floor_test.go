@@ -664,7 +664,24 @@ func TestSeverityFloor_CrossAccountTrustNoExternalID(t *testing.T) {
 		wildcard  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}`
 		bareAcct  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"222222222222"},"Action":"sts:AssumeRole"}]}`
 		mixedList = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam::111111111111:root","arn:aws:iam::222222222222:role/Other"]},"Action":"sts:AssumeRole"}]}`
-		denyCross = `{"Statement":[{"Effect":"Deny","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"}]}`
+		// Mitigating Allow-conditions (Fix A) — each scopes the cross-account trust
+		// to a known org/account, defusing the confused-deputy exposure → NOT fired.
+		orgScoped     = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"aws:PrincipalOrgID":"o-abc123"}}}]}`
+		srcAcctScoped = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"aws:SourceAccount":"222222222222"}}}]}`
+		srcArnScoped  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"ArnLike":{"aws:SourceArn":"arn:aws:cloudtrail:us-east-1:222222222222:trail/*"}}}]}`
+		// Deny-enforced mitigation (Fix B) — a Deny blocks assume-role when the
+		// scoping control is absent. The covering "*" Deny protects the role → NOT
+		// fired; a Deny scoped to an UNRELATED account does not cover the exposed
+		// principal → STILL fired (replaces the old Deny-ALONE masking case, which
+		// only ever "passed" because a policy with no Allow can never fire).
+		allowDenyExtID     = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"},{"Effect":"Deny","Principal":{"AWS":"*"},"Action":"sts:AssumeRole","Condition":{"Null":{"sts:ExternalId":"true"}}}]}`
+		allowDenyOtherAcct = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole"},{"Effect":"Deny","Principal":{"AWS":"arn:aws:iam::333333333333:root"},"Action":"sts:AssumeRole","Condition":{"Null":{"sts:ExternalId":"true"}}}]}`
+		// Operator polarity (Fix C) — only positive/require-present operators on a
+		// scoping key are mitigating.
+		extIDNotEquals = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"StringNotEquals":{"sts:ExternalId":"blocked"}}}]}`
+		extIDNullTrue  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"Null":{"sts:ExternalId":"true"}}}]}`
+		extIDNullFalse = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"Null":{"sts:ExternalId":"false"}}}]}`
+		extIDIfExists  = `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::222222222222:root"},"Action":"sts:AssumeRole","Condition":{"StringEqualsIfExists":{"sts:ExternalId":"shared-secret"}}}]}`
 	)
 	trustFinding := func(sev string) Finding {
 		return Finding{RuleID: "LLM-trust", Title: "IAM role allows cross-account AssumeRole without ExternalId",
@@ -683,8 +700,20 @@ func TestSeverityFloor_CrossAccountTrustNoExternalID(t *testing.T) {
 		{"wildcard-principal→high", wildcard, auditedAcct, SeverityHigh},
 		{"bare-account-id→high", bareAcct, auditedAcct, SeverityHigh},
 		{"mixed-list-one-cross-account→high", mixedList, auditedAcct, SeverityHigh},
-		{"deny-statement→unchanged", denyCross, auditedAcct, SeverityWarning},
 		{"empty-audited-account→unchanged (pin disabled, no guess)", crossRoot, "", SeverityWarning},
+		// Fix A — org/account-scoping conditions are mitigating.
+		{"org-scoped→unchanged (PrincipalOrgID defuses confused-deputy)", orgScoped, auditedAcct, SeverityWarning},
+		{"source-account-scoped→unchanged", srcAcctScoped, auditedAcct, SeverityWarning},
+		{"source-arn-scoped→unchanged (ArnLike is positive)", srcArnScoped, auditedAcct, SeverityWarning},
+		// Fix B — an enforcing Deny that covers the principal protects the role;
+		// a Deny scoped to an unrelated account does not.
+		{"allow+deny-enforced-externalid→unchanged (explicit Deny blocks no-ExternalId assume)", allowDenyExtID, auditedAcct, SeverityWarning},
+		{"allow+deny-other-account→high (Deny does not cover the exposed principal)", allowDenyOtherAcct, auditedAcct, SeverityHigh},
+		// Fix C — operator polarity: only positive / require-present is mitigating.
+		{"externalid-StringNotEquals→high (negated operator is not mitigating)", extIDNotEquals, auditedAcct, SeverityHigh},
+		{"externalid-Null-true→high (require-absent is not mitigating)", extIDNullTrue, auditedAcct, SeverityHigh},
+		{"externalid-Null-false→unchanged (require-present is mitigating)", extIDNullFalse, auditedAcct, SeverityWarning},
+		{"externalid-StringEqualsIfExists→high (optional key does not enforce scope)", extIDIfExists, auditedAcct, SeverityHigh},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
