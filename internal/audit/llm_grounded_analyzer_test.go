@@ -284,6 +284,33 @@ func TestBuildGroundedPrompt_MentionsStructural42Rules(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_CloudFrontSecurityRules is a WIRING CHECK: it confirms
+// the four CloudFront security bullets (default-cert/weak-TLS, no-WAF, access-
+// logging-disabled, S3-global-endpoint) and their explicit wire severities are
+// present in the prompt text. These are LLM-emitted findings with NO severity
+// floor, so naming the severity in the bullet is the only thing that pins the
+// emission — a dropped phrase silently weakens the rule. Whether the findings
+// fire is LLM behavior, validated by the deferred live run.
+func TestBuildGroundedPrompt_CloudFrontSecurityRules(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	for _, want := range []string{
+		"AWS::CloudFront::Distribution`) — evaluate the raw `DistributionConfig`",
+		"ViewerCertificate.CloudFrontDefaultCertificate",
+		"MinimumProtocolVersion=TLSv1.2_2021",
+		"No WAF web ACL",
+		"do NOT rate it higher than `info`", // no-WAF must stay info, not inflated
+		"`WebACLId` is empty or absent",
+		"Access logging disabled",
+		"`DistributionConfig.Logging` is absent",
+		"S3 global-endpoint form `<bucket>.s3.amazonaws.com`",
+		"307 redirects",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing CloudFront wiring %q", want)
+		}
+	}
+}
+
 func TestNewLLMAnalyzer_CBKnowledgeRequiresClaudeCode(t *testing.T) {
 	_, err := newLLMAnalyzer(Options{LLMProvider: "claude", CBKnowledge: true}, IaCTypeTerraform)
 	if err == nil || !strings.Contains(err.Error(), "--cb-knowledge requires --llm claude-code") {
