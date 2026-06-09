@@ -46,6 +46,7 @@ var allDescribers = []Describer{
 	&athenaWorkGroupDescriber{},
 	&ecsClusterDescriber{},
 	&albAccessLogsDescriber{},
+	&eksClusterDescriber{},
 }
 
 // describerFor returns the Describer registered for cfnType, or nil if
