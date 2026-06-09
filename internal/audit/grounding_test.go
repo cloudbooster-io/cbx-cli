@@ -248,6 +248,34 @@ func TestBuildGroundedPrompt_SeverityCalibration(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesNextRoundRuleGaps pins the batch-1
+// next-round recall bullets (CloudTrail→CW-Logs, ECS writable-root,
+// DynamoDB deletion-protection) into the grounded prompt. Each was a
+// code-confirmed gap on a healthy variant (06/08/03): the signal lands
+// in the resource table but, without these cues, the model has no
+// instruction to act on it. The ECS guard substring is asserted
+// separately because the explicit-`false`-only behaviour is the
+// load-bearing FP control for that HIGH-FP-risk rule — a later edit that
+// loosened it to fire on absent/unset would silently regress the "a bare
+// container with the field unset is NOT a finding" contract.
+func TestBuildGroundedPrompt_IncludesNextRoundRuleGaps(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// CloudTrail no CloudWatch Logs → WARNING (06)
+		"`AWS::CloudTrail::Trail` has no `CloudWatchLogsLogGroupArn`",
+		// ECS writable container root filesystem → WARNING, scoped (08)
+		"whose `ReadonlyRootFilesystem` is explicitly `false`",
+		// the FP guard: explicit-false-only, never infer from a missing key
+		"fire ONLY on an EXPLICIT `false`",
+		// DynamoDB no deletion protection → WARNING, scoped (03)
+		"`AWS::DynamoDB::Table` has `DeletionProtectionEnabled: false`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing next-round rule-gap cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
