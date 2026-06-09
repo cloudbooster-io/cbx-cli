@@ -276,6 +276,48 @@ func TestBuildGroundedPrompt_IncludesNextRoundRuleGaps(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesBulletBatch pins the next bullet batch
+// (RDS deletion-protection + single-AZ on 07, EC2 no-instance-profile on
+// 04, ALB access-logs on 07 via the !53 enrichment) into the grounded
+// prompt. Each fires off a PRESENT cb_describer_* field — none is
+// absence-inferred. Beyond the four identity cues, the load-bearing
+// FALSE-POSITIVE guards are asserted explicitly, because those are what a
+// later edit could silently loosen:
+//   - the prod-intent gate vocabulary shared by both RDS bullets (these
+//     conditions are default-common, so blanket-firing is the FP class);
+//   - the instance-scope carve-out — pinned via this batch's UNIQUE
+//     "AWS::RDS::DBCluster carries neither carve-out signal" phrase, because
+//     bare "AWS::RDS::DBInstance" and the "SUPPRESS when
+//     cb_describer_is_cluster_member is true" clause both already appear on
+//     the L518 backup-retention bullet and so don't discriminate;
+//   - the ALB positive-field / explicit-false-only + skip-when-absent guard,
+//     so the bullet can never read a probe error as "logging disabled".
+func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// #3 RDS no deletion protection → WARNING, instance-scoped, prod-intent (07)
+		"`cb_describer_deletion_protection: false`",
+		// #4 RDS single-AZ → WARNING, instance-scoped, prod-intent (07)
+		"`cb_describer_multi_az: false`",
+		// prod-intent gate shared by both RDS bullets — the FP control for these
+		// default-common conditions (mirrors the S3-hygiene intent gate)
+		"production / stateful / primary / critical intent",
+		// instance-scope carve-out, discriminating (see doc comment)
+		"instance-scoped; an `AWS::RDS::DBCluster` carries neither carve-out signal",
+		// #5 EC2 with no IAM instance profile → WARNING, no-profile (empty-string) detection (04)
+		"whose `cb_describer_instance_profile_arn` is the empty string",
+		// #1 ALB access logging disabled → WARNING (07, via the !53 attributes enrichment)
+		"`cb_describer_alb_access_logs_enabled: false`",
+		// the ALB FP guard: positive field, explicit-false-only, never inferred from absence
+		"is a POSITIVE field (`true` iff enabled, `false` iff explicitly disabled)",
+		"Skip when the field is absent (the LB's attributes weren't read",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing bullet-batch cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
