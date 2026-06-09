@@ -35,11 +35,11 @@ import (
 // "no authorizer" signal), AWS::ApiGatewayV2::Integration (IntegrationUri, the
 // API→Lambda link), and the Lambda itself (cb_describer_role_is_admin_equivalent,
 // already covered by listLambdaFunctionsNative). Those routes/integrations are
-// dropped by the same CloudControl silent-empty miss and have no describer and no
-// fallback, so restoring only the Api cannot make the compound rule fire.
-// Closing that gap needs per-type Route + Integration fallbacks (each enumerating
-// APIs then GetRoutes / GetIntegrations, mirroring listListenersNative) and is
-// intentionally left as a follow-up — see the MR description.
+// dropped by the same CloudControl silent-empty miss and have no describer, so
+// restoring only the Api cannot make the compound rule fire. That gap is closed
+// by the per-type Route + Integration fallbacks (each enumerating APIs then
+// GetRoutes / GetIntegrations, mirroring listListenersNative) in
+// lister_apigw_route_integration_native.go.
 func listAPIGatewayV2APIsNative(ctx context.Context, c awsCfg, region string) ([]rawResource, error) {
 	return collectAPIGatewayV2APIs(ctx, apigatewayv2.NewFromConfig(c.withRegion(region).cfg), region)
 }
