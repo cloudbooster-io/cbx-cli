@@ -65,6 +65,18 @@ func eksClusterToRaw(cl ekstypes.Cluster, region string) (rawResource, bool) {
 	putStr(props, "Endpoint", cl.Endpoint)
 	putStr(props, "RoleArn", cl.RoleArn)
 
+	// The cluster's OIDC issuer URL is the join key for IRSA detection: the
+	// eksClusterDescriber probes IAM for an OIDC identity provider registered
+	// against this exact issuer (its absence means pods fall back to the node
+	// role — an IRSA gap). CloudControl, when it lists the cluster, carries the
+	// same value as the flat read-only attribute OpenIdConnectIssuerUrl; the
+	// describer reads either shape. Surface it nested, mirroring the SDK.
+	if cl.Identity != nil && cl.Identity.Oidc != nil && cl.Identity.Oidc.Issuer != nil && *cl.Identity.Oidc.Issuer != "" {
+		props["Identity"] = map[string]any{
+			"Oidc": map[string]any{"Issuer": *cl.Identity.Oidc.Issuer},
+		}
+	}
+
 	if cl.ResourcesVpcConfig != nil {
 		v := cl.ResourcesVpcConfig
 		vpc := map[string]any{

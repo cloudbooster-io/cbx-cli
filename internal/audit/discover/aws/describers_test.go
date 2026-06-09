@@ -18,6 +18,7 @@ func TestDescriberFor(t *testing.T) {
 		"AWS::Backup::BackupVault",
 		"AWS::Backup::BackupPlan",
 		"AWS::ElasticLoadBalancingV2::LoadBalancer",
+		"AWS::EKS::Cluster",
 	}
 	for _, cfnType := range registered {
 		if d := describerFor(cfnType); d == nil {
