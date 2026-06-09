@@ -36,6 +36,34 @@ func TestBackupKeyIsAwsManaged(t *testing.T) {
 	}
 }
 
+// backupVaultLocked is the FP gate for vault-no-vault-lock. The load-bearing
+// property: a locked vault reports (true, known), an explicitly unlocked vault
+// reports (false, known) — the AUTHORITATIVE negative the finding wants — and a
+// nil Locked pointer (AWS returned no value / the probe never ran) reports
+// known==false so the caller leaves the hint absent rather than asserting "not
+// locked" on a read it never made. (boolp is shared from lister_native_test.go.)
+func TestBackupVaultLocked(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         *bool
+		wantLocked bool
+		wantKnown  bool
+	}{
+		{"locked", boolp(true), true, true},
+		{"unlocked", boolp(false), false, true},
+		{"nil-unset", nil, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotLocked, gotKnown := backupVaultLocked(tc.in)
+			if gotLocked != tc.wantLocked || gotKnown != tc.wantKnown {
+				t.Errorf("backupVaultLocked(%v) = (%v, %v), want (%v, %v)",
+					tc.in, gotLocked, gotKnown, tc.wantLocked, tc.wantKnown)
+			}
+		})
+	}
+}
+
 // backupPlanHasCrossRegionCopy is the FP gate for plan-no-secondary-region-copy.
 // A same-region copy must NOT count as cross-region (the finding is specifically
 // about a *secondary region* copy), and no copy actions at all must report

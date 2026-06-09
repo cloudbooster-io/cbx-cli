@@ -20,16 +20,19 @@ import (
 // only on an AUTHORITATIVE negative — never on a read we couldn't make:
 //
 //   - We assert false ONLY when AWS explicitly says the thing is absent
-//     (CUSTOMER vs AWS_OWNED key type from DescribeBackupVault; a
-//     ResourceNotFoundException / empty document from GetBackupVaultAccessPolicy;
-//     zero cross-region copy actions from a successful GetBackupPlan).
+//     (CUSTOMER vs AWS_OWNED key type and a Locked==false flag from a successful
+//     DescribeBackupVault; a ResourceNotFoundException / empty document from
+//     GetBackupVaultAccessPolicy; zero cross-region copy actions from a
+//     successful GetBackupPlan).
 //   - On a permission/throttle error the hint is left ABSENT, so the grounded
-//     LLM is never told "no policy" / "AWS-managed key" on a failed read.
+//     LLM is never told "no policy" / "AWS-managed key" / "not locked" on a
+//     failed read. Likewise a nil Locked pointer (AWS returned no value) leaves
+//     the lock hint absent — only an explicit Locked==false is the negative.
 //
 // That keeps the hints informative inputs to the finding (vault-aws-managed-key,
-// vault-no-access-policy, plan-no-secondary-region-copy) rather than false
-// alarms — the knowledge layer decides severity; we only report the fact, and
-// only when we're sure of it.
+// vault-no-access-policy, vault-no-vault-lock, plan-no-secondary-region-copy)
+// rather than false alarms — the knowledge layer decides severity; we only
+// report the fact, and only when we're sure of it.
 
 // --- pure gating helpers (unit-tested in describer_backup_test.go) ---------
 
@@ -46,6 +49,19 @@ func backupKeyIsAwsManaged(t backuptypes.EncryptionKeyType) (isAwsManaged, known
 	default:
 		return false, false
 	}
+}
+
+// backupVaultLocked reports a vault's Vault-Lock state from DescribeBackupVault's
+// Locked field (true == Vault Lock is currently protecting the vault). `known`
+// is false when AWS returned no value (nil pointer), in which case the caller
+// MUST leave the hint absent — a missing read is not an authoritative "not
+// locked", and asserting it would be the false positive we guard against. Only
+// an explicit Locked==false is the AUTHORITATIVE negative the finding wants.
+func backupVaultLocked(locked *bool) (isLocked, known bool) {
+	if locked == nil {
+		return false, false
+	}
+	return *locked, true
 }
 
 // backupPlanHasCrossRegionCopy reports whether any rule's copy action targets a
@@ -88,8 +104,10 @@ func isBackupResourceNotFound(err error) bool {
 
 // --- backup vault describer ------------------------------------------------
 
-// backupVaultDescriber surfaces two absence hints CloudControl omits:
-// cb_describer_vault_uses_aws_managed_key (vault-aws-managed-key) and
+// backupVaultDescriber surfaces three absence hints CloudControl omits, all from
+// a single DescribeBackupVault plus one GetBackupVaultAccessPolicy:
+// cb_describer_vault_uses_aws_managed_key (vault-aws-managed-key),
+// cb_describer_vault_locked (vault-no-vault-lock) and
 // cb_describer_vault_access_policy_present (vault-no-access-policy).
 type backupVaultDescriber struct{}
 
@@ -115,14 +133,21 @@ func (backupVaultDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredR
 	// skip the access-policy read. Run both, join the errors.
 	var errs []error
 
-	// (1) AWS-managed-key: DescribeBackupVault returns EncryptionKeyType
-	// (AWS_OWNED_KMS_KEY vs CUSTOMER_MANAGED_KMS_KEY) authoritatively — no KMS
-	// resolution needed, and FP-safe via the `known` guard.
+	// (1) DescribeBackupVault carries two independent posture facts: the
+	// EncryptionKeyType (AWS_OWNED_KMS_KEY vs CUSTOMER_MANAGED_KMS_KEY) and the
+	// Vault-Lock state (Locked). Both are read from this one call and both are
+	// FP-safe via their `known` guards — an unknown key enum or a nil Locked
+	// pointer leaves the respective hint absent.
 	dv, err := client.DescribeBackupVault(ctx, &backup.DescribeBackupVaultInput{BackupVaultName: &name})
 	if err != nil {
 		errs = append(errs, classifyAWSError(err, "backup", "backup:DescribeBackupVault", r.Region))
-	} else if isAws, known := backupKeyIsAwsManaged(dv.EncryptionKeyType); known {
-		r.Inputs["cb_describer_vault_uses_aws_managed_key"] = isAws
+	} else {
+		if isAws, known := backupKeyIsAwsManaged(dv.EncryptionKeyType); known {
+			r.Inputs["cb_describer_vault_uses_aws_managed_key"] = isAws
+		}
+		if isLocked, known := backupVaultLocked(dv.Locked); known {
+			r.Inputs["cb_describer_vault_locked"] = isLocked
+		}
 	}
 
 	// (2) Access policy: a vault with NO resource-based policy is valid and
