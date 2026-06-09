@@ -121,13 +121,21 @@ var discoverableCFNTypes = []cfnTypeSpec{
 	// returned empty for a freshly-created HTTP API the same way it did for
 	// Lambda/DynamoDB. apigatewayv2:GetApis is the fallback-on-empty, so the
 	// access-logging WARNING (apiGatewayV2ApiDescriber re-derives it via its own
-	// GetStages call) survives the silent miss. NOTE: this restores only the
-	// Api — the compound "unauthenticated API + admin Lambda" rule additionally
-	// needs the Route + Integration siblings, which have no fallback yet (see
-	// lister_apigw_native.go's SCOPE note).
+	// GetStages call) survives the silent miss.
 	{Type: "AWS::ApiGatewayV2::Api", FallbackLister: listAPIGatewayV2APIsNative},
 	{Type: "AWS::ApiGatewayV2::Stage"},
-	{Type: "AWS::ApiGatewayV2::Route"},
+	// Route + Integration are the two siblings the compound "unauthenticated API
+	// + admin Lambda" CRITICAL rule reads — Route.AuthorizationType==NONE (no
+	// authorizer) and Integration.IntegrationUri (the API→Lambda link). Both are
+	// NESTED types CloudControl does not reliably enumerate from the parent-less
+	// ListResources call (listAndGet sends only the TypeName, so without the
+	// parent ApiId the list errors or comes back empty); Integration wasn't even
+	// queried until now. Neither has a describer, so apigatewayv2:GetRoutes /
+	// GetIntegrations (per-API, enumerated via GetApis) are wired as
+	// fallback-on-empty, each self-carrying the finding-bearing field. See
+	// lister_apigw_route_integration_native.go.
+	{Type: "AWS::ApiGatewayV2::Route", FallbackLister: listAPIGatewayV2RoutesNative},
+	{Type: "AWS::ApiGatewayV2::Integration", FallbackLister: listAPIGatewayV2IntegrationsNative},
 	{Type: "AWS::ApiGatewayV2::Authorizer"},
 
 	// --- regional data ---
