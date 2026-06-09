@@ -318,6 +318,39 @@ func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesBackupVaultBullets pins the three AWS
+// Backup vault hygiene bullets (no-Vault-Lock → warning, AWS-managed-key →
+// info, no-access-policy → info) into the grounded prompt. Each fires off a
+// PRESENT cb_describer_* field — none is absence-inferred. Beyond the three
+// field+severity identity cues and one key phrase per bullet, the
+// load-bearing PRESENT-FIELD guard ("skip when absent") is asserted, because
+// that is the FP control a later edit could silently loosen, and the
+// "encrypted at rest, not unencrypted" framing is pinned so the AWS-managed-key
+// item is never mis-escalated into a storage-unencrypted HIGH.
+func TestBuildGroundedPrompt_IncludesBackupVaultBullets(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// #1 no Vault Lock → warning (field + severity)
+		"`cb_describer_vault_locked: false`) → `warning`",
+		// #1 key phrase
+		"no immutability / ransomware floor",
+		// #2 AWS-managed key (non-CMK) → info (field + severity)
+		"`cb_describer_vault_uses_aws_managed_key: true`) → `info`",
+		// #2 key phrase — and the "encrypted, not unencrypted" framing
+		"Backup analog of the S3 SSE-S3→SSE-KMS upgrade item",
+		// #3 no access policy → info (field + severity)
+		"`cb_describer_vault_access_policy_present: false`) → `info`",
+		// #3 key phrase
+		"explicit `Deny` on `backup:DeleteRecoveryPoint`",
+		// the present-field discipline guard shared by all three bullets
+		"SKIP when the field is ABSENT",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing backup-vault-hygiene cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
