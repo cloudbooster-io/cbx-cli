@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
@@ -206,5 +207,184 @@ func TestEKSClusterToRaw_OmitsIssuerWhenAbsent(t *testing.T) {
 	}
 	if got := eksOIDCIssuer(dr.Inputs); got != "" {
 		t.Errorf("eksOIDCIssuer = %q, want \"\" when the cluster carries no OIDC identity", got)
+	}
+}
+
+// --- Pod Identity probe ----------------------------------------------------
+
+const eksPodIdentityField = "cb_describer_eks_pod_identity_present"
+
+// fakeEKSPodIdentityClient is the test double for the Pod-Identity probe's EKS
+// seam. It returns pages[call-1] on each successive call so a test can drive
+// the pagination walk; err (when set) is returned on the first call. calls
+// records invocations so a test can assert the probe is skipped when the
+// cluster name is unknown, or that the walk paged the expected number of times.
+type fakeEKSPodIdentityClient struct {
+	pages []*eks.ListPodIdentityAssociationsOutput
+	err   error
+	calls int
+}
+
+func (f *fakeEKSPodIdentityClient) ListPodIdentityAssociations(_ context.Context, _ *eks.ListPodIdentityAssociationsInput, _ ...func(*eks.Options)) (*eks.ListPodIdentityAssociationsOutput, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if i := f.calls - 1; i < len(f.pages) {
+		return f.pages[i], nil
+	}
+	return &eks.ListPodIdentityAssociationsOutput{}, nil
+}
+
+// installFakeEKSPodIdentityClient swaps the package-level seam for a fake so the
+// EKS describer's Pod-Identity probe never makes a live AWS call, restoring the
+// real constructor when the test ends (mirrors installFakeEKSOIDCClient).
+func installFakeEKSPodIdentityClient(t *testing.T, fake eksPodIdentityAPI) {
+	t.Helper()
+	prev := newEKSPodIdentityClient
+	newEKSPodIdentityClient = func(awsCfg) eksPodIdentityAPI { return fake }
+	t.Cleanup(func() { newEKSPodIdentityClient = prev })
+}
+
+// podIDPage builds one ListPodIdentityAssociations page carrying n associations
+// (their contents don't matter to the probe — only the count) and an optional
+// NextToken so a test can chain pages.
+func podIDPage(n int, nextToken string) *eks.ListPodIdentityAssociationsOutput {
+	out := &eks.ListPodIdentityAssociationsOutput{}
+	for i := 0; i < n; i++ {
+		out.Associations = append(out.Associations, ekstypes.PodIdentityAssociationSummary{})
+	}
+	if nextToken != "" {
+		out.NextToken = &nextToken
+	}
+	return out
+}
+
+// eksClusterResourceNamed builds a discovered cluster carrying only the CFN
+// Name primary identifier and NO OIDC issuer, so the OIDC probe is skipped and
+// the test exercises the Pod-Identity probe in isolation.
+func eksClusterResourceNamed(name string) *DiscoveredResource {
+	return &DiscoveredResource{
+		Type:   "AWS::EKS::Cluster",
+		ID:     name,
+		Inputs: map[string]any{"Name": name},
+	}
+}
+
+func TestEKSDescriber_PodIdentityAssociationPresent_True(t *testing.T) {
+	// One association on the first page = Pod Identity in use. The walk
+	// short-circuits, so exactly one page is read.
+	fake := &fakeEKSPodIdentityClient{pages: []*eks.ListPodIdentityAssociationsOutput{podIDPage(1, "")}}
+	installFakeEKSPodIdentityClient(t, fake)
+	r := eksClusterResourceNamed("prod-cluster")
+	if err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if got := r.Inputs[eksPodIdentityField]; got != true {
+		t.Errorf("%s = %v, want true (an association exists = Pod Identity in use)", eksPodIdentityField, got)
+	}
+	if fake.calls != 1 {
+		t.Errorf("expected the walk to short-circuit after 1 page, got %d calls", fake.calls)
+	}
+}
+
+func TestEKSDescriber_PodIdentityAssociationOnSecondPage_True(t *testing.T) {
+	// FP-safety partner of the false-case: the first page is empty but carries a
+	// NextToken, the association is only on page 2. The probe must page past the
+	// empty first page rather than declaring false on a partial read.
+	fake := &fakeEKSPodIdentityClient{pages: []*eks.ListPodIdentityAssociationsOutput{
+		podIDPage(0, "more"),
+		podIDPage(1, ""),
+	}}
+	installFakeEKSPodIdentityClient(t, fake)
+	r := eksClusterResourceNamed("prod-cluster")
+	if err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if got := r.Inputs[eksPodIdentityField]; got != true {
+		t.Errorf("%s = %v, want true (association on page 2 must be found)", eksPodIdentityField, got)
+	}
+	if fake.calls != 2 {
+		t.Errorf("expected the walk to read 2 pages, got %d calls", fake.calls)
+	}
+}
+
+func TestEKSDescriber_NoPodIdentityAcrossAllPages_False(t *testing.T) {
+	// The planted variant state: cluster exists, zero Pod-Identity associations.
+	// ListPodIdentityAssociations IS paginated, so present=false is asserted only
+	// after EVERY page is walked — a COMPLETE enumeration, never absence-inferred
+	// from the first empty page.
+	fake := &fakeEKSPodIdentityClient{pages: []*eks.ListPodIdentityAssociationsOutput{
+		podIDPage(0, "more"),
+		podIDPage(0, ""),
+	}}
+	installFakeEKSPodIdentityClient(t, fake)
+	r := eksClusterResourceNamed("prod-cluster")
+	if err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if got, ok := r.Inputs[eksPodIdentityField]; !ok || got != false {
+		t.Errorf("%s = (%v, %v), want (false, true) after a complete empty enumeration", eksPodIdentityField, got, ok)
+	}
+	if fake.calls != 2 {
+		t.Errorf("expected the walk to enumerate both pages before false, got %d calls", fake.calls)
+	}
+}
+
+func TestEKSDescriber_PodIdentityProbeError_LeavesFieldAbsent(t *testing.T) {
+	// A denied probe must NEVER abort: it returns the classified error (so
+	// --diagnose surfaces the missing eks:ListPodIdentityAssociations grant) but
+	// leaves the field ABSENT (UNKNOWN, never false) so a rule keyed on
+	// `== false` cannot false-fire on a cluster we could not verify.
+	installFakeEKSPodIdentityClient(t, &fakeEKSPodIdentityClient{err: &fakeAPIError{code: "AccessDenied"}})
+	r := eksClusterResourceNamed("prod-cluster")
+	err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r)
+	if err == nil {
+		t.Fatal("expected the probe error to surface, got nil")
+	}
+	var pe *PermissionError
+	if !errors.As(err, &pe) {
+		t.Errorf("error = %T, want *PermissionError (so --diagnose collects it)", err)
+	}
+	if _, ok := r.Inputs[eksPodIdentityField]; ok {
+		t.Error("field must be ABSENT on probe error (UNKNOWN), not false")
+	}
+}
+
+func TestEKSDescriber_MissingClusterName_NoPodIdentityProbe(t *testing.T) {
+	// No cluster Name → nothing to probe → leave the field ABSENT and never spend
+	// the EKS call.
+	fake := &fakeEKSPodIdentityClient{pages: []*eks.ListPodIdentityAssociationsOutput{podIDPage(1, "")}}
+	installFakeEKSPodIdentityClient(t, fake)
+	r := &DiscoveredResource{Type: "AWS::EKS::Cluster", ID: "no-name", Inputs: map[string]any{}}
+	if err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if _, ok := r.Inputs[eksPodIdentityField]; ok {
+		t.Error("field must be ABSENT when the cluster Name is unknown")
+	}
+	if fake.calls != 0 {
+		t.Errorf("expected no EKS probe when the cluster Name is missing, got %d calls", fake.calls)
+	}
+}
+
+func TestEKSDescriber_BothProbesRun_IRSAAndPodIdentity(t *testing.T) {
+	// The real production shape: a cluster carries BOTH an OIDC issuer and a Name,
+	// so both probes run in one Enrich. The restructure must keep the IRSA path
+	// working alongside the new Pod-Identity path, each publishing its own field.
+	installFakeEKSOIDCClient(t, &fakeEKSOIDCClient{out: oidcProvidersOut(eksProviderARNAAAA)})
+	installFakeEKSPodIdentityClient(t, &fakeEKSPodIdentityClient{pages: []*eks.ListPodIdentityAssociationsOutput{podIDPage(1, "")}})
+	r := &DiscoveredResource{Type: "AWS::EKS::Cluster", ID: "prod-cluster", Inputs: map[string]any{
+		"Name":     "prod-cluster",
+		"Identity": map[string]any{"Oidc": map[string]any{"Issuer": eksIssuerAAAA}},
+	}}
+	if err := (eksClusterDescriber{}).Enrich(context.Background(), awsCfg{}, r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if got := r.Inputs[eksIRSAField]; got != true {
+		t.Errorf("%s = %v, want true (matching OIDC provider)", eksIRSAField, got)
+	}
+	if got := r.Inputs[eksPodIdentityField]; got != true {
+		t.Errorf("%s = %v, want true (Pod-Identity association exists)", eksPodIdentityField, got)
 	}
 }

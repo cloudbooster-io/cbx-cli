@@ -2,8 +2,10 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 )
 
@@ -31,6 +33,17 @@ import (
 //   - ABSENT — the issuer is unknown, or the probe errored (UNKNOWN). A rule
 //     keyed on `== false` must NOT fire here: we refuse to assert an IRSA gap
 //     we could not verify.
+//
+// The describer also publishes a SECOND, complementary signal —
+// cb_describer_eks_pod_identity_present — because IRSA is no longer the only
+// way to give a pod a scoped IAM role. EKS Pod Identity (GA Nov 2023) binds a
+// service account to a role with NO IAM OIDC provider involved, so a
+// Pod-Identity cluster has cb_describer_eks_irsa_oidc_provider_present == false
+// even though its pods DO receive scoped credentials. A rule that read the IRSA
+// field alone would false-fire HIGH on every such cluster; the Pod-Identity
+// field is the positive signal that lets the rule avoid that. It is published
+// by enrichEKSPodIdentity with the same FP-safe polarity (true / false only on
+// a complete enumeration / ABSENT on error).
 type eksClusterDescriber struct{}
 
 func (eksClusterDescriber) CFNType() string { return "AWS::EKS::Cluster" }
@@ -39,11 +52,44 @@ func (eksClusterDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredRe
 	if r.Inputs == nil {
 		r.Inputs = map[string]any{}
 	}
-	issuer := eksOIDCIssuer(r.Inputs)
-	if issuer == "" {
-		return nil // no issuer to match — leave the field ABSENT (UNKNOWN)
+
+	// The awsCfg handed to Enrich is the BASE config; the lister gets the
+	// region separately (see runJob), so re-pin to the resource's region here.
+	// eks:ListPodIdentityAssociations is region-bound and would 400 against the
+	// wrong region. IAM is global so this is harmless for the OIDC probe — it
+	// merely makes that probe's --diagnose region label accurate. r.Region is
+	// populated by mapToDiscovered.
+	if r.Region != "" {
+		c = c.withRegion(r.Region)
 	}
-	return enrichEKSIRSAProvider(ctx, newEKSOIDCProviderClient(c), c.region(), issuer, r)
+
+	// The two probes are independent — a denied IRSA probe must not skip the
+	// Pod-Identity probe, and vice versa. Run both, join the errors so each
+	// surfaces to --diagnose (errors.As traverses the join, so a joined
+	// *PermissionError is still collected by the discovery loop).
+	var errs []error
+
+	// (1) IRSA OIDC provider (global IAM probe). Skipped when the cluster
+	// carries no issuer — matching against an empty issuer is meaningless and
+	// leaves the field ABSENT (UNKNOWN).
+	if issuer := eksOIDCIssuer(r.Inputs); issuer != "" {
+		if err := enrichEKSIRSAProvider(ctx, newEKSOIDCProviderClient(c), c.region(), issuer, r); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	// (2) Pod Identity associations (regional EKS probe). Independent of IRSA:
+	// a cluster can scope pod roles via Pod Identity with no OIDC provider, so
+	// this must run even when the IRSA probe is skipped. Name is the cluster's
+	// CFN primary identifier, set by both listEKSClustersNative (props["Name"])
+	// and a CloudControl-listed cluster; without it there is nothing to probe.
+	if name := readStr(r.Inputs, "Name"); name != "" {
+		if err := enrichEKSPodIdentity(ctx, newEKSPodIdentityClient(c), c.region(), name, r); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // newEKSOIDCProviderClient is the package-level seam the describer probes
@@ -90,6 +136,63 @@ func enrichEKSIRSAProvider(ctx context.Context, client eksOIDCProviderAPI, regio
 		}
 	}
 	r.Inputs["cb_describer_eks_irsa_oidc_provider_present"] = present
+	return nil
+}
+
+// newEKSPodIdentityClient is the package-level seam the Pod-Identity probe
+// builds its client through, so unit tests can inject a fake (mirrors
+// newEKSOIDCProviderClient). EKS is regional, so Enrich re-pins awsCfg to the
+// cluster's region before calling this.
+var newEKSPodIdentityClient = func(c awsCfg) eksPodIdentityAPI { return eks.NewFromConfig(c.cfg) }
+
+// eksPodIdentityAPI is the narrow EKS slice the Pod-Identity probe needs — just
+// ListPodIdentityAssociations. The concrete *eks.Client satisfies it; the seam
+// lets the FP-safe polarity and the pagination walk be unit-tested without a
+// live call (mirrors eksOIDCProviderAPI).
+type eksPodIdentityAPI interface {
+	ListPodIdentityAssociations(context.Context, *eks.ListPodIdentityAssociationsInput, ...func(*eks.Options)) (*eks.ListPodIdentityAssociationsOutput, error)
+}
+
+// enrichEKSPodIdentity runs the best-effort EKS Pod-Identity probe and
+// publishes the POSITIVE cb_describer_eks_pod_identity_present boolean. The
+// contract mirrors enrichEKSIRSAProvider: it must NEVER abort — a probe error
+// returns the classified error (so --diagnose surfaces a missing
+// eks:ListPodIdentityAssociations grant, which the existing eks:List* grant
+// already covers) while the field is left ABSENT and the resource is kept by
+// the discovery loop with every other field intact.
+//
+// FP-safe polarity:
+//   - true   — at least one Pod-Identity association exists. One is enough, so
+//     the walk short-circuits without paging further.
+//   - false  — the probe SUCCEEDED and the FULL paginated list enumerated zero
+//     associations. UNLIKE ListOpenIDConnectProviders, this API IS paginated,
+//     so "none" is asserted only after every page is walked — a COMPLETE
+//     enumeration, never inferred from a partial read.
+//   - ABSENT — the probe errored (UNKNOWN). A rule keyed on `== false` must NOT
+//     fire here: we refuse to assert a no-Pod-Identity state we could not
+//     verify.
+func enrichEKSPodIdentity(ctx context.Context, client eksPodIdentityAPI, region, clusterName string, r *DiscoveredResource) error {
+	var next *string
+	for {
+		out, err := client.ListPodIdentityAssociations(ctx, &eks.ListPodIdentityAssociationsInput{
+			ClusterName: &clusterName,
+			NextToken:   next,
+		})
+		if err != nil {
+			return classifyAWSError(err, "eks", "eks:ListPodIdentityAssociations", region)
+		}
+		if out != nil && len(out.Associations) > 0 {
+			r.Inputs["cb_describer_eks_pod_identity_present"] = true
+			return nil
+		}
+		if out == nil || out.NextToken == nil || *out.NextToken == "" {
+			break
+		}
+		next = out.NextToken
+	}
+	// Every page walked, zero associations → a COMPLETE enumeration and a
+	// definite "no Pod Identity" (mirrors the OIDC probe's false-case).
+	r.Inputs["cb_describer_eks_pod_identity_present"] = false
 	return nil
 }
 
