@@ -49,10 +49,14 @@ func TestDynamoTableToRaw_RoundTrip(t *testing.T) {
 		t.Errorf("ProvisionedThroughput.ReadCapacityUnits: got %v, want 5", pt["ReadCapacityUnits"])
 	}
 
-	// SSE-AWS-owned-key: a table with no CMK must carry NO SSESpecification —
-	// its absence is the "without CMK encryption" signal.
+	// SSE-AWS-owned-key: a table with no CMK must carry NO SSESpecification AND
+	// the POSITIVE cb_describer_dynamodb_sse_aws_owned signal — the rule reads the
+	// present field, never infers the gap from the absent SSESpecification.
 	if _, present := dr.Inputs["SSESpecification"]; present {
-		t.Errorf("SSESpecification: present, want absent (AWS-owned key ⇒ no-CMK finding reads the absence)")
+		t.Errorf("SSESpecification: present, want absent (AWS-owned key carries no SSEDescription)")
+	}
+	if v, ok := dr.Inputs["cb_describer_dynamodb_sse_aws_owned"].(bool); !ok || !v {
+		t.Errorf("cb_describer_dynamodb_sse_aws_owned: got %v, want true (AWS-owned key ⇒ non-CMK signal)", dr.Inputs["cb_describer_dynamodb_sse_aws_owned"])
 	}
 
 	// no-deletion-protection: explicit false.
@@ -110,12 +114,40 @@ func TestDynamoTableToRaw_SecurePostureInverse(t *testing.T) {
 	if sse["KMSMasterKeyId"] != "arn:aws:kms:eu-central-1:111122223333:key/abcd-1234" {
 		t.Errorf("SSESpecification.KMSMasterKeyId: got %v (CMK must surface for the KMS edge)", sse["KMSMasterKeyId"])
 	}
+	// A KMS-encrypted table (SSEType=KMS) logs key usage to CloudTrail, so it must
+	// NOT carry the AWS-owned signal — guards the rule against firing on tier-2/3.
+	if _, present := dr.Inputs["cb_describer_dynamodb_sse_aws_owned"]; present {
+		t.Errorf("cb_describer_dynamodb_sse_aws_owned: present, want absent for a KMS-encrypted table")
+	}
 	if v, ok := dr.Inputs["DeletionProtectionEnabled"].(bool); !ok || !v {
 		t.Errorf("DeletionProtectionEnabled: got %v, want true", dr.Inputs["DeletionProtectionEnabled"])
 	}
 	pitr, _ := dr.Inputs["PointInTimeRecoverySpecification"].(map[string]any)
 	if v, ok := pitr["PointInTimeRecoveryEnabled"].(bool); !ok || !v {
 		t.Errorf("PointInTimeRecoveryEnabled: got %v, want true", pitr["PointInTimeRecoveryEnabled"])
+	}
+}
+
+// A legacy AES256 table populates SSEDescription but with a non-KMS SSEType —
+// still the AWS-owned tier (no CloudTrail audit trail of decrypts), so the
+// positive signal must fire off "SSEType != KMS", not merely "SSEDescription
+// absent". Guards the field condition against a present-but-non-CMK posture.
+func TestDynamoTableToRaw_LegacyAES256IsAWSOwned(t *testing.T) {
+	td := dynamodbtypes.TableDescription{
+		TableName:      strp("cbx-legacy"),
+		SSEDescription: &dynamodbtypes.SSEDescription{SSEType: dynamodbtypes.SSETypeAes256},
+	}
+
+	raw, ok := dynamoTableToRaw(td, nil, "eu-central-1")
+	if !ok {
+		t.Fatal("dynamoTableToRaw !ok")
+	}
+	dr, err := raw.mapToDiscovered()
+	if err != nil {
+		t.Fatalf("mapToDiscovered: %v", err)
+	}
+	if v, ok := dr.Inputs["cb_describer_dynamodb_sse_aws_owned"].(bool); !ok || !v {
+		t.Errorf("cb_describer_dynamodb_sse_aws_owned: got %v, want true (AES256 is AWS-owned, not a CMK)", dr.Inputs["cb_describer_dynamodb_sse_aws_owned"])
 	}
 }
 

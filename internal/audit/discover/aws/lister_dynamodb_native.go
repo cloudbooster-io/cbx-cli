@@ -100,12 +100,18 @@ func describeTablePITR(ctx context.Context, client *dynamodb.Client, tableName, 
 //     nil BillingModeSummary means provisioned; only an explicit PAY_PER_REQUEST
 //     flips it to on-demand. ProvisionedThroughput is emitted only when non-zero
 //     (on-demand reports 0/0) so on-demand tables don't carry misleading zeros.
-//   - SSESpecification ABSENT → the table uses the default AWS-owned key (no
-//     CMK). DynamoDB encryption is always on; DescribeTable returns no
-//     SSEDescription for AWS-owned-key tables, so its absence IS the
-//     "without CMK encryption" signal. When a KMS/CMK key is in use,
-//     SSEDescription is populated and we emit SSESpecification with SSEType +
-//     KMSMasterKeyId (the latter also feeds the DynamoDB → KMS CMK diagram edge).
+//   - AWS-owned-key (non-CMK) encryption → cb_describer_dynamodb_sse_aws_owned:
+//     true. DynamoDB encryption is always on, in three tiers: AWS-owned
+//     (DescribeTable returns NO SSEDescription), AWS-managed `aws/dynamodb`, and
+//     customer-managed CMK (the latter two both populate SSEDescription with
+//     SSEType=KMS). Rather than make the grounded rule infer the gap from an
+//     ABSENT SSESpecification — the prompt forbids inferring from a missing key
+//     everywhere else — we emit a POSITIVE field whenever there is no KMS
+//     SSEType (absent SSEDescription, or a legacy AES256 type): exactly the
+//     AWS-owned tier, the only one whose key usage is NOT logged to CloudTrail.
+//     For both KMS tiers we emit SSESpecification with SSEType + KMSMasterKeyId
+//     (the latter also feeds the DynamoDB → KMS CMK diagram edge) and leave the
+//     positive field unset.
 //   - DeletionProtectionEnabled: false → the no-deletion-protection finding.
 //   - PointInTimeRecoverySpecification.PointInTimeRecoveryEnabled → the no-PITR
 //     finding. Set ONLY when the caller successfully read it (pitrEnabled
@@ -156,6 +162,15 @@ func dynamoTableToRaw(t dynamodbtypes.TableDescription, pitrEnabled *bool, regio
 		}
 		putStr(sse, "KMSMasterKeyId", t.SSEDescription.KMSMasterKeyArn)
 		props["SSESpecification"] = sse
+	}
+
+	// Positive AWS-owned-key (non-CMK) signal: true exactly for the tier whose
+	// SSEType is not KMS — absent SSEDescription or a legacy AES256 type — so the
+	// grounded rule reads a present field instead of inferring from an absent
+	// SSESpecification. Both KMS tiers (AWS-managed `aws/dynamodb` and customer
+	// CMK) log key usage to CloudTrail, so they must NOT carry this field.
+	if t.SSEDescription == nil || t.SSEDescription.SSEType != dynamodbtypes.SSETypeKms {
+		props["cb_describer_dynamodb_sse_aws_owned"] = true
 	}
 
 	putBool(props, "DeletionProtectionEnabled", t.DeletionProtectionEnabled)
