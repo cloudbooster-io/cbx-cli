@@ -50,6 +50,7 @@
         "iam:GetRolePolicy",
         "iam:GetUser",
         "iam:ListAccessKeys",
+        "iam:ListAttachedGroupPolicies",
         "iam:ListAttachedRolePolicies",
         "iam:ListAttachedUserPolicies",
         "iam:ListGroups",

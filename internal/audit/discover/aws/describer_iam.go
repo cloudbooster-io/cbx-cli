@@ -290,6 +290,78 @@ func (iamUserDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredResou
 	return nil
 }
 
+// iamGroupDescriber enriches AWS::IAM::Group with the attached AWS-managed
+// policy ARNs (CloudControl's group payload doesn't surface them in a usable
+// form) and flags the broad-but-not-full-admin PowerUserAccess grant as a
+// top-level positive boolean. A group carrying PowerUserAccess hands every
+// member persistent, near-account-wide standing privilege — the planted
+// "power-user group" finding the grounded analyzer keys off.
+//
+// Deliberately NARROW: it surfaces only the PowerUserAccess signal, NOT an
+// admin-equivalent one (unlike the role/user describers, which set
+// cb_describer_admin_managed_policy_attached). Flagging AdministratorAccess
+// here would let the analyzer newly surface an intentional `admins` group as
+// a finding the audit never planted; the power-user case is the one the
+// rule-gap targets, and because the field below is true ONLY for
+// PowerUserAccess the MEDIUM bullet can never double-fire on a full-admin
+// group.
+//
+// Per-group API cost: 1 call (ListAttachedGroupPolicies).
+type iamGroupDescriber struct{}
+
+func (iamGroupDescriber) CFNType() string { return "AWS::IAM::Group" }
+
+func (iamGroupDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredResource) error {
+	if r.Inputs == nil {
+		r.Inputs = map[string]any{}
+	}
+	groupName := r.ID
+	if groupName == "" {
+		return fmt.Errorf("iam group describer: empty group name")
+	}
+	client := iam.NewFromConfig(c.cfg)
+
+	pols, err := client.ListAttachedGroupPolicies(ctx, &iam.ListAttachedGroupPoliciesInput{GroupName: &groupName})
+	if err != nil {
+		return classifyIAMError(err, groupName, "iam:ListAttachedGroupPolicies")
+	}
+	if len(pols.AttachedPolicies) > 0 {
+		arns := make([]string, 0, len(pols.AttachedPolicies))
+		for _, p := range pols.AttachedPolicies {
+			if p.PolicyArn != nil {
+				arns = append(arns, *p.PolicyArn)
+			}
+		}
+		// Surface the ARN list so the finding can cite the actual policy
+		// (consistent with the role/user describers).
+		r.Inputs["cb_describer_attached_managed_policies"] = arns
+		// PRESENT-FIELD, admin-excluding: true ONLY when the AWS-managed
+		// PowerUserAccess policy is attached. AdministratorAccess does NOT
+		// set this, so the MEDIUM power-user-group bullet can never fire on
+		// a full-admin group. Absent when the group has no managed policies.
+		r.Inputs["cb_describer_power_user_managed_policy_attached"] = hasPowerUserManagedPolicy(arns)
+	}
+
+	return nil
+}
+
+// hasPowerUserManagedPolicy reports whether the AWS-managed PowerUserAccess
+// policy is attached. Exact-ARN match (not a suffix) so a customer-managed
+// policy coincidentally named "PowerUserAccess" — whose ARN carries the
+// account id, not the literal `aws` — does NOT match. PowerUserAccess is the
+// broad-but-not-full-admin grant (full access to nearly every service except
+// IAM / Organizations / Account user-and-permission management);
+// AdministratorAccess is deliberately NOT recognised here so the
+// power-user-group finding never collides with a full-admin group.
+func hasPowerUserManagedPolicy(arns []string) bool {
+	for _, a := range arns {
+		if a == "arn:aws:iam::aws:policy/PowerUserAccess" {
+			return true
+		}
+	}
+	return false
+}
+
 // iamManagedPolicyDescriber fetches the actual policy document for
 // customer-managed managed policies. The CloudControl AWS::IAM::ManagedPolicy
 // schema exposes PolicyDocument, but the field is URL-encoded JSON

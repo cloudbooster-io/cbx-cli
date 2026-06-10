@@ -10,6 +10,7 @@ func TestDescriberFor(t *testing.T) {
 	registered := []string{
 		"AWS::S3::Bucket",
 		"AWS::IAM::Role",
+		"AWS::IAM::Group",
 		"AWS::RDS::DBInstance",
 		"AWS::RDS::DBCluster",
 		"AWS::Lambda::Function",

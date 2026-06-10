@@ -305,6 +305,9 @@ func perResourceDescriberCost(cfnType string) int {
 		// count and not folded in here — usually 0-2 per role; coarse
 		// estimate stays useful at order-of-magnitude.
 		return 3
+	case "AWS::IAM::Group":
+		// iamGroupDescriber: ListAttachedGroupPolicies.
+		return 1
 	case "AWS::ECR::Repository":
 		// ecrRepositoryDescriber: GetLifecyclePolicy.
 		return 1
