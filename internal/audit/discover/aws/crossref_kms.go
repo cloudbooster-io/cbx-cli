@@ -18,8 +18,11 @@ import (
 // events or a usage-telemetry layer.
 //
 // Reference fields walked (depth-1 + a few known nested paths):
-//   - KmsKeyId            EBS Volume, EFS, RDS, Lambda env, Secret, DynamoDB
+//   - KmsKeyId            EBS Volume, EFS, RDS, Lambda env, Secret
 //   - KMSMasterKeyID      SNS, S3 SSE rules
+//   - KMSMasterKeyId      DynamoDB SSESpecification (nested; upper KMS + "Id")
+//   - KMSKeyId            CloudTrail Trail (top-level CFN property)
+//   - KeyArn              EKS EncryptionConfig provider (nested)
 //   - KmsKeyArn           some services
 //   - KmsKey              some services
 //   - EncryptionKeyArn    AWS::Backup::BackupVault (vault → CMK link)
@@ -170,6 +173,14 @@ func isKMSFieldName(name string) bool {
 	case "KmsKeyId", "KMSMasterKeyID", "KmsKeyArn", "KmsKey",
 		"KmsMasterKeyId", "KmsMasterKeyID", "SseKmsKeyId",
 		"EncryptionKeyArn":
+		return true
+	// Class-1 cross-ref gaps: DynamoDB's nested SSESpecification.KMSMasterKeyId
+	// (upper KMS + "Id" — distinct from the SNS/S3 KMSMasterKeyID above),
+	// CloudTrail's top-level KMSKeyId (cf. severity_floor.go isCloudTrailWithoutKMS),
+	// and the EKS EncryptionConfig[].Provider.KeyArn the EKS lister now surfaces.
+	// KeyArn is generic but FP-safe by direction: resolveRef only notes a
+	// reference when the value resolves to a DISCOVERED key.
+	case "KMSMasterKeyId", "KMSKeyId", "KeyArn":
 		return true
 	}
 	return false

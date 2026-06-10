@@ -115,12 +115,27 @@ func eksClusterToRaw(cl ekstypes.Cluster, region string) (rawResource, bool) {
 		props["Logging"] = map[string]any{"ClusterLogging": logs}
 	}
 
-	// EncryptionConfig presence is the load-bearing signal (secrets
-	// encryption at rest configured vs not); the key ARNs aren't needed
-	// for the finding, so a count-bearing list of the resource sets is
-	// enough for the LLM.
+	// EncryptionConfig presence is the load-bearing signal the grounded LLM
+	// reads (secrets encryption at rest configured vs not). We ALSO surface the
+	// CMK ARN(s) nested under the CFN EncryptionConfig[].Provider.KeyArn shape so
+	// the KMS cross-reference pass (walkKMSReferences → isKMSFieldName "KeyArn")
+	// marks a customer key used only for EKS secrets encryption as referenced —
+	// without it that key is mis-flagged cb_describer_is_unused. Provider/KeyArn
+	// may be nil/empty (older clusters), so emit the list only for entries that
+	// actually carry an ARN.
 	if len(cl.EncryptionConfig) > 0 {
 		props["EncryptionConfigPresent"] = true
+		cfgs := make([]any, 0, len(cl.EncryptionConfig))
+		for _, ec := range cl.EncryptionConfig {
+			if ec.Provider != nil && ec.Provider.KeyArn != nil && *ec.Provider.KeyArn != "" {
+				cfgs = append(cfgs, map[string]any{
+					"Provider": map[string]any{"KeyArn": *ec.Provider.KeyArn},
+				})
+			}
+		}
+		if len(cfgs) > 0 {
+			props["EncryptionConfig"] = cfgs
+		}
 	} else {
 		props["EncryptionConfigPresent"] = false
 	}
