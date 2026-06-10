@@ -57,6 +57,7 @@ func rdsInstanceToRaw(inst rdstypes.DBInstance, region string) (rawResource, boo
 	putBool(props, "StorageEncrypted", inst.StorageEncrypted)
 	putBool(props, "PubliclyAccessible", inst.PubliclyAccessible)
 	putBool(props, "DeletionProtection", inst.DeletionProtection)
+	putBool(props, "AutoMinorVersionUpgrade", inst.AutoMinorVersionUpgrade)
 	putInt32(props, "BackupRetentionPeriod", inst.BackupRetentionPeriod)
 	if inst.DBSubnetGroup != nil {
 		putStr(props, "DBSubnetGroupName", inst.DBSubnetGroup.DBSubnetGroupName)

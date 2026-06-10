@@ -63,6 +63,52 @@ func TestRDSClusterToRaw_CarriesKmsKeyId(t *testing.T) {
 	}
 }
 
+// rdsInstanceToRaw must carry AutoMinorVersionUpgrade under that exact CFN
+// property name so the round-2 patch-hygiene bullet (which reads raw
+// `AutoMinorVersionUpgrade`) has the field in hand on the native fallback path —
+// not just the CloudControl path. putBool discipline: stored when set (true OR
+// false), absent when nil, so a DB discovered without the field never trips the
+// fire-on-explicit-false rule.
+func TestRDSInstanceToRaw_CarriesAutoMinorVersionUpgrade(t *testing.T) {
+	cases := []struct {
+		name string
+		amvu *bool
+		want any // expected Inputs["AutoMinorVersionUpgrade"], or nil for "absent"
+	}{
+		{name: "explicit false → stored false (the finding signal)", amvu: boolp(false), want: false},
+		{name: "explicit true → stored true (compliant)", amvu: boolp(true), want: true},
+		{name: "nil → absent (never infer the gap from a missing key)", amvu: nil, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, ok := rdsInstanceToRaw(rdstypes.DBInstance{
+				DBInstanceIdentifier:    strp("cbx-web-db"),
+				AutoMinorVersionUpgrade: tc.amvu,
+			}, "eu-central-1")
+			if !ok {
+				t.Fatal("rdsInstanceToRaw !ok for a valid instance")
+			}
+			dr, err := raw.mapToDiscovered()
+			if err != nil {
+				t.Fatalf("mapToDiscovered: %v", err)
+			}
+			got, present := dr.Inputs["AutoMinorVersionUpgrade"]
+			if tc.want == nil {
+				if present {
+					t.Errorf("AutoMinorVersionUpgrade = %v, want absent", got)
+				}
+				return
+			}
+			if !present {
+				t.Fatalf("AutoMinorVersionUpgrade absent, want %v", tc.want)
+			}
+			if got != tc.want {
+				t.Errorf("AutoMinorVersionUpgrade = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The gating assertion: a customer CMK used ONLY as a fallback-discovered RDS
 // cluster's storage-encryption key must resolve to is_unused=false. This goes
 // through the full toRaw → mapToDiscovered (JSON round-trip) → crossReferenceKMS
