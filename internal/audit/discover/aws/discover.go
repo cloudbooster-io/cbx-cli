@@ -320,6 +320,11 @@ func perResourceDescriberCost(cfnType string) int {
 	case "AWS::Backup::BackupPlan":
 		// backupPlanDescriber: GetBackupPlan.
 		return 1
+	case "AWS::EKS::Cluster":
+		// eksClusterDescriber: iam:ListOpenIDConnectProviders (IRSA) +
+		// eks:ListPodIdentityAssociations (Pod Identity). One call each per
+		// cluster; the Pod-Identity walk is usually a single page.
+		return 2
 	}
 	// Pure-normalization describers (RDS instance/cluster, Lambda, EC2,
 	// Athena workgroup) make no SDK calls.
