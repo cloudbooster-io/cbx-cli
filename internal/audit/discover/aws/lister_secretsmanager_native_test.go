@@ -75,6 +75,99 @@ func TestSecretToRaw_RotatedSecretDoesNotFalseFire(t *testing.T) {
 }
 
 // A secret with no ARN (CloudControl's primary id) cannot be synthesised into a
+// secretToRaw must carry the secret's encryption CMK under the exact CFN
+// property name crossReferenceKMS walks ("KmsKeyId"). ListSecrets returns it
+// only for a customer CMK (the default aws/secretsmanager key leaves it nil), so
+// the default-key case stays absent.
+func TestSecretToRaw_CarriesKmsKeyId(t *testing.T) {
+	cases := []struct {
+		name    string
+		kms     *string
+		wantKey any // expected Inputs["KmsKeyId"], or nil for "absent"
+	}{
+		{
+			name:    "customer cmk → stored under KmsKeyId",
+			kms:     strp("arn:aws:kms:eu-central-1:123:key/secret-cmk"),
+			wantKey: "arn:aws:kms:eu-central-1:123:key/secret-cmk",
+		},
+		{
+			name:    "no key (aws/secretsmanager default) → absent",
+			kms:     nil,
+			wantKey: nil,
+		},
+		{
+			name:    "empty key → absent (putStr discipline)",
+			kms:     strp(""),
+			wantKey: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, ok := secretToRaw(smtypes.SecretListEntry{
+				ARN:      strp("arn:aws:secretsmanager:eu-central-1:111122223333:secret:prod/enc-AbCdEf"),
+				KmsKeyId: tc.kms,
+			}, "eu-central-1")
+			if !ok {
+				t.Fatal("secretToRaw !ok")
+			}
+			dr, err := raw.mapToDiscovered()
+			if err != nil {
+				t.Fatalf("mapToDiscovered: %v", err)
+			}
+			got, present := dr.Inputs["KmsKeyId"]
+			if tc.wantKey == nil {
+				if present {
+					t.Errorf("KmsKeyId = %v, want absent", got)
+				}
+				return
+			}
+			if !present {
+				t.Fatalf("KmsKeyId absent, want %v", tc.wantKey)
+			}
+			if got != tc.wantKey {
+				t.Errorf("KmsKeyId = %v, want %v", got, tc.wantKey)
+			}
+		})
+	}
+}
+
+// Gating assertion: a customer CMK used ONLY to encrypt a fallback-discovered
+// secret resolves to is_unused=false. The full toRaw → mapToDiscovered (JSON
+// round-trip) → crossReferenceKMS path catches a wrong-cased store.
+func TestSecretToRaw_CrossRefCountsSecret(t *testing.T) {
+	keyARN := "arn:aws:kms:eu-central-1:123:key/secret-only-key"
+	raw, ok := secretToRaw(smtypes.SecretListEntry{
+		ARN:      strp("arn:aws:secretsmanager:eu-central-1:111122223333:secret:prod/only-ref-XyZ"),
+		KmsKeyId: strp(keyARN),
+	}, "eu-central-1")
+	if !ok {
+		t.Fatal("secretToRaw !ok")
+	}
+	secret, err := raw.mapToDiscovered()
+	if err != nil {
+		t.Fatalf("mapToDiscovered: %v", err)
+	}
+
+	resources := []DiscoveredResource{
+		{
+			Type: "AWS::KMS::Key",
+			URN:  "aws://eu-central-1/AWS::KMS::Key/secret-only-key",
+			Inputs: map[string]any{
+				"Arn":   keyARN,
+				"KeyId": "secret-only-key",
+			},
+		},
+		secret,
+	}
+
+	crossReferenceKMS(resources)
+
+	key := findResource(t, resources, "aws://eu-central-1/AWS::KMS::Key/secret-only-key")
+	if key.Inputs["cb_describer_is_unused"] != false {
+		t.Errorf("CMK used only as Secrets Manager secret key flagged is_unused=%v, want false (the FP this fix closes)", key.Inputs["cb_describer_is_unused"])
+	}
+}
+
 // CFN-shape raw — secretToRaw must skip it rather than emit an id-less resource.
 func TestSecretToRaw_EmptyARN(t *testing.T) {
 	if _, ok := secretToRaw(smtypes.SecretListEntry{ARN: nil, Name: strp("orphan")}, "eu-central-1"); ok {

@@ -69,6 +69,22 @@ func ecrRepositoryToRaw(repo ecrtypes.Repository, region string) (rawResource, b
 			"ScanOnPush": repo.ImageScanningConfiguration.ScanOnPush,
 		}
 	}
+	// EncryptionConfiguration.KmsKey is the CFN property crossReferenceKMS walks
+	// (isKMSFieldName matches the nested "KmsKey" key) — without it a customer
+	// CMK used only as this repo's encryption key is mis-flagged
+	// cb_describer_is_unused=true when this fallback fires. Emitted ONLY for the
+	// KMS encryption type with an explicit key (SSE-S3/AES256 carries no key, and
+	// the KMS type without a key id is the AWS-managed aws/ecr key), mirroring
+	// CloudControl's nested shape and !64's present-field discipline. FP-safe by
+	// direction: it can only count a real reference, never invent an unused=true.
+	if repo.EncryptionConfiguration != nil &&
+		repo.EncryptionConfiguration.EncryptionType == ecrtypes.EncryptionTypeKms &&
+		repo.EncryptionConfiguration.KmsKey != nil && *repo.EncryptionConfiguration.KmsKey != "" {
+		props["EncryptionConfiguration"] = map[string]any{
+			"EncryptionType": string(repo.EncryptionConfiguration.EncryptionType),
+			"KmsKey":         *repo.EncryptionConfiguration.KmsKey,
+		}
+	}
 
 	return marshalRaw("AWS::ECR::Repository", id, region, props)
 }

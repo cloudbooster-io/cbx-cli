@@ -100,6 +100,100 @@ func TestLambdaFunctionToRaw_SecurePostureInverse(t *testing.T) {
 	}
 }
 
+// lambdaFunctionToRaw must carry the env-var encryption CMK under the exact CFN
+// property name crossReferenceKMS walks ("KmsKeyArn") — note the SDK field is
+// KMSKeyArn (all-caps). GetFunctionConfiguration returns it only for a customer
+// CMK, so the default-key case stays absent.
+func TestLambdaFunctionToRaw_CarriesKmsKeyArn(t *testing.T) {
+	cases := []struct {
+		name    string
+		kms     *string
+		wantKey any // expected Inputs["KmsKeyArn"], or nil for "absent"
+	}{
+		{
+			name:    "customer cmk → stored under KmsKeyArn",
+			kms:     strp("arn:aws:kms:eu-central-1:123:key/lambda-cmk"),
+			wantKey: "arn:aws:kms:eu-central-1:123:key/lambda-cmk",
+		},
+		{
+			name:    "no key (aws-managed default) → absent",
+			kms:     nil,
+			wantKey: nil,
+		},
+		{
+			name:    "empty key → absent (putStr discipline)",
+			kms:     strp(""),
+			wantKey: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, ok := lambdaFunctionToRaw(lambdatypes.FunctionConfiguration{
+				FunctionName: strp("encrypted-fn"),
+				KMSKeyArn:    tc.kms,
+			}, nil, "eu-central-1")
+			if !ok {
+				t.Fatal("lambdaFunctionToRaw !ok")
+			}
+			dr, err := raw.mapToDiscovered()
+			if err != nil {
+				t.Fatalf("mapToDiscovered: %v", err)
+			}
+			got, present := dr.Inputs["KmsKeyArn"]
+			if tc.wantKey == nil {
+				if present {
+					t.Errorf("KmsKeyArn = %v, want absent", got)
+				}
+				return
+			}
+			if !present {
+				t.Fatalf("KmsKeyArn absent, want %v", tc.wantKey)
+			}
+			if got != tc.wantKey {
+				t.Errorf("KmsKeyArn = %v, want %v", got, tc.wantKey)
+			}
+		})
+	}
+}
+
+// Gating assertion: a customer CMK used ONLY to encrypt a fallback-discovered
+// Lambda's env vars resolves to is_unused=false. The full toRaw → mapToDiscovered
+// (JSON round-trip) → crossReferenceKMS path catches a wrong-cased store the
+// presence check above would miss.
+func TestLambdaFunctionToRaw_CrossRefCountsFunction(t *testing.T) {
+	keyARN := "arn:aws:kms:eu-central-1:123:key/lambda-only-key"
+	raw, ok := lambdaFunctionToRaw(lambdatypes.FunctionConfiguration{
+		FunctionName: strp("fn-only-ref"),
+		KMSKeyArn:    strp(keyARN),
+	}, nil, "eu-central-1")
+	if !ok {
+		t.Fatal("lambdaFunctionToRaw !ok")
+	}
+	fn, err := raw.mapToDiscovered()
+	if err != nil {
+		t.Fatalf("mapToDiscovered: %v", err)
+	}
+
+	resources := []DiscoveredResource{
+		{
+			Type: "AWS::KMS::Key",
+			URN:  "aws://eu-central-1/AWS::KMS::Key/lambda-only-key",
+			Inputs: map[string]any{
+				"Arn":   keyARN,
+				"KeyId": "lambda-only-key",
+			},
+		},
+		fn,
+	}
+
+	crossReferenceKMS(resources)
+
+	key := findResource(t, resources, "aws://eu-central-1/AWS::KMS::Key/lambda-only-key")
+	if key.Inputs["cb_describer_is_unused"] != false {
+		t.Errorf("CMK used only as Lambda env-var key flagged is_unused=%v, want false (the FP this fix closes)", key.Inputs["cb_describer_is_unused"])
+	}
+}
+
 func TestLambdaFunctionToRaw_EmptyName(t *testing.T) {
 	if _, ok := lambdaFunctionToRaw(lambdatypes.FunctionConfiguration{FunctionName: nil}, nil, "eu-central-1"); ok {
 		t.Error("lambdaFunctionToRaw returned ok for a nil function name")
