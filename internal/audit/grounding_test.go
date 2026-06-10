@@ -306,6 +306,14 @@ func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
 		"instance-scoped; an `AWS::RDS::DBCluster` carries neither carve-out signal",
 		// #5 EC2 with no IAM instance profile → WARNING, no-profile (empty-string) detection (04)
 		"whose `cb_describer_instance_profile_arn` is the empty string",
+		// M1 ratification: the bullet's fire-on-ALL (no intent scope) is a
+		// COORDINATOR DECISION, not an oversight. Pin the load-bearing imperative
+		// — an intent gate directly contradicts it, so a future reviewer who
+		// "fixes" the asymmetry by adding a prod-intent/dev-test-sandbox gate (as
+		// the RDS siblings carry) breaks this test rather than silently diverging
+		// from the ratified behaviour. "intent-scoped" alone recurs in the prompt
+		// and would not discriminate; this exact imperative is unique.
+		"do NOT add a prod-intent gate here",
 		// #1 ALB access logging disabled → WARNING (07, via the !53 attributes enrichment)
 		"`cb_describer_alb_access_logs_enabled: false`",
 		// the ALB FP guard: positive field, explicit-false-only, never inferred from absence
