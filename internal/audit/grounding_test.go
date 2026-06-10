@@ -596,3 +596,51 @@ func TestBuildGroundedPrompt_ObservabilityPostureDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildGroundedPrompt_IncludesECSLambdaSecretsBullets pins the bucket-A
+// ECS task-definition + Lambda posture bullets (CIS/FSBP coverage-gap batch:
+// ECS.4 privileged, ECS.8 plaintext-secrets-in-env, ECS.9 no-log-driver,
+// Lambda plaintext-secrets) into the grounded prompt. These read RAW
+// synthesised `ContainerDefinitions[*]` fields (the native ECS lister surfaces
+// Privileged / Environment / Secrets / LogConfiguration directly — no
+// `cb_describer_*` probe) and, for Lambda, the already-set-but-unconsumed
+// `cb_describer_env_has_plaintext_secrets`. The two secret bullets are
+// HEURISTICS with no compliant-control live-validation yet, so beyond the four
+// identity cues this test pins the load-bearing FALSE-POSITIVE controls a later
+// edit could silently loosen:
+//   - the privileged rule's explicit-`true`-only / skip-on-absent guard — the
+//     AWS default is non-privileged, and the lister emits the field only when
+//     set, so firing on absent/unset would invent a finding from a missing key;
+//   - the ECS env-secret bullet's "NEVER assert the value IS a leaked secret"
+//     framing — it must stay a key-NAME-shape review nudge at `warning`, never a
+//     certainty claim, or the heuristic ships as noisy accusation;
+//   - the Lambda bullet's `info` severity + the exact "review whether…" framing
+//     the brief mandated — a future edit that promotes it past `info` or drops
+//     the hedge reintroduces the FP risk the field was left unconsumed over.
+func TestBuildGroundedPrompt_IncludesECSLambdaSecretsBullets(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// ECS.4 privileged container → HIGH (unique title + explicit per-rule severity)
+		"Privileged container → HIGH",
+		// fire condition: explicit `true` only
+		"whose `Privileged` is explicitly `true`",
+		// load-bearing FP guard: skip absent/unset (AWS default non-privileged)
+		"SKIP when `Privileged` is ABSENT/unset",
+		// ECS.8 plaintext secrets in env → warning, FP-aware (unique title)
+		"Secret-shaped plaintext `Environment` vars → `warning`",
+		// load-bearing FP framing: heuristic, never a certainty claim
+		"NEVER assert the value IS a leaked secret",
+		// ECS.9 no log driver → warning (unique title + raw-field condition)
+		"No container log driver → `warning`",
+		"has no `LogConfiguration.LogDriver`",
+		// Lambda plaintext secrets → info, FP-aware (unique title + field identity)
+		"Lambda functions with secret-shaped plaintext env vars → `info`",
+		"`cb_describer_env_has_plaintext_secrets: true`",
+		// the brief-mandated review framing (keeps it a nudge, not an accusation)
+		"review whether these env vars hold plaintext secrets",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing ECS/Lambda secrets bullet cue %q", want)
+		}
+	}
+}
