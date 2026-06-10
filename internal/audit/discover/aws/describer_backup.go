@@ -7,6 +7,8 @@ import (
 
 	backup "github.com/aws/aws-sdk-go-v2/service/backup"
 	backuptypes "github.com/aws/aws-sdk-go-v2/service/backup/types"
+	kms "github.com/aws/aws-sdk-go-v2/service/kms"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 )
 
 // The two Backup describers surface posture that CloudControl's GetResource
@@ -19,11 +21,15 @@ import (
 // single-region plan with no cross-region copy). So each hint is gated to fire
 // only on an AUTHORITATIVE negative — never on a read we couldn't make:
 //
-//   - We assert false ONLY when AWS explicitly says the thing is absent
-//     (CUSTOMER vs AWS_OWNED key type and a Locked==false flag from a successful
-//     DescribeBackupVault; a ResourceNotFoundException / empty document from
-//     GetBackupVaultAccessPolicy; zero cross-region copy actions from a
-//     successful GetBackupPlan).
+//   - We assert the key-type hint ONLY from an authoritative source: the
+//     EncryptionKeyType enum (CUSTOMER vs AWS_OWNED) when AWS populates it, or
+//     — because AWS omits that enum for the default `aws/backup` managed-key
+//     vault — the key's KMS KeyManager (AWS vs CUSTOMER) read via an
+//     already-granted kms:DescribeKey on EncryptionKeyArn. We assert the other
+//     negatives only on an explicit signal too: a Locked==false flag from a
+//     successful DescribeBackupVault; a ResourceNotFoundException / empty
+//     document from GetBackupVaultAccessPolicy; zero cross-region copy actions
+//     from a successful GetBackupPlan.
 //   - On a permission/throttle error the hint is left ABSENT, so the grounded
 //     LLM is never told "no policy" / "AWS-managed key" / "not locked" on a
 //     failed read. Likewise a nil Locked pointer (AWS returned no value) leaves
@@ -37,14 +43,36 @@ import (
 // --- pure gating helpers (unit-tested in describer_backup_test.go) ---------
 
 // backupKeyIsAwsManaged classifies a vault's EncryptionKeyType. `known` is
-// false for an empty/unrecognised enum value, in which case the caller MUST
-// leave the hint absent — asserting "AWS-managed" on an unknown type would be
-// the false positive we're guarding against.
+// false for an empty/unrecognised enum value, in which case the caller falls
+// back to the key's KMS KeyManager (backupKeyManagerIsAwsManaged) rather than
+// guessing — asserting "AWS-managed" on an unknown type would be the false
+// positive we're guarding against. AWS is known to OMIT this enum for the
+// default `aws/backup` managed-key vault (observed live: EncryptionKeyArn
+// present, EncryptionKeyType empty), which is exactly why the fallback exists.
 func backupKeyIsAwsManaged(t backuptypes.EncryptionKeyType) (isAwsManaged, known bool) {
 	switch t {
 	case backuptypes.EncryptionKeyTypeAwsOwnedKmsKey:
 		return true, true
 	case backuptypes.EncryptionKeyTypeCustomerManagedKmsKey:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// backupKeyManagerIsAwsManaged classifies a vault key by its KMS KeyManager —
+// the definitional AWS-vs-customer field — and is the FP-safe fallback for when
+// DescribeBackupVault omits EncryptionKeyType (the common default-`aws/backup`
+// case). Reading KeyManager instead of assuming an empty enum means "AWS-managed"
+// is what keeps a customer CMK whose enum AWS also happens to omit from being
+// mislabelled: such a key reports KeyManager CUSTOMER here, so the hint becomes
+// false, never a spurious true. `known` is false for an empty/unrecognised
+// KeyManager, in which case the caller MUST leave the hint absent.
+func backupKeyManagerIsAwsManaged(km kmstypes.KeyManagerType) (isAwsManaged, known bool) {
+	switch km {
+	case kmstypes.KeyManagerTypeAws:
+		return true, true
+	case kmstypes.KeyManagerTypeCustomer:
 		return false, true
 	default:
 		return false, false
@@ -144,6 +172,26 @@ func (backupVaultDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredR
 	} else {
 		if isAws, known := backupKeyIsAwsManaged(dv.EncryptionKeyType); known {
 			r.Inputs["cb_describer_vault_uses_aws_managed_key"] = isAws
+		} else if dv.EncryptionKeyArn != nil && *dv.EncryptionKeyArn != "" {
+			// AWS omits EncryptionKeyType for the default `aws/backup`
+			// managed-key vault (observed live: arn present, enum empty), so the
+			// enum is unusable on the most common shape. Re-source the
+			// AWS-vs-customer fact from the key's KMS KeyManager — the
+			// definitional field — via the already-granted kms:DescribeKey
+			// (kms:Describe* is in the audit IAM policy; describer_kms.go uses
+			// the same call). Still FP-safe: a customer CMK reports KeyManager
+			// CUSTOMER → hint false, never a spurious true. On a read we
+			// couldn't make, leave the hint absent rather than assert a type.
+			kc := kms.NewFromConfig(c.cfg)
+			kd, kerr := kc.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: dv.EncryptionKeyArn})
+			switch {
+			case kerr != nil:
+				errs = append(errs, classifyKMSError(kerr, *dv.EncryptionKeyArn, "kms:DescribeKey"))
+			case kd.KeyMetadata != nil:
+				if isAws, known := backupKeyManagerIsAwsManaged(kd.KeyMetadata.KeyManager); known {
+					r.Inputs["cb_describer_vault_uses_aws_managed_key"] = isAws
+				}
+			}
 		}
 		if isLocked, known := backupVaultLocked(dv.Locked); known {
 			r.Inputs["cb_describer_vault_locked"] = isLocked
