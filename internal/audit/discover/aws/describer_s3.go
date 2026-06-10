@@ -135,19 +135,7 @@ func (s3BucketDescriber) Enrich(ctx context.Context, c awsCfg, r *DiscoveredReso
 	enc, err := client.GetBucketEncryption(ctx, &s3.GetBucketEncryptionInput{Bucket: &bucket})
 	switch {
 	case err == nil && enc.ServerSideEncryptionConfiguration != nil:
-		rules := enc.ServerSideEncryptionConfiguration.Rules
-		algos := make([]string, 0, len(rules))
-		for _, ru := range rules {
-			if ru.ApplyServerSideEncryptionByDefault != nil {
-				algos = append(algos, string(ru.ApplyServerSideEncryptionByDefault.SSEAlgorithm))
-			}
-		}
-		r.Inputs["cb_describer_encryption"] = map[string]any{"algorithms": algos}
-		// Derived hook: true only when a KMS CMK is the default algorithm
-		// (vs SSE-S3/AES256). Deliberately set ONLY on the present branch —
-		// the no-encryption case below stays nil so "no SSE at all" (a
-		// distinct, stronger finding) never collapses into "SSE-S3-not-KMS".
-		r.Inputs["cb_describer_sse_is_kms"] = sseIsKMS(algos)
+		applyEncryptionInputs(r.Inputs, enc.ServerSideEncryptionConfiguration)
 	case isNoSuchBucketEncryption(err):
 		r.Inputs["cb_describer_encryption"] = nil
 	default:
@@ -286,13 +274,61 @@ func mfaDeleteEnabled(mfaDelete string) bool {
 	return mfaDelete == "Enabled"
 }
 
+// applyEncryptionInputs populates the encryption-related cb_describer_*
+// fields from a bucket's server-side-encryption configuration, and — when
+// the default algorithm is a KMS CMK with an explicit key — surfaces that
+// key reference so the KMS cross-reference pass can count it.
+//
+// The key is stored under the bare, UN-prefixed "KMSMasterKeyID" name (NOT
+// a cb_describer_* name) on purpose: that is the exact CFN property name
+// crossReferenceKMS walks (isKMSFieldName), so a CMK used ONLY as this
+// bucket's SSE-KMS key is counted as referenced instead of being mis-flagged
+// "unused". Do NOT rename it to a cb_describer_* form for sibling-field
+// consistency — doing so would silently reintroduce that false positive.
+// CloudControl omits BucketEncryption entirely (the reason Enrich calls
+// GetBucketEncryption at all), so this describer is the only place the
+// reference can be recovered for a live bucket. FP-safe by direction: it can
+// only add a real reference (flip is_unused true→false), never create a
+// spurious unused=true.
+func applyEncryptionInputs(in map[string]any, cfg *types.ServerSideEncryptionConfiguration) {
+	rules := cfg.Rules
+	algos := make([]string, 0, len(rules))
+	for _, ru := range rules {
+		def := ru.ApplyServerSideEncryptionByDefault
+		if def == nil {
+			continue
+		}
+		algos = append(algos, string(def.SSEAlgorithm))
+		// Store the CMK reference ONLY when the default is genuinely KMS and
+		// an explicit key id is present. SSE-S3/AES256 carries no key, and an
+		// aws:kms rule with no KMSMasterKeyID is the AWS-managed aws/s3 key —
+		// never a customer key the unused-pass would flag — so leave the field
+		// absent in both cases (present-field discipline).
+		if sseAlgoIsKMS(def.SSEAlgorithm) && def.KMSMasterKeyID != nil && *def.KMSMasterKeyID != "" {
+			in["KMSMasterKeyID"] = *def.KMSMasterKeyID
+		}
+	}
+	in["cb_describer_encryption"] = map[string]any{"algorithms": algos}
+	// Derived hook: true only when a KMS CMK is the default algorithm
+	// (vs SSE-S3/AES256). Deliberately set ONLY on the present branch —
+	// the no-encryption case stays nil so "no SSE at all" (a distinct,
+	// stronger finding) never collapses into "SSE-S3-not-KMS".
+	in["cb_describer_sse_is_kms"] = sseIsKMS(algos)
+}
+
+// sseAlgoIsKMS reports whether a single default SSE algorithm is a KMS CMK
+// ("aws:kms" or dual-layer "aws:kms:dsse") as opposed to SSE-S3 ("AES256").
+func sseAlgoIsKMS(a types.ServerSideEncryption) bool {
+	return a == types.ServerSideEncryptionAwsKms || a == types.ServerSideEncryptionAwsKmsDsse
+}
+
 // sseIsKMS reports whether any default SSE algorithm is a KMS CMK ("aws:kms"
 // or dual-layer "aws:kms:dsse") as opposed to SSE-S3 ("AES256"). Only
 // meaningful when encryption is present — the no-encryption case is handled
 // separately (a stronger, distinct finding) and must not reach here.
 func sseIsKMS(algorithms []string) bool {
 	for _, a := range algorithms {
-		if a == string(types.ServerSideEncryptionAwsKms) || a == string(types.ServerSideEncryptionAwsKmsDsse) {
+		if sseAlgoIsKMS(types.ServerSideEncryption(a)) {
 			return true
 		}
 	}
