@@ -65,7 +65,27 @@ type AccountPosture struct {
 	// a wildcard principal and is a finding.
 	GlueCatalogPolicyByRegion map[string]*GlueCatalogPolicy `json:"glue_catalog_policy_by_region,omitempty"`
 
+	// CredentialReport carries the IAM credential-report-derived console-MFA
+	// posture. Non-nil ⇒ iam:GetCredentialReport was read successfully; nil ⇒
+	// the probe didn't run or failed (recorded in Errors) and the prompt must
+	// treat console-MFA coverage as UNKNOWN. See
+	// discover/aws/account_posture.go:probeConsoleUsersWithoutMFA.
+	CredentialReport *CredentialReportPosture `json:"credential_report,omitempty"`
+
 	Errors []string `json:"errors,omitempty"`
+}
+
+// CredentialReportPosture summarises IAM console-login MFA coverage from
+// the credential report. ConsoleUsersWithoutMFA names the users that have a
+// console password (password_enabled=true) but no MFA device
+// (mfa_active=false) — CIS 1.10 / FSBP IAM.5. The account root user is
+// excluded (its MFA is the AccountMFAEnabled summary counter).
+// ConsolePasswordUsersEvaluated is how many console-password users were
+// checked, so the prompt can render an "evaluated N, without MFA M" line —
+// an empty offender list with N>0 is positive confirmation, NOT silence.
+type CredentialReportPosture struct {
+	ConsolePasswordUsersEvaluated int      `json:"console_password_users_evaluated"`
+	ConsoleUsersWithoutMFA        []string `json:"console_users_without_mfa,omitempty"`
 }
 
 // ConfigRecorderState is the per-region AWS Config configuration-recorder
