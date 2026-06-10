@@ -644,3 +644,56 @@ func TestBuildGroundedPrompt_IncludesECSLambdaSecretsBullets(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildGroundedPrompt_IncludesRound2BucketARules pins the round-2
+// bucket-A batch (CIS/FSBP Tier-2): CloudTrail log-file-validation,
+// EKS Secrets envelope-encryption, S3 SSL-only bucket policy, and
+// RDS auto-minor-version-upgrade — all four recommended at WARNING. Three
+// ride on RAW CFN / native-lister fields dumped by writeResourceTable
+// (`EnableLogFileValidation`, `EncryptionConfigPresent`/`EncryptionConfig`,
+// `AutoMinorVersionUpgrade`); the S3 one rides on the existing
+// `cb_describer_bucket_policy_*` describer fields. For each bullet this pins
+// the unique title (the `→ WARNING` suffix alone is non-discriminating — it
+// recurs across the CWL / RDS / ALB bullets — so the full title phrase is the
+// real guard) plus the load-bearing FP guard a later edit could silently
+// loosen:
+//   - CloudTrail: the no-`cb_describer_*`-probe / raw-field framing, so the
+//     fire-on-explicit-false / skip-on-absent contract can't be inverted into
+//     an absence-inference;
+//   - EKS: the dual-shape SUPPRESS clause, so a present `true` boolean OR a
+//     non-empty CC `EncryptionConfig` array both correctly suppress;
+//   - S3: the intentionally-public SUPPRESS clause — almost no bucket carries an
+//     explicit SecureTransport deny, so the intent gate is what stops this from
+//     firing on nearly every bucket in the account;
+//   - RDS: the instance-scope carve-out via the UNIQUE "carries cluster-level
+//     patching" phrase (bare "instance-scoped" recurs on the del-prot / single-AZ
+//     bullets and would not discriminate).
+func TestBuildGroundedPrompt_IncludesRound2BucketARules(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// #1 CloudTrail log-file-validation → WARNING (unique title + raw field)
+		"CloudTrail trail without log-file validation → WARNING (audit integrity)",
+		"`EnableLogFileValidation` is explicitly `false`",
+		// #1 FP guard: raw CFN field, no describer probe (fire-on-false/skip-on-absent)
+		"there is no `cb_describer_*` probe for trails",
+		// #2 EKS Secrets envelope-encryption → WARNING (unique title + native bool)
+		"EKS cluster without envelope encryption for Kubernetes Secrets → WARNING",
+		"`EncryptionConfigPresent: false`",
+		// #2 FP guard: dual-shape suppress (present bool OR non-empty CC array)
+		"SUPPRESS when `EncryptionConfigPresent` is `true` OR `EncryptionConfig` is a non-empty array",
+		// #3 S3 SSL-only bucket policy → info-block sub-bullet (unique title + describer field)
+		"No SSL-only / TLS-enforcing bucket policy",
+		"`cb_describer_bucket_policy_present: false`",
+		// #3 FP guard: intent gate — suppress public/static-site (the noise control)
+		"SUPPRESS generic / static-website-origin / already-public buckets",
+		// #4 RDS auto-minor-version-upgrade → WARNING (unique title + raw field)
+		"RDS DB instance with automatic minor-version upgrades disabled → WARNING (patch hygiene)",
+		"`AutoMinorVersionUpgrade` is explicitly `false`",
+		// #4 FP guard: instance-scope carve-out, discriminating (see doc comment)
+		"carries cluster-level patching and is out of scope",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing round-2 bucket-A cue %q", want)
+		}
+	}
+}
