@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+// SummaryKeyType keys from iam:GetAccountSummary that drive the
+// root-account credential posture facts. The values match the AWS SDK
+// SummaryKeyType string constants (AccountAccessKeysPresent /
+// AccountMFAEnabled) — the summary map is stored keyed by the stringified
+// SDK type in discover/aws/account_posture.go, so we look them up by the
+// same literal. Both are documented 0/1 flags.
+const (
+	summaryKeyAccountAccessKeysPresent = "AccountAccessKeysPresent"
+	summaryKeyAccountMFAEnabled        = "AccountMFAEnabled"
+)
+
 // writeAccountPosture serialises the account-level posture block into
 // the grounded prompt. The block names every fact the LLM needs to
 // flag account-wide misconfigurations that aren't tied to a single
@@ -42,6 +53,29 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 
 	if p.PasswordPolicyPresent != nil {
 		fmt.Fprintf(sb, "IAM password policy configured: %t\n\n", *p.PasswordPolicyPresent)
+	}
+
+	// Root-account credential posture, read from the exact integer counters
+	// iam:GetAccountSummary returns. AccountAccessKeysPresent and
+	// AccountMFAEnabled are documented 0/1 flags, so `> 0` is an exact read,
+	// not a heuristic. Each line is rendered ONLY when its counter is
+	// actually present in the summary map — a missing key (e.g.
+	// GetAccountSummary failed, recorded in p.Errors) is left unrendered so
+	// the model treats it as unknown rather than silently compliant. These
+	// are bare facts mirroring the IAM password-policy line above; the
+	// firing rule (root keys present → CRITICAL, root MFA off → HIGH) lives
+	// in buildGroundedPrompt's account-posture cluster.
+	rootCredShown := false
+	if v, ok := p.IAMSummary[summaryKeyAccountAccessKeysPresent]; ok {
+		fmt.Fprintf(sb, "Root account access keys present: %t\n", v > 0)
+		rootCredShown = true
+	}
+	if v, ok := p.IAMSummary[summaryKeyAccountMFAEnabled]; ok {
+		fmt.Fprintf(sb, "Root account MFA enabled: %t\n", v > 0)
+		rootCredShown = true
+	}
+	if rootCredShown {
+		sb.WriteString("\n")
 	}
 
 	// IAM console-login MFA coverage from the credential report (CIS 1.10 /
