@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	backuptypes "github.com/aws/aws-sdk-go-v2/service/backup/types"
+	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 )
 
 func int64p(i int64) *int64 { return &i }
@@ -30,6 +31,38 @@ func TestBackupKeyIsAwsManaged(t *testing.T) {
 			gotAws, gotKnown := backupKeyIsAwsManaged(tc.in)
 			if gotAws != tc.wantAws || gotKnown != tc.wantKnown {
 				t.Errorf("backupKeyIsAwsManaged(%q) = (%v, %v), want (%v, %v)",
+					tc.in, gotAws, gotKnown, tc.wantAws, tc.wantKnown)
+			}
+		})
+	}
+}
+
+// backupKeyManagerIsAwsManaged is the FP-safe fallback for vault-aws-managed-key
+// when AWS omits EncryptionKeyType from DescribeBackupVault (the common
+// default-`aws/backup`-key shape, observed live). The load-bearing property is
+// the same as the enum gate, but sourced from the KMS KeyManager: a key AWS
+// manages (alias/aws/backup) reports (true, known) so the dormant bullet now
+// fires, while a CUSTOMER-managed key reports (false, known) — so a customer CMK
+// whose enum AWS *also* happens to omit is never mislabelled AWS-managed — and an
+// empty/unrecognised KeyManager reports known==false so the caller leaves the
+// hint absent rather than guessing.
+func TestBackupKeyManagerIsAwsManaged(t *testing.T) {
+	cases := []struct {
+		name      string
+		in        kmstypes.KeyManagerType
+		wantAws   bool
+		wantKnown bool
+	}{
+		{"aws-managed-default-key", kmstypes.KeyManagerTypeAws, true, true},
+		{"customer-cmk", kmstypes.KeyManagerTypeCustomer, false, true},
+		{"empty", kmstypes.KeyManagerType(""), false, false},
+		{"unrecognised", kmstypes.KeyManagerType("SOMETHING_NEW"), false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotAws, gotKnown := backupKeyManagerIsAwsManaged(tc.in)
+			if gotAws != tc.wantAws || gotKnown != tc.wantKnown {
+				t.Errorf("backupKeyManagerIsAwsManaged(%q) = (%v, %v), want (%v, %v)",
 					tc.in, gotAws, gotKnown, tc.wantAws, tc.wantKnown)
 			}
 		})

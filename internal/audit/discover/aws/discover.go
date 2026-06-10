@@ -312,8 +312,11 @@ func perResourceDescriberCost(cfnType string) int {
 		// ecrRepositoryDescriber: GetLifecyclePolicy.
 		return 1
 	case "AWS::Backup::BackupVault":
-		// backupVaultDescriber: DescribeBackupVault + GetBackupVaultAccessPolicy.
-		return 2
+		// backupVaultDescriber: DescribeBackupVault + GetBackupVaultAccessPolicy,
+		// plus a conditional kms:DescribeKey (only when AWS omits
+		// EncryptionKeyType but the vault has an EncryptionKeyArn — the default
+		// `aws/backup`-key shape). Coarse upper bound: 3.
+		return 3
 	case "AWS::Backup::BackupPlan":
 		// backupPlanDescriber: GetBackupPlan.
 		return 1
