@@ -106,6 +106,14 @@ func rdsClusterToRaw(cl rdstypes.DBCluster, region string) (rawResource, bool) {
 	putStr(props, "Engine", cl.Engine)
 	putStr(props, "EngineVersion", cl.EngineVersion)
 	putStr(props, "DBSubnetGroupName", cl.DBSubnetGroup)
+	// KmsKeyId mirrors the instance path (rdsInstanceToRaw) — it is the CFN
+	// property crossReferenceKMS walks (isKMSFieldName), so a customer CMK used
+	// only as this cluster's storage-encryption key is counted as referenced
+	// instead of being mis-flagged cb_describer_is_unused=true. Omitted on the
+	// CC path is harmless (CC carries KmsKeyId itself); this fallback fired
+	// because CC returned nothing, so it must carry the reference on its own.
+	// putStr only sets it when present, so a non-encrypted cluster stays absent.
+	putStr(props, "KmsKeyId", cl.KmsKeyId)
 	putBool(props, "MultiAZ", cl.MultiAZ)
 	putBool(props, "StorageEncrypted", cl.StorageEncrypted)
 	putBool(props, "PubliclyAccessible", cl.PubliclyAccessible)

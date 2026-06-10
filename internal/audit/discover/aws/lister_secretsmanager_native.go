@@ -103,6 +103,14 @@ func secretToRaw(s smtypes.SecretListEntry, region string) (rawResource, bool) {
 	props := map[string]any{"Id": id}
 	putStr(props, "Name", s.Name)
 	putBool(props, "RotationEnabled", s.RotationEnabled)
+	// KmsKeyId is the CFN property crossReferenceKMS walks (isKMSFieldName).
+	// ListSecrets returns it ONLY when a customer CMK encrypts the secret (the
+	// default aws/secretsmanager key leaves it nil), so a CMK used only as this
+	// secret's encryption key is counted as referenced instead of being
+	// mis-flagged cb_describer_is_unused=true. putStr sets it only when present,
+	// so the default-key case stays absent. FP-safe by direction: it can only
+	// count a real reference, never invent an unused=true.
+	putStr(props, "KmsKeyId", s.KmsKeyId)
 
 	return marshalRaw("AWS::SecretsManager::Secret", id, region, props)
 }

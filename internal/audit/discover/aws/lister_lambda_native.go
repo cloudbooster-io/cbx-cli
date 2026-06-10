@@ -149,6 +149,17 @@ func lambdaFunctionToRaw(fn lambdatypes.FunctionConfiguration, reservedConcurren
 	putInt32(props, "MemorySize", fn.MemorySize)
 	putInt32(props, "Timeout", fn.Timeout)
 
+	// KmsKeyArn is the CFN property crossReferenceKMS walks (isKMSFieldName) —
+	// note the SDK field is fn.KMSKeyArn (all-caps KMS) but the stored key must
+	// be the walked literal "KmsKeyArn", or the cross-reference pass won't see
+	// it. GetFunctionConfiguration populates KMSKeyArn ONLY when a customer CMK
+	// encrypts the function's env vars (the AWS-managed default key returns nil),
+	// so storing it when present is FP-safe by direction: it can only count a
+	// real reference (flip cb_describer_is_unused true→false), never invent one.
+	// Harmless on the CC path (CC carries KmsKeyArn itself); this fallback fired
+	// because CC returned nothing, so it must carry the reference on its own.
+	putStr(props, "KmsKeyArn", fn.KMSKeyArn)
+
 	// DeadLetterConfig is emitted only when a real target ARN is set — its
 	// absence is exactly the missing-DLQ signal lambdaHasDLQ keys off.
 	if fn.DeadLetterConfig != nil && fn.DeadLetterConfig.TargetArn != nil && *fn.DeadLetterConfig.TargetArn != "" {
