@@ -22,6 +22,7 @@ import (
 //   - KMSMasterKeyID      SNS, S3 SSE rules
 //   - KmsKeyArn           some services
 //   - KmsKey              some services
+//   - EncryptionKeyArn    AWS::Backup::BackupVault (vault → CMK link)
 //   - TargetKeyId         AWS::KMS::Alias (handled separately for alias→arn map)
 //
 // Matching is "the value contains the key ARN OR the alias name." We
@@ -167,7 +168,8 @@ func walkKMSReferences(m map[string]any, onValue func(string)) {
 func isKMSFieldName(name string) bool {
 	switch name {
 	case "KmsKeyId", "KMSMasterKeyID", "KmsKeyArn", "KmsKey",
-		"KmsMasterKeyId", "KmsMasterKeyID", "SseKmsKeyId":
+		"KmsMasterKeyId", "KmsMasterKeyID", "SseKmsKeyId",
+		"EncryptionKeyArn":
 		return true
 	}
 	return false
