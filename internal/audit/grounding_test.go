@@ -423,6 +423,65 @@ func TestBuildGroundedPrompt_IncludesIAMPowerUserGroupBullet(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesS3KMSExposureBullets pins the CIS/FSBP
+// bucket-A batch — S3 Block Public Access disabled (HIGH), public KMS
+// key-policy (CRITICAL), and KMS customer-CMK rotation off (info) — into the
+// grounded prompt. These are BEYOND-FIXTURES (planted in no variant) and
+// detection-only: with no live-val and no compliant control, the bullet design
+// itself is the only FP guard, so each bullet's load-bearing guard is pinned
+// here, not just its identity cue:
+//   - S3 BPA fires off a PRESENT object with an explicit `false` flag; the
+//     null/absent → SKIP clause is the FP control (a bucket with no bucket-level
+//     PAB may be covered by ACCOUNT-level BPA — firing HIGH on `null` would
+//     over-fire on a protected bucket), pinned via the unique account-level
+//     rationale phrase. It is HIGH data-exposure, NOT an `info` hygiene item, so
+//     the "do NOT downgrade it to `info`" imperative is pinned too.
+//   - public KMS key-policy reuses the S3/Glue wildcard-principal logic over the
+//     raw `KeyPolicy`; the load-bearing FP guard is that the UBIQUITOUS default
+//     key policy grants the account-root ARN (NOT a wildcard) — a loosening that
+//     flagged it would false-fire on essentially every CMK in the account.
+//   - KMS rotation fires only on an explicit-false customer CMK; the
+//     AWS-managed suppression (AWS rotates those itself) is the FP control.
+//
+// Severities are pinned via each bullet's unique title fragment (the HIGH /
+// CRITICAL / info arrow in each title), because a bare "Emit a HIGH/CRITICAL
+// finding" recurs across other bullets and would not discriminate a dropped
+// override.
+func TestBuildGroundedPrompt_IncludesS3KMSExposureBullets(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// #1 S3 BPA disabled — unique title + explicit HIGH severity
+		"S3 Block Public Access disabled → HIGH",
+		// #1 field identity — the four BPA flags read off the present object
+		"`block_public_acls`, `block_public_policy`, `ignore_public_acls`, `restrict_public_buckets`",
+		// #1 load-bearing FP guard: null/absent → skip, account-level-BPA rationale
+		"it may be covered by account-level Block Public Access",
+		// #1 the public-intent suppression carve-out (the legitimate disable case)
+		"public static-site / CloudFront-origin / public-website bucket",
+		// #1 do-not-downgrade imperative (guards the HIGH against an info fold-in)
+		"do NOT downgrade it to `info`",
+		// #2 public KMS key policy — unique title + explicit CRITICAL severity
+		"Public KMS key policy → CRITICAL",
+		// #2 field identity — the raw KeyPolicy (KeyPolicy appears nowhere else)
+		"an `AWS::KMS::Key`'s raw `KeyPolicy`",
+		// #2 a scoping condition unique to this bullet
+		"`kms:CallerAccount`",
+		// #2 load-bearing FP guard: the default root-account grant is NOT a wildcard
+		"which is an account-root ARN, NOT a wildcard",
+		// #3 KMS rotation off — field + severity identity
+		"`cb_describer_key_rotation_enabled: false`",
+		"rotation disabled → `info` (key hygiene)",
+		// #3 load-bearing FP guard: suppress AWS-managed keys
+		"AWS rotates those on its own schedule, outside operator control",
+		// #3 symmetric-key scoping (belt-and-suspenders, field in hand)
+		"`cb_describer_key_spec: SYMMETRIC_DEFAULT`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing S3/KMS exposure-bullet cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
