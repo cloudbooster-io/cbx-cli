@@ -318,6 +318,43 @@ func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesEKSNoIRSABullet pins the EKS
+// "no pod-level IAM mechanism" bullet (variant 10, HIGH) into the grounded
+// prompt. This bullet is the round's hardest case: it fires only when a
+// cluster has NEITHER scoped-role mechanism, gated on TWO describer fields
+// (`cb_describer_eks_irsa_oidc_provider_present` via the IRSA enrichment AND
+// `cb_describer_eks_pod_identity_present` via the Pod-Identity probe). Each
+// pinned substring guards a property a later edit could silently break:
+//   - the BOTH/AND clause — a loosening to EITHER/OR would reintroduce the
+//     Pod-Identity false positive (firing HIGH on a cluster that uses Pod
+//     Identity but no OIDC provider), the exact FP this gate exists to kill;
+//   - "Skip when EITHER field is ABSENT" — this is what keeps the bullet
+//     DORMANT until BOTH enrichments land (an absent field reads as UNKNOWN,
+//     never as the gap), so authoring it before the fields are plumbed is
+//     FP-safe and it cannot false-fire in the IRSA-only window;
+//   - the unique "no pod-level IAM mechanism → HIGH" title fragment — guards
+//     the explicit per-rule HIGH severity against a future edit that drops it
+//     and lets the general rubric default it to `warning` (a severity miss on
+//     variant 10). Bare "Emit a HIGH finding" is non-unique (IMDSv1,
+//     backup-retention, … all use it) and would not discriminate.
+func TestBuildGroundedPrompt_IncludesEKSNoIRSABullet(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// unique title + explicit HIGH severity (guards the per-rule override)
+		"EKS cluster with no pod-level IAM mechanism → HIGH",
+		// both-absent gate — fire ONLY on explicit false×2, never EITHER/OR
+		"where BOTH `cb_describer_eks_irsa_oidc_provider_present: false` AND `cb_describer_eks_pod_identity_present: false`",
+		// FP guard: a present `true` on either field means the mechanism exists
+		"SUPPRESS when EITHER field is `true`",
+		// FP guard + dormancy: an absent field is UNKNOWN, never the gap
+		"Skip when EITHER field is ABSENT",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing EKS no-IRSA bullet cue %q", want)
+		}
+	}
+}
+
 // TestBuildGroundedPrompt_IncludesBackupVaultBullets pins the three AWS
 // Backup vault hygiene bullets (no-Vault-Lock → warning, AWS-managed-key →
 // info, no-access-policy → info) into the grounded prompt. Each fires off a
