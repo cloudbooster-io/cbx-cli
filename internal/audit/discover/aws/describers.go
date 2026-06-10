@@ -29,6 +29,7 @@ var allDescribers = []Describer{
 	&s3BucketDescriber{},
 	&iamRoleDescriber{},
 	&iamUserDescriber{},
+	&iamGroupDescriber{},
 	&iamManagedPolicyDescriber{},
 	&rdsInstanceDescriber{},
 	&rdsClusterDescriber{},

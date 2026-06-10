@@ -351,6 +351,33 @@ func TestBuildGroundedPrompt_IncludesBackupVaultBullets(t *testing.T) {
 	}
 }
 
+// TestBuildGroundedPrompt_IncludesIAMPowerUserGroupBullet pins the
+// power-user-group bullet (an AWS::IAM::Group carrying AWS-managed
+// PowerUserAccess → MEDIUM) into the grounded prompt. It fires off a PRESENT
+// positive cb_describer_* field — never absence-inferred. Beyond the
+// field+severity identity cues, the two load-bearing FP guards a later edit
+// could silently loosen are asserted: the admin-EXCLUSION clause (the field is
+// true only for PowerUserAccess, so a full-admin group can't double-fire as
+// this MEDIUM) and the present-field skip-when-absent guard.
+func TestBuildGroundedPrompt_IncludesIAMPowerUserGroupBullet(t *testing.T) {
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	for _, want := range []string{
+		// field + severity identity
+		"`cb_describer_power_user_managed_policy_attached: true`",
+		"Emit a MEDIUM finding (wire value `warning`",
+		// key phrase
+		"persistent full access to nearly all AWS services",
+		// admin-exclusion guard (the double-fire FP control)
+		"never for AdministratorAccess, so a full-admin group does NOT trip this bullet",
+		// present-field discipline guard
+		"Skip when `cb_describer_power_user_managed_policy_attached` is absent",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("grounded prompt missing power-user-group cue %q", want)
+		}
+	}
+}
+
 // TestBuildGrounding_404IsPlaceholder verifies that a knowledge gap
 // surfaces as a Missing entry — not as an error and not as a silently
 // dropped slot. Required by advisor flag #3.
