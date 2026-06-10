@@ -1,11 +1,15 @@
 package aws
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/configservice"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -140,6 +144,25 @@ func gatherAccountPosture(ctx context.Context, cfg awsCfg, regions []string) *au
 		out.PasswordPolicyPresent = &present
 	}()
 
+	// IAM credential-report console-MFA probe (CIS 1.10 / FSBP IAM.5).
+	// IAM is global → run once on the un-pinned cfg, like the summary and
+	// password-policy probes above. A failure (AccessDenied, the report
+	// never completing, a malformed CSV) lands in Errors and leaves
+	// CredentialReport nil → the prompt renders nothing → UNKNOWN, never a
+	// false "all console users have MFA".
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rep, err := probeConsoleUsersWithoutMFA(ctx, cfg)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			out.Errors = append(out.Errors, "iam:GetCredentialReport: "+errSummary(err))
+			return
+		}
+		out.CredentialReport = rep
+	}()
+
 	wg.Wait()
 	sort.Strings(out.Errors)
 	return out
@@ -190,6 +213,110 @@ func probePasswordPolicy(ctx context.Context, cfg awsCfg) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// reportPollInterval / credReportMaxAttempts bound the wait for the IAM
+// credential report to finish generating. A report normally completes in
+// a few seconds; we re-poll a handful of times (~12s ceiling) and then
+// give up, returning the error → posture.Errors → the prompt renders
+// nothing (UNKNOWN). Tune small: this runs inside the account-posture
+// fan-out and must not stall the audit.
+const (
+	credReportPollInterval = 2 * time.Second
+	credReportMaxAttempts  = 6 // ~12s ceiling, ctx-cancellable
+)
+
+// probeConsoleUsersWithoutMFA reports IAM users that have console access
+// (a login password) but no MFA device — CIS 1.10 / FSBP IAM.5. Sourced
+// from the IAM credential report (a CSV snapshot of every user's
+// credential state). GenerateCredentialReport is idempotent and returns
+// COMPLETE immediately when a recent (<~4h) report exists; otherwise it
+// builds the report asynchronously, so GetCredentialReport is polled with
+// a bounded, ctx-aware backoff. The account root user row is skipped (its
+// MFA is the AccountMFAEnabled summary counter handled by the
+// root-credential rule). Any failure — AccessDenied, the report never
+// completing within the budget, a malformed CSV — returns an error so the
+// caller records it in posture.Errors and the prompt renders nothing
+// (UNKNOWN), never a false "all console users have MFA".
+func probeConsoleUsersWithoutMFA(ctx context.Context, cfg awsCfg) (*audit.CredentialReportPosture, error) {
+	client := iam.NewFromConfig(cfg.cfg)
+
+	// Ensure a report exists. Idempotent; LimitExceeded (too many generate
+	// calls in the window) is non-fatal — an older cached report is still
+	// fetchable, so fall through to GetCredentialReport regardless.
+	_, _ = client.GenerateCredentialReport(ctx, &iam.GenerateCredentialReportInput{})
+
+	for attempt := 0; ; attempt++ {
+		out, err := client.GetCredentialReport(ctx, &iam.GetCredentialReportInput{})
+		if err == nil {
+			return parseCredentialReportConsoleNoMFA(out.Content)
+		}
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "ReportInProgress", "ReportNotPresent", "ReportExpired":
+				if attempt >= credReportMaxAttempts {
+					return nil, err
+				}
+				// Re-kick on expiry/absence, then wait and retry.
+				_, _ = client.GenerateCredentialReport(ctx, &iam.GenerateCredentialReportInput{})
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(credReportPollInterval):
+				}
+				continue
+			}
+		}
+		return nil, err // AccessDenied and everything else: surface it
+	}
+}
+
+// parseCredentialReportConsoleNoMFA reads the IAM credential-report CSV and
+// returns the console-password users that lack an MFA device. Pure (CSV
+// bytes in, result out) → unit-testable without an AWS mock, mirroring the
+// recorderRecordsGlobalTypes / policyGrantsPublicPrincipal pure helpers in
+// this file. The account root row (user "<root_account>", whose
+// password_enabled is "not_supported") is skipped; root MFA is handled by
+// the root-credential rule. A non-nil return means the probe RAN — an
+// empty ConsoleUsersWithoutMFA with ConsolePasswordUsersEvaluated > 0 is
+// the "ran, all compliant" signal.
+func parseCredentialReportConsoleNoMFA(csvBytes []byte) (*audit.CredentialReportPosture, error) {
+	rows, err := csv.NewReader(bytes.NewReader(csvBytes)).ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("empty credential report")
+	}
+	col := map[string]int{}
+	for i, h := range rows[0] {
+		col[h] = i
+	}
+	userIdx, ok1 := col["user"]
+	pwIdx, ok2 := col["password_enabled"]
+	mfaIdx, ok3 := col["mfa_active"]
+	if !ok1 || !ok2 || !ok3 {
+		return nil, fmt.Errorf("credential report missing expected columns")
+	}
+	rep := &audit.CredentialReportPosture{}
+	for _, row := range rows[1:] {
+		if len(row) <= userIdx || len(row) <= pwIdx || len(row) <= mfaIdx {
+			continue
+		}
+		if row[userIdx] == "<root_account>" { // root handled by the root-credential rule
+			continue
+		}
+		if row[pwIdx] != "true" { // no console password → out of scope (service/programmatic user)
+			continue
+		}
+		rep.ConsolePasswordUsersEvaluated++
+		if row[mfaIdx] == "false" {
+			rep.ConsoleUsersWithoutMFA = append(rep.ConsoleUsersWithoutMFA, row[userIdx])
+		}
+	}
+	sort.Strings(rep.ConsoleUsersWithoutMFA) // deterministic render
+	return rep, nil
 }
 
 // GuardDuty detector states surfaced in AccountPosture.GuardDutyByRegion.

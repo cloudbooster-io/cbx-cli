@@ -44,6 +44,27 @@ func writeAccountPosture(sb *strings.Builder, p *AccountPosture) {
 		fmt.Fprintf(sb, "IAM password policy configured: %t\n\n", *p.PasswordPolicyPresent)
 	}
 
+	// IAM console-login MFA coverage from the credential report (CIS 1.10 /
+	// FSBP IAM.5). Rendered ONLY when the probe ran (CredentialReport
+	// non-nil) — a nil pointer (probe failed/didn't run, recorded in Errors)
+	// renders nothing so the model treats console-MFA coverage as UNKNOWN,
+	// never silently compliant. The offender list names only non-compliant
+	// users (password_enabled=true AND mfa_active=false); the derived
+	// "(evaluated N; without MFA M)" line is positive confirmation that
+	// compliant console users were checked, not silence. The firing rule
+	// lives in buildGroundedPrompt's account-posture cluster.
+	if p.CredentialReport != nil {
+		rep := p.CredentialReport
+		if len(rep.ConsoleUsersWithoutMFA) > 0 {
+			sb.WriteString("IAM console users WITHOUT MFA (human users with a console login password and NO MFA device — from iam:GetCredentialReport; only NON-COMPLIANT users are listed; the account root user is excluded, its MFA is the 'Root account MFA enabled' line above; programmatic-only / service users with no console password are not in scope):\n")
+			for _, u := range rep.ConsoleUsersWithoutMFA {
+				fmt.Fprintf(sb, "  - %s\n", u)
+			}
+		}
+		fmt.Fprintf(sb, "(IAM users with a console password evaluated for MFA: %d; without MFA: %d)\n\n",
+			rep.ConsolePasswordUsersEvaluated, len(rep.ConsoleUsersWithoutMFA))
+	}
+
 	if len(p.GlueCatalogPolicyByRegion) > 0 {
 		sb.WriteString("Glue Data Catalog resource policy (per region; only regions that HAVE a policy are listed — grants_wildcard_principal=true means the whole catalog is open to Principal \"*\" with no scoping condition):\n")
 		regions := make([]string, 0, len(p.GlueCatalogPolicyByRegion))
