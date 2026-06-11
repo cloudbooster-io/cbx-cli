@@ -35,8 +35,6 @@ type osKeyring struct {
 // NewKeyring opens the best available keyring backend.
 // Set CBX_KEYRING_BACKEND=file (and optionally CBX_KEYRING_FILE_DIR) to
 // force the file-based backend — useful in CI or headless environments.
-// Legacy CB_KEYRING_BACKEND / CB_KEYRING_FILE_DIR are still honored with
-// a one-time deprecation warning.
 func NewKeyring() (Keyring, error) {
 	if backendEnv := config.Env("KEYRING_BACKEND"); backendEnv != "" {
 		return openBackend(backendEnv)

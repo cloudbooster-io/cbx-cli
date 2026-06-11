@@ -69,7 +69,7 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 
 ## Update banner
 
-`pkg/cmd/execute.go` runs a 3-second background update check in parallel with the command, then prints a banner to stderr at the end. It's suppressed in `CI=true`, `CBX_NO_UPDATE_CHECK=1` (or the deprecated `CB_NO_UPDATE_CHECK=1`), when `--quiet`/`--json`, or for the `version` and `upgrade` subcommands. New subcommands that emit machine output should make sure they don't fight with this banner (it goes to stderr, so pipelines reading stdout are safe).
+`pkg/cmd/execute.go` runs a 3-second background update check in parallel with the command, then prints a banner to stderr at the end. It's suppressed in `CI=true`, `CBX_NO_UPDATE_CHECK=1`, when `--quiet`/`--json`, or for the `version` and `upgrade` subcommands. New subcommands that emit machine output should make sure they don't fight with this banner (it goes to stderr, so pipelines reading stdout are safe).
 
 ## Workflow specifics for this repo
 

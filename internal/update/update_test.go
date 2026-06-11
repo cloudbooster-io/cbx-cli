@@ -122,7 +122,7 @@ func TestIsDisabled(t *testing.T) {
 		{"none", "", "", "", false},
 		{"ci_only", "true", "", "", true},
 		{"cbx_no_check", "", "1", "", true},
-		{"legacy_cb_no_check", "", "", "1", true},
+		{"removed_cb_form_ignored", "", "", "1", false},
 		{"both", "true", "1", "", true},
 	}
 	for _, tc := range tests {

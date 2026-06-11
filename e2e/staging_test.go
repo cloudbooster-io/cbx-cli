@@ -69,9 +69,9 @@ func TestStagingConnectivity(t *testing.T) {
 		keyringDir := tmpDir + "/keyring"
 
 		env := map[string]string{
-			"CB_API_URL":          apiURL,
-			"CB_KEYRING_BACKEND":  "file",
-			"CB_KEYRING_FILE_DIR": keyringDir,
+			"CB_API_URL":           apiURL,
+			"CBX_KEYRING_BACKEND":  "file",
+			"CBX_KEYRING_FILE_DIR": keyringDir,
 		}
 
 		// Before login: status should report not logged in.

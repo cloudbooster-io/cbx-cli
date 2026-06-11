@@ -36,8 +36,8 @@ func TestMockKeyringRoundTrip(t *testing.T) {
 
 func TestFileKeyringRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("CB_KEYRING_BACKEND", "file")
-	t.Setenv("CB_KEYRING_FILE_DIR", tmpDir)
+	t.Setenv("CBX_KEYRING_BACKEND", "file")
+	t.Setenv("CBX_KEYRING_FILE_DIR", tmpDir)
 
 	kr, err := NewKeyring()
 	if err != nil {
@@ -68,8 +68,8 @@ func TestFileKeyringRoundTrip(t *testing.T) {
 
 func TestFileKeyringPersistsAcrossOpen(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("CB_KEYRING_BACKEND", "file")
-	t.Setenv("CB_KEYRING_FILE_DIR", tmpDir)
+	t.Setenv("CBX_KEYRING_BACKEND", "file")
+	t.Setenv("CBX_KEYRING_FILE_DIR", tmpDir)
 
 	kr1, err := NewKeyring()
 	if err != nil {
@@ -95,7 +95,7 @@ func TestFileKeyringPersistsAcrossOpen(t *testing.T) {
 
 func TestKeyringWithoutEnvFailsOnMissingBackend(t *testing.T) {
 	// Unset any backend override.
-	t.Setenv("CB_KEYRING_BACKEND", "")
+	t.Setenv("CBX_KEYRING_BACKEND", "")
 
 	// In a headless CI container OS-native backends are usually unavailable.
 	// We just verify NewKeyring returns an error rather than panicking.
@@ -115,8 +115,8 @@ func TestKeyringFileBackendDefaultDir(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("LocalAppData", filepath.Join(home, "appdata"))
 
-	t.Setenv("CB_KEYRING_BACKEND", "file")
-	t.Setenv("CB_KEYRING_FILE_DIR", "")
+	t.Setenv("CBX_KEYRING_BACKEND", "file")
+	t.Setenv("CBX_KEYRING_FILE_DIR", "")
 
 	// Should open successfully, defaulting to <user cache dir>/cbx-keyring.
 	kr, err := NewKeyring()
@@ -154,7 +154,7 @@ func TestKeyringFileBackendDefaultDir(t *testing.T) {
 }
 
 func TestKeyringUnknownBackend(t *testing.T) {
-	t.Setenv("CB_KEYRING_BACKEND", "nonexistent")
+	t.Setenv("CBX_KEYRING_BACKEND", "nonexistent")
 	_, err := NewKeyring()
 	if err == nil {
 		t.Fatal("expected error for unknown backend")

@@ -53,9 +53,9 @@ func TestAuthFlow(t *testing.T) {
 		})
 
 		env := map[string]string{
-			"CB_API_URL":          server.URL,
-			"CB_KEYRING_BACKEND":  "file",
-			"CB_KEYRING_FILE_DIR": keyringDir,
+			"CB_API_URL":           server.URL,
+			"CBX_KEYRING_BACKEND":  "file",
+			"CBX_KEYRING_FILE_DIR": keyringDir,
 		}
 
 		// Initial status: not logged in
@@ -121,9 +121,9 @@ func TestAuthFlow(t *testing.T) {
 		})
 
 		env := map[string]string{
-			"CB_API_URL":          server.URL,
-			"CB_KEYRING_BACKEND":  "file",
-			"CB_KEYRING_FILE_DIR": keyringDir,
+			"CB_API_URL":           server.URL,
+			"CBX_KEYRING_BACKEND":  "file",
+			"CBX_KEYRING_FILE_DIR": keyringDir,
 		}
 
 		// Run login --no-browser with piped stdin containing the code.
@@ -187,9 +187,9 @@ func TestAuthFlow(t *testing.T) {
 		})
 
 		env := map[string]string{
-			"CB_API_URL":          server.URL,
-			"CB_KEYRING_BACKEND":  "file",
-			"CB_KEYRING_FILE_DIR": keyringDir,
+			"CB_API_URL":           server.URL,
+			"CBX_KEYRING_BACKEND":  "file",
+			"CBX_KEYRING_FILE_DIR": keyringDir,
 		}
 
 		// JSON status before login
@@ -280,9 +280,9 @@ func TestAuthFlow(t *testing.T) {
 		})
 
 		env := map[string]string{
-			"CB_API_URL":          server.URL,
-			"CB_KEYRING_BACKEND":  "file",
-			"CB_KEYRING_FILE_DIR": keyringDir,
+			"CB_API_URL":           server.URL,
+			"CBX_KEYRING_BACKEND":  "file",
+			"CBX_KEYRING_FILE_DIR": keyringDir,
 		}
 
 		// First, log in with a token that expires quickly.

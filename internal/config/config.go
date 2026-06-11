@@ -174,6 +174,18 @@ func Path() string {
 // defaultAPIURL is the production CloudBooster API endpoint.
 const defaultAPIURL = "https://api.cloudbooster.io"
 
+// apiURLFromEnv returns the API base-URL override. CB_API_URL is the
+// canonical name for it across the repo (Makefile, CI, e2e harness, the
+// knowledge client in internal/audit) — it names the CloudBooster service,
+// not the CLI, so it is exempt from the CBX_-only rule. CBX_API_URL is
+// honored first for consistency with every other cbx variable.
+func apiURLFromEnv() string {
+	if v := Env("API_URL"); v != "" {
+		return v
+	}
+	return os.Getenv("CB_API_URL")
+}
+
 // Load reads the configuration from disk and applies environment overrides.
 func Load() (*Config, error) {
 	path := Path()
@@ -184,7 +196,7 @@ func Load() (*Config, error) {
 				LLM:    LLMConfig{Providers: make(map[string]LLMProvider)},
 				APIURL: defaultAPIURL,
 			}
-			if envURL := Env("API_URL"); envURL != "" {
+			if envURL := apiURLFromEnv(); envURL != "" {
 				cfg.APIURL = envURL
 			}
 			return cfg, nil
@@ -201,7 +213,7 @@ func Load() (*Config, error) {
 	if cfg.APIURL == "" {
 		cfg.APIURL = defaultAPIURL
 	}
-	if envURL := Env("API_URL"); envURL != "" {
+	if envURL := apiURLFromEnv(); envURL != "" {
 		cfg.APIURL = envURL
 	}
 	return &cfg, nil

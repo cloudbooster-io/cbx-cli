@@ -123,6 +123,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The legacy `CB_*` environment-variable fallback. Variables read through the
+  `CBX_` prefix (`CBX_NO_UPDATE_CHECK`, `CBX_RELEASES_URL`,
+  `CBX_KEYRING_BACKEND`, `CBX_KEYRING_FILE_DIR`) no longer honor their old
+  `CB_*` spellings, which had emitted a deprecation warning since the rename.
+  `CB_API_URL` is exempt and remains fully supported: it names the
+  CloudBooster service rather than the CLI and is the canonical spelling
+  across the Makefile, CI, and the knowledge client (`CBX_API_URL` also
+  works and wins when both are set). `CB_API_KEY` and `CB_E2E_STAGING` are
+  likewise unaffected.
 - The IaC state/source flag surface on `cbx audit` (`--pulumi-state`,
   `--terraform-state`, `--source`, `--iac-type`, `--scanners`, `--llm`) is no
   longer exposed at the CLI; `cbx audit` now dispatches only to
