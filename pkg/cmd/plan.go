@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"html/template"
 	"os"
 	"path/filepath"
 
@@ -226,7 +225,10 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 	// Optional HTML preview server (CB-422). Opt-in via --html. Skip in --json
 	// or when running with d2 diagrams (the template renders mermaid only).
 	if htmlPreview && !output.JSON() && diagramFormat != "d2" && len(plans) > 0 {
-		htmlBytes, err := generatePlanHTML(plans[0].Intent, plans[0].ADRContent, template.HTML(plans[0].MermaidContent))
+		// MermaidContent is passed as a plain string on purpose: component
+		// names inside it are LLM/user-influenced, and html/template must
+		// entity-escape them in the preview page (see planHTMLData).
+		htmlBytes, err := generatePlanHTML(plans[0].Intent, plans[0].ADRContent, plans[0].MermaidContent)
 		if err != nil {
 			if !quietFlag {
 				fmt.Fprintf(os.Stderr, "warning: failed to generate HTML preview: %v\n", err)

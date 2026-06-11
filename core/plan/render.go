@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -95,7 +96,7 @@ func RenderMermaid(p *Plan) string {
 	var sb strings.Builder
 	sb.WriteString("flowchart LR\n")
 	for _, c := range p.Components {
-		sb.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID(c.Name), c.Name))
+		sb.WriteString(fmt.Sprintf("    %s[%s]\n", nodeID(c.Name), mermaidLabel(c.Name)))
 	}
 	sb.WriteString("    users[Users]\n")
 
@@ -129,18 +130,20 @@ func RenderMermaid(p *Plan) string {
 	return sb.String()
 }
 
-// RenderHTML generates a simple HTML preview.
+// RenderHTML generates a simple HTML preview. Intent, component names and
+// descriptions are LLM/user-influenced, so everything interpolated into the
+// page is entity-escaped to keep hostile values from injecting markup.
 func RenderHTML(p *Plan) string {
 	var sb strings.Builder
 	sb.WriteString("<!DOCTYPE html>\n<html>\n<head><title>CloudBooster Plan</title></head>\n<body>\n")
-	sb.WriteString(fmt.Sprintf("<h1>Plan: %s</h1>\n", p.Intent))
+	sb.WriteString(fmt.Sprintf("<h1>Plan: %s</h1>\n", html.EscapeString(p.Intent)))
 	sb.WriteString("<h2>Components</h2>\n<ul>\n")
 	for _, c := range p.Components {
-		sb.WriteString(fmt.Sprintf("<li><strong>%s</strong> — %s</li>\n", c.Name, c.Description))
+		sb.WriteString(fmt.Sprintf("<li><strong>%s</strong> — %s</li>\n", html.EscapeString(c.Name), html.EscapeString(c.Description)))
 	}
 	sb.WriteString("</ul>\n")
 	sb.WriteString("<h2>Diagram</h2>\n<pre>\n")
-	sb.WriteString(p.MermaidContent)
+	sb.WriteString(html.EscapeString(p.MermaidContent))
 	sb.WriteString("</pre>\n")
 	sb.WriteString("</body>\n</html>\n")
 	return sb.String()
@@ -170,12 +173,36 @@ func titleCase(s string) string {
 	return strings.Join(words, " ")
 }
 
+// nodeID converts a component name into a diagram-safe node identifier.
+// Names are LLM-influenced, so anything outside [a-z0-9] maps to '_' to keep
+// hostile names from breaking out of the Mermaid/D2 identifier context.
 func nodeID(name string) string {
-	return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+	return sanitizeID(name, '_')
 }
 
+// slugID mirrors nodeID with dash-style slugs for GitHub-compatible anchors.
 func slugID(name string) string {
-	return strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	return sanitizeID(name, '-')
+}
+
+func sanitizeID(name string, sep rune) string {
+	var sb strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteRune(sep)
+		}
+	}
+	return sb.String()
+}
+
+// mermaidLabel renders a component name as a quoted Mermaid node label.
+// Embedded quotes become Mermaid #quot; entities and newlines collapse to
+// spaces so hostile names cannot break out of the label context.
+func mermaidLabel(name string) string {
+	r := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", `"`, "#quot;")
+	return `"` + r.Replace(name) + `"`
 }
 
 func findComponent(components []Component, name string) *Component {

@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	"html/template"
 	"strings"
 	"testing"
 
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/assets"
 )
 
@@ -72,7 +72,7 @@ func TestSlugify(t *testing.T) {
 func TestGeneratePlanHTML(t *testing.T) {
 	intent := "deploy api"
 	adr := "# ADR: Deploy Api\n\n## Status\nProposed\n"
-	mermaid := template.HTML("graph TD\n    A --> B\n")
+	mermaid := "graph TD\n    A --> B\n"
 
 	b, err := generatePlanHTML(intent, adr, mermaid)
 	if err != nil {
@@ -91,6 +91,41 @@ func TestGeneratePlanHTML(t *testing.T) {
 	}
 	if !strings.Contains(html, "graph TD") {
 		t.Error("expected mermaid diagram source")
+	}
+}
+
+// TestGeneratePlanHTMLEscapesHostileComponentName pins the L46 fix: a
+// hostile (LLM/user-influenced) component name flowing through RenderMermaid
+// into the preview page must be entity-escaped by html/template, never
+// emitted as live markup. The bundled mermaid runtime entity-decodes the
+// .mermaid div's innerHTML before parsing, so the escaped source still
+// renders the same diagram.
+func TestGeneratePlanHTMLEscapesHostileComponentName(t *testing.T) {
+	hostile := "<script>alert(1)</script>"
+	p := &coreplan.Plan{
+		Intent: "deploy api",
+		Components: []coreplan.Component{
+			{Name: hostile, Description: "Compute", Service: "Lambda"},
+		},
+		Version: 1,
+	}
+	mermaidSrc := coreplan.RenderMermaid(p)
+	if !strings.Contains(mermaidSrc, hostile) {
+		t.Fatalf("precondition: hostile name should reach the mermaid source, got:\n%s", mermaidSrc)
+	}
+
+	adr := "# ADR: Deploy Api\n\n## Status\nProposed\n"
+	b, err := generatePlanHTML("deploy api", adr, mermaidSrc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	html := string(b)
+
+	if strings.Contains(html, hostile) {
+		t.Error("hostile component name emitted unescaped into the preview page")
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("expected entity-escaped component name in the mermaid div")
 	}
 }
 
