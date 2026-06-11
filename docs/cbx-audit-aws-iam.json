@@ -1,5 +1,5 @@
 {
-  "_comment": "Minimum read-only IAM policy for `cbx audit aws`. It authorizes two layers: (1) the explicit per-service AWS SDK calls the discovery code makes directly — STS preflight, ec2:DescribeRegions, the S3/IAM/KMS describers, the account-posture probes (ec2:GetEbsEncryptionByDefault, iam:GetAccountSummary, iam:GetAccountPasswordPolicy, the credential-report console-MFA probe (iam:GenerateCredentialReport + iam:GetCredentialReport — flags IAM users with a console password but no MFA, CIS 1.10 / FSBP IAM.5), glue:GetResourcePolicy for the per-region Glue Data Catalog resource policy), the observability-posture probes (guardduty:ListDetectors, guardduty:GetDetector, config:DescribeConfigurationRecorders, ec2:DescribeFlowLogs), the EBS snapshot lister/describer, the ApiGatewayV2 describer (apigatewayv2:GetStages — an apigateway:GET action, already granted below under CloudControlReadHandlers, since Cloud Control can't list the per-stage AccessLogSettings without the parent ApiId), the EKS cluster describer (iam:ListOpenIDConnectProviders — cross-references the cluster's OIDC issuer against registered IAM OIDC providers to detect whether IRSA is wired — plus a direct eks:ListPodIdentityAssociations call per cluster, the complementary probe that detects EKS Pod Identity, the OIDC-free way to grant pods scoped roles; this eks action needs no explicit grant here as it is already covered by the eks:List* wildcard in CloudControlReadHandlers below); and (2) the Cloud Control discovery path (cloudformation:ListResources/GetResource), where Cloud Control invokes each CFN resource type's List/Read handler under the *caller's* identity, so the caller needs read access to every service in internal/audit/discover/aws/types_to_query.go (EC2, S3, IAM, RDS, Lambda, ECS, EKS, ELBv2, EFS, ApiGateway, DynamoDB, ElastiCache, Athena, SQS, SNS, Events, Cognito, WAFv2, ACM, Logs, CloudWatch, SecretsManager, KMS, CloudFront, Route53, CloudTrail). It is strictly read-only and deliberately avoids data-plane reads (e.g. secretsmanager:GetSecretValue, s3:GetObject). The AWS-managed AWSReadOnlyAccess policy is a valid superset; use this curated policy when a least-privilege grant is required. Plan §7.6.",
+  "_comment": "Minimum read-only IAM policy for `cbx audit aws`. It authorizes two layers: (1) the explicit per-service AWS SDK calls the discovery code makes directly — STS preflight, ec2:DescribeRegions, the S3/IAM/KMS describers, the account-posture probes (ec2:GetEbsEncryptionByDefault, iam:GetAccountSummary, iam:GetAccountPasswordPolicy, the credential-report console-MFA probe (iam:GenerateCredentialReport + iam:GetCredentialReport — flags IAM users with a console password but no MFA, CIS 1.10 / FSBP IAM.5), glue:GetResourcePolicy for the per-region Glue Data Catalog resource policy), the observability-posture probes (guardduty:ListDetectors, guardduty:GetDetector, config:DescribeConfigurationRecorders, ec2:DescribeFlowLogs), the EBS snapshot lister/describer, the ApiGatewayV2 describer (apigatewayv2:GetStages — an apigateway:GET action, already granted below under CloudControlReadHandlers, since Cloud Control can't list the per-stage AccessLogSettings without the parent ApiId), the EKS cluster describer (iam:ListOpenIDConnectProviders — cross-references the cluster's OIDC issuer against registered IAM OIDC providers to detect whether IRSA is wired — plus a direct eks:ListPodIdentityAssociations call per cluster, the complementary probe that detects EKS Pod Identity, the OIDC-free way to grant pods scoped roles; this eks action needs no explicit grant here as it is already covered by the eks:List* wildcard in CloudControlReadHandlers below), the AWS Backup fallback listers + describers (the BackupReads statement: backup:ListBackupVaults / ListBackupPlans enumerate on a silent-empty Cloud Control list, backup:DescribeBackupVault / GetBackupVaultAccessPolicy / GetBackupPlan enrich vault-lock, access-policy and plan-rule state), the ECR repository fallback lister + lifecycle-policy probe (ecr:DescribeRepositories + ecr:GetLifecyclePolicy, granted under CloudControlReadHandlers), the per-bucket region resolution in the S3 fallback lister (s3:GetBucketLocation), and the Lambda reserved-concurrency probe (lambda:GetFunctionConcurrency); and (2) the Cloud Control discovery path (cloudformation:ListResources/GetResource), where Cloud Control invokes each CFN resource type's List/Read handler under the *caller's* identity, so the caller needs read access to every service in internal/audit/discover/aws/types_to_query.go (EC2, S3, IAM, RDS, Lambda, ECS, ECR, EKS, ELBv2, EFS, ApiGateway, DynamoDB, ElastiCache, Athena, SQS, SNS, Events, Cognito, WAFv2, ACM, Logs, CloudWatch, SecretsManager, KMS, CloudFront, Route53, CloudTrail, Backup). It is strictly read-only and deliberately avoids data-plane reads (e.g. secretsmanager:GetSecretValue, s3:GetObject). The AWS-managed AWSReadOnlyAccess policy is a valid superset; use this curated policy when a least-privilege grant is required. Plan §7.6.",
   "Version": "2012-10-17",
   "Statement": [
     {
@@ -22,9 +22,22 @@
       "Resource": "*"
     },
     {
+      "Sid": "BackupReads",
+      "Effect": "Allow",
+      "Action": [
+        "backup:DescribeBackupVault",
+        "backup:GetBackupPlan",
+        "backup:GetBackupVaultAccessPolicy",
+        "backup:ListBackupPlans",
+        "backup:ListBackupVaults"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "S3Describer",
       "Effect": "Allow",
       "Action": [
+        "s3:GetBucketLocation",
         "s3:GetBucketLogging",
         "s3:GetBucketObjectLockConfiguration",
         "s3:GetBucketPolicy",
@@ -110,6 +123,8 @@
         "dynamodb:Describe*",
         "dynamodb:List*",
         "ec2:Describe*",
+        "ecr:DescribeRepositories",
+        "ecr:GetLifecyclePolicy",
         "ecs:Describe*",
         "ecs:List*",
         "eks:Describe*",
@@ -122,6 +137,7 @@
         "kms:Describe*",
         "kms:List*",
         "lambda:GetFunction",
+        "lambda:GetFunctionConcurrency",
         "lambda:GetFunctionConfiguration",
         "lambda:ListFunctions",
         "logs:Describe*",
