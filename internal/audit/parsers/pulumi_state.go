@@ -15,8 +15,10 @@ func ParsePulumiState(state map[string]interface{}) ([]DiscoveredResource, error
 		}
 	}
 
-	// Fallback for states where resources are at the top level.
-	if res, ok := state["resources"].([]interface{}); ok {
+	// Fallback for states where resources are at the top level. Only taken
+	// when the deployment loop found nothing, so a state carrying both
+	// arrays does not double-count every resource.
+	if res, ok := state["resources"].([]interface{}); ok && len(resources) == 0 {
 		for _, r := range res {
 			if m, ok := r.(map[string]interface{}); ok {
 				resources = append(resources, mapToDiscoveredResource(m))

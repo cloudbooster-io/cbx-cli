@@ -221,6 +221,12 @@ instead of an API key, see 'cbx llm cli'.`,
 				token = os.Getenv("CBX_LLM_TOKEN")
 			}
 			if token == "" {
+				// No interactive prompt in JSON mode — it would corrupt the
+				// machine-readable stdout. Require an explicit token source.
+				if output.JSON() {
+					_ = output.PrintJSON(nil, output.JSONErrorf("token required: pass --token or set CBX_LLM_TOKEN"))
+					return fmt.Errorf("token required: pass --token or set CBX_LLM_TOKEN")
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Enter your %s API key: ", provider)
 				var input string
 				if _, err := fmt.Fscanln(cmd.InOrStdin(), &input); err != nil {
@@ -370,7 +376,7 @@ func newLLMAPITestCmd() *cobra.Command {
 			}
 			if err := llm.ValidateToken(provider, token); err != nil {
 				if output.JSON() {
-					return output.PrintJSON(map[string]any{"provider": provider, "ok": false, "error": err.Error()}, nil)
+					_ = output.PrintJSON(map[string]any{"provider": provider, "ok": false, "error": err.Error()}, nil)
 				}
 				return fmt.Errorf("api/%s test failed: %w", provider, err)
 			}
@@ -489,7 +495,7 @@ func newLLMCLITestCmd() *cobra.Command {
 			versionLine := strings.TrimSpace(string(out))
 			if runErr != nil {
 				if output.JSON() {
-					return output.PrintJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine}, nil)
+					_ = output.PrintJSON(map[string]any{"executor": name, "ok": false, "path": bin, "error": runErr.Error(), "output": versionLine}, nil)
 				}
 				return fmt.Errorf("executor %s at %s failed --version: %w\n%s", name, bin, runErr, versionLine)
 			}

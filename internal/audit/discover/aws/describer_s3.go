@@ -19,12 +19,11 @@ import (
 // DualStackDomainName, WebsiteURL. The orphan provider needs creation
 // time to gate "empty bucket" findings to genuinely-stale buckets, so we
 // hydrate it from a single account-wide ListBuckets call, cached for the
-// process lifetime. Tests reset via resetBucketCreationCacheForTest.
+// process lifetime.
 var (
 	bucketCreationOnce  sync.Once
 	bucketCreationCache map[string]time.Time
 	bucketCreationErr   error
-	bucketCreationMu    sync.Mutex // guards reset; Once handles the populate race
 )
 
 // fetchBucketCreationDates returns the creation date for the named
@@ -51,17 +50,6 @@ func fetchBucketCreationDate(ctx context.Context, c awsCfg, name string) (time.T
 	}
 	t, ok := bucketCreationCache[name]
 	return t, ok, nil
-}
-
-// resetBucketCreationCacheForTest is exported via the _test.go file so
-// describer tests in this package can re-prime the sync.Once between
-// table cases. Kept colocated with the cache to make the link obvious.
-func resetBucketCreationCacheForTest() {
-	bucketCreationMu.Lock()
-	defer bucketCreationMu.Unlock()
-	bucketCreationOnce = sync.Once{}
-	bucketCreationCache = nil
-	bucketCreationErr = nil
 }
 
 // s3BucketDescriber enriches AWS::S3::Bucket resources with the security

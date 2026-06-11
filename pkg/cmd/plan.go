@@ -96,6 +96,9 @@ side by side.`,
 			isHeadless := noTUI || output.JSON() || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
 			if isHeadless {
 				if intent == "" {
+					if output.JSON() {
+						_ = output.PrintJSON(nil, output.JSONErrorf("intent required in non-interactive mode"))
+					}
 					return fmt.Errorf("intent required in non-interactive mode")
 				}
 				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort, llmProvider, variants, token, llmToken)
@@ -154,9 +157,15 @@ func (p *headlessProgress) Commit() {}
 
 func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int, llmProvider string, variants int, token string, llmToken func(provider string) string) error {
 	if variants < 1 {
+		if output.JSON() {
+			_ = output.PrintJSON(nil, output.JSONErrorf("variants must be at least 1"))
+		}
 		return fmt.Errorf("variants must be at least 1")
 	}
 	if variants > 2 {
+		if output.JSON() {
+			_ = output.PrintJSON(nil, output.JSONErrorf("free tier capped at 2 variants"))
+		}
 		return fmt.Errorf("free tier capped at 2 variants")
 	}
 

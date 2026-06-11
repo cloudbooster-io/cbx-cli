@@ -88,8 +88,10 @@ func stripSVGWrapper(s string) (inner string, viewSize int) {
 	vb := 48
 	if m := svgOpen.FindStringSubmatch(out); m != nil {
 		var w, h int
-		fmt.Sscanf(m[1], "%d", &w)
-		fmt.Sscanf(m[2], "%d", &h)
+		// The (\d+) captures are digits-only, so a parse failure just
+		// leaves the zero value — which the w > 0 guard below rejects.
+		_, _ = fmt.Sscanf(m[1], "%d", &w)
+		_, _ = fmt.Sscanf(m[2], "%d", &h)
 		if w == h && w > 0 {
 			vb = w
 		}

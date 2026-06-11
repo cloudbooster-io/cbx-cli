@@ -13,16 +13,18 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 )
 
-// requireLocalCBBackend skips the test when the local platform-app dev
-// backend isn't reachable on the default URL. We deliberately do NOT
-// stand up a fake server: the preflight is part of the contract being
-// tested and faking it out would defeat the point.
+// requireLocalCBBackend skips the test when the resolved CB backend
+// (CB_API_URL when set, otherwise the production default) isn't
+// reachable. We deliberately do NOT stand up a fake server: the
+// preflight is part of the contract being tested and faking it out
+// would defeat the point.
 func requireLocalCBBackend(t *testing.T) {
 	t.Helper()
+	apiURL := resolvedCBAPIURL()
 	client := &http.Client{Timeout: 1 * time.Second}
-	resp, err := client.Get(defaultCBAPIURL + "/health")
+	resp, err := client.Get(apiURL + "/health")
 	if err != nil {
-		t.Skipf("local CB backend not running at %s (%v); skipping grounded streamer tests", defaultCBAPIURL, err)
+		t.Skipf("CB backend not running at %s (%v); skipping grounded streamer tests", apiURL, err)
 	}
 	resp.Body.Close()
 }

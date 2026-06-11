@@ -96,6 +96,49 @@ func TestLambdaDescriber_DetectsPlaintextSecretEnvKey(t *testing.T) {
 	}
 }
 
+// The Inputs map is inlined verbatim into the grounded prompt, so Enrich must
+// mask secret-shaped env-var VALUES in place — AFTER computing the
+// cb_describer_env_has_plaintext_secrets flag, which must still fire off the
+// un-redacted key names. Reference-shaped keys (_ARN-suffixed) and arn:-prefixed
+// values are the canonical indirection shapes and must survive un-masked, as
+// must plain config values.
+func TestLambdaDescriber_RedactsSecretEnvValues(t *testing.T) {
+	r := DiscoveredResource{
+		Type: "AWS::Lambda::Function",
+		ID:   "fn-leaky",
+		Inputs: map[string]any{
+			"Environment": map[string]any{"Variables": map[string]any{
+				"DB_PASSWORD":     "hunter2",                                          // secret-shaped key, literal value → masked
+				"DB_PASSWORD_ARN": "arn:aws:secretsmanager:eu-central-1:123:secret:x", // reference-shaped key → untouched
+				"API_TOKEN":       "arn:aws:ssm:eu-central-1:123:parameter/token",     // secret-shaped key, ARN value → indirection, untouched
+				"LOG_LEVEL":       "info",                                             // plain config → untouched
+			}},
+		},
+	}
+	if err := (lambdaFunctionDescriber{}).Enrich(context.Background(), awsCfg{}, &r); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+
+	// The flag is computed BEFORE the mask — its key-shape signal must be intact.
+	if r.Inputs["cb_describer_env_has_plaintext_secrets"] != true {
+		t.Errorf("env_has_plaintext_secrets = %v, want true (flag must be computed before redaction)", r.Inputs["cb_describer_env_has_plaintext_secrets"])
+	}
+
+	vars := r.Inputs["Environment"].(map[string]any)["Variables"].(map[string]any)
+	if got := vars["DB_PASSWORD"]; got != "[REDACTED by cbx]" {
+		t.Errorf("DB_PASSWORD = %v, want the redaction marker (value must not reach the prompt)", got)
+	}
+	if got := vars["DB_PASSWORD_ARN"]; got != "arn:aws:secretsmanager:eu-central-1:123:secret:x" {
+		t.Errorf("DB_PASSWORD_ARN = %v, want the reference untouched", got)
+	}
+	if got := vars["API_TOKEN"]; got != "arn:aws:ssm:eu-central-1:123:parameter/token" {
+		t.Errorf("API_TOKEN = %v, want the ARN value untouched (indirection shape)", got)
+	}
+	if got := vars["LOG_LEVEL"]; got != "info" {
+		t.Errorf("LOG_LEVEL = %v, want the non-secret value untouched", got)
+	}
+}
+
 func TestLambdaDescriber_DLQAndReservedConcurrency(t *testing.T) {
 	cases := []struct {
 		name              string

@@ -350,24 +350,33 @@ func upgradeDirect(ctx context.Context, result *Result) error {
 	return fmt.Errorf("direct in-place upgrade not yet implemented; download from %s", result.ReleaseURL)
 }
 
+// goos and goarch mirror runtime.GOOS / runtime.GOARCH. Package-level vars
+// so tests can pin a platform per case.
+var (
+	goos   = runtime.GOOS
+	goarch = runtime.GOARCH
+)
+
 func directAssetURL(result *Result) string {
 	// Best-effort asset URL construction matching the GoReleaser archive
 	// naming convention. GitHub release-asset URL pattern is:
 	//   https://github.com/<owner>/<repo>/releases/download/<tag>/<filename>
-	goos := runtime.GOOS
-	goarch := runtime.GOARCH
-	if goos == "darwin" {
-		goos = "Darwin"
-	} else if goos == "linux" {
-		goos = "Linux"
-	} else if goos == "windows" {
-		goos = "Windows"
+	osName := goos
+	switch osName {
+	case "darwin":
+		osName = "Darwin"
+	case "linux":
+		osName = "Linux"
+	case "windows":
+		osName = "Windows"
 	}
-	if goarch == "amd64" {
-		goarch = "x86_64"
-	} else if goarch == "arm64" {
-		goarch = "arm64"
+	arch := goarch
+	switch arch {
+	case "amd64":
+		arch = "x86_64"
+	case "arm64":
+		arch = "arm64"
 	}
 	return fmt.Sprintf("%s/download/%s/cbx-cli_%s_%s.tar.gz",
-		fallbackHTMLURL, result.LatestVersion, goos, goarch)
+		fallbackHTMLURL, result.LatestVersion, osName, arch)
 }

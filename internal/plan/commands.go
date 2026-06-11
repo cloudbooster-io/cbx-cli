@@ -234,9 +234,9 @@ func cmdHelp() string {
 	sb.WriteString("Available commands:\n")
 	for _, c := range AvailableCommands() {
 		if c.Args != "" {
-			sb.WriteString(fmt.Sprintf("  /%-10s %-15s — %s\n", c.Name, c.Args, c.Description))
+			fmt.Fprintf(&sb, "  /%-10s %-15s — %s\n", c.Name, c.Args, c.Description)
 		} else {
-			sb.WriteString(fmt.Sprintf("  /%-10s %-15s — %s\n", c.Name, "", c.Description))
+			fmt.Fprintf(&sb, "  /%-10s %-15s — %s\n", c.Name, "", c.Description)
 		}
 	}
 	return sb.String()

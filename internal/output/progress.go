@@ -87,13 +87,13 @@ func (p *Progress) Render(current, total int64) string {
 // return so the next call overwrites it.
 func (p *Progress) Print(current, total int64) {
 	if !Enabled() {
-		fmt.Fprintf(p.writer, "\r%s", p.Render(current, total))
+		_, _ = fmt.Fprintf(p.writer, "\r%s", p.Render(current, total))
 		return
 	}
-	fmt.Fprintf(p.writer, "\r%s", p.Render(current, total))
+	_, _ = fmt.Fprintf(p.writer, "\r%s", p.Render(current, total))
 }
 
 // Finish writes a final line and moves to the next line.
 func (p *Progress) Finish(current, total int64) {
-	fmt.Fprintln(p.writer, p.Render(current, total))
+	_, _ = fmt.Fprintln(p.writer, p.Render(current, total))
 }

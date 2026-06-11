@@ -15,15 +15,34 @@ import (
 )
 
 func TestFacade_TypeAliasesIdentical(t *testing.T) {
-	// Type aliases are compile-time equivalent — assignability proves
-	// the package's contract holds for downstream consumers.
+	// Type aliases are compile-time equivalent — each conversion below
+	// only compiles while the facade alias still resolves to its
+	// internal counterpart. (Conversions rather than typed var
+	// declarations keep staticcheck QF1011 quiet.)
 	var (
-		_ pkgaudit.Finding            = internalaudit.Finding{}
-		_ pkgaudit.CBSource           = internalaudit.CBSource{}
-		_ pkgaudit.Result             = internalaudit.Result{}
-		_ pkgaudit.Options            = internalaudit.Options{}
-		_ pkgaudit.DiscoveredResource = internalaudit.DiscoveredResource{}
-		_ pkgaudit.Component          = group.Component{}
+		_ = pkgaudit.Finding(internalaudit.Finding{})
+		_ = pkgaudit.CBSource(internalaudit.CBSource{})
+		_ = pkgaudit.Result(internalaudit.Result{})
+		_ = pkgaudit.Options(internalaudit.Options{})
+		_ = pkgaudit.DiscoveredResource(internalaudit.DiscoveredResource{})
+		_ = pkgaudit.Resource(internalaudit.Resource{})
+		_ = pkgaudit.Component(group.Component{})
+		_ = pkgaudit.AWSAuditContext(internalaudit.AWSAuditContext{})
+		_ = pkgaudit.ExitCodeError(internalaudit.ExitCodeError{})
+
+		// Types that escape through exported fields of the aliases
+		// above (review H3).
+		_ = pkgaudit.LLMConnection(internalaudit.LLMConnection{})
+		_ = pkgaudit.AccountPosture(internalaudit.AccountPosture{})
+		_ = pkgaudit.ConfigRecorderState(internalaudit.ConfigRecorderState{})
+		_ = pkgaudit.CredentialReportPosture(internalaudit.CredentialReportPosture{})
+		_ = pkgaudit.GlueCatalogPolicy(internalaudit.GlueCatalogPolicy{})
+		_ = pkgaudit.AuditState(internalaudit.AuditState{})
+
+		// FindingProvider is an interface — the inner-to-outer
+		// conversion only compiles while the internal contract still
+		// satisfies the facade's.
+		_ = pkgaudit.FindingProvider(internalaudit.FindingProvider(nil))
 	)
 }
 

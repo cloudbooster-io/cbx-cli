@@ -78,6 +78,10 @@ type AWSDiscoveryUI struct {
 	// number of lines we drew in the previous render; used to scroll the
 	// cursor up before redrawing.
 	prevLines int
+
+	// timestamp of the last non-styled status line, used by
+	// maybeNonStyledLine to throttle to ~1 line/sec. Guarded by mu.
+	lastInlinePrint time.Time
 }
 
 // NewAWSDiscoveryUI constructs a display that writes to stderr.
@@ -371,7 +375,7 @@ func (u *AWSDiscoveryUI) renderDiscover() {
 
 	u.clearLines(u.prevLines)
 	for _, ln := range lines {
-		fmt.Fprintln(u.writer, ln)
+		_, _ = fmt.Fprintln(u.writer, ln)
 	}
 	u.prevLines = len(lines)
 	u.dirty = false
@@ -426,7 +430,7 @@ func (u *AWSDiscoveryUI) renderScout() {
 
 	u.clearLines(u.prevLines)
 	for _, ln := range lines {
-		fmt.Fprintln(u.writer, ln)
+		_, _ = fmt.Fprintln(u.writer, ln)
 	}
 	u.prevLines = len(lines)
 	u.dirty = false
@@ -474,30 +478,28 @@ func (u *AWSDiscoveryUI) clearLines(n int) {
 		return
 	}
 	for i := 0; i < n; i++ {
-		fmt.Fprint(u.writer, "\033[1A\033[2K")
+		_, _ = fmt.Fprint(u.writer, "\033[1A\033[2K")
 	}
-	fmt.Fprint(u.writer, "\r")
+	_, _ = fmt.Fprint(u.writer, "\r")
 }
 
 // maybeNonStyledLine emits a single-line status update to stderr in
 // non-styled mode (no TTY / quiet / no-color). Keeps non-interactive
 // users informed without ANSI escapes. Throttled to ~1 line/sec.
-var lastInlinePrint time.Time
-
 func (u *AWSDiscoveryUI) maybeNonStyledLine() {
 	if Enabled() {
 		return
 	}
 	u.mu.Lock()
 	now := time.Now()
-	if !lastInlinePrint.IsZero() && now.Sub(lastInlinePrint) < time.Second {
+	if !u.lastInlinePrint.IsZero() && now.Sub(u.lastInlinePrint) < time.Second {
 		u.mu.Unlock()
 		return
 	}
-	lastInlinePrint = now
+	u.lastInlinePrint = now
 	line := fmt.Sprintf("[%s] %d/%d jobs · %d resources", u.phase, u.jobsDone, max1(u.jobsTotal), u.resources)
 	u.mu.Unlock()
-	fmt.Fprintln(u.writer, line)
+	_, _ = fmt.Fprintln(u.writer, line)
 }
 
 // renderBar builds a fixed-width filled/empty bar. Total ≤ 0 renders

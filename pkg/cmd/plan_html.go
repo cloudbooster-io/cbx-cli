@@ -53,7 +53,7 @@ func generatePlanHTML(intent, adrMarkdown string, mermaidSource template.HTML) (
 	}
 
 	data := planHTMLData{
-		Title:         strings.Title(intent),
+		Title:         titleCase(intent),
 		Timestamp:     time.Now().Format(time.RFC1123),
 		ADRHTML:       template.HTML(adrHTML),
 		Headings:      headings,
@@ -71,6 +71,21 @@ func generatePlanHTML(intent, adrMarkdown string, mermaidSource template.HTML) (
 		return nil, fmt.Errorf("executing template: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// titleCase upper-cases the first letter of each space-separated ASCII word.
+// Replaces the deprecated strings.Title for the plan title; intents are
+// free-form prose, so simple ASCII word boundaries are good enough.
+func titleCase(s string) string {
+	b := []byte(s)
+	prevSpace := true
+	for i, c := range b {
+		if prevSpace && c >= 'a' && c <= 'z' {
+			b[i] = c - ('a' - 'A')
+		}
+		prevSpace = c == ' '
+	}
+	return string(b)
 }
 
 // markdownToHTML converts a small subset of markdown to HTML and extracts headings.
@@ -351,7 +366,7 @@ func startPreviewServer(dir string, htmlContent []byte, requestedPort int, noOpe
 		lastRequestAt.Store(time.Now().Unix())
 		if r.URL.Path == "/"+prefix+"/" || r.URL.Path == "/"+prefix+"" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write(htmlContent)
+			_, _ = w.Write(htmlContent)
 			return
 		}
 		http.NotFound(w, r)

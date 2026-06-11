@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ComposeClient is a minimal HTTP client for the CloudBooster compose API.
@@ -18,11 +20,26 @@ type ComposeClient struct {
 }
 
 // NewComposeClient creates a new compose API client.
+//
+// Propose may consume a long-lived SSE body, so a whole-request
+// http.Client.Timeout would cut a healthy stream mid-body. Instead the
+// transport bounds each phase that can hang on a dead server: dial, TLS
+// handshake, and waiting for response headers.
 func NewComposeClient(baseURL, token string) *ComposeClient {
 	return &ComposeClient{
 		BaseURL: strings.TrimSuffix(baseURL, "/"),
 		Token:   token,
-		client:  &http.Client{},
+		client: &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+				ForceAttemptHTTP2:     true,
+			},
+		},
 	}
 }
 

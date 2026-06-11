@@ -38,7 +38,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 			idToURN[r.ID] = r.URN
 		}
 	}
-	edges, root, lateral := classifyResources(resources, idToURN)
+	edges, root, lateral := classifyResources(resources)
 
 	// architecture-beta requires unique alphanumeric identifiers. Map
 	// every URN to a short stable id.
@@ -63,7 +63,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 	// since AWS doesn't have a dedicated VPC/Subnet group icon in
 	// most iconify packs.
 	regionGroup := "g_region"
-	sb.WriteString(fmt.Sprintf("    group %s(cloud)[REGION]\n", regionGroup))
+	fmt.Fprintf(&sb, "    group %s(cloud)[REGION]\n", regionGroup)
 	type subnetGroup struct {
 		id string
 		sn *topoSubnet
@@ -75,14 +75,14 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 		if c, _ := v.res.Inputs["CidrBlock"].(string); c != "" {
 			label = "VPC " + c
 		}
-		sb.WriteString(fmt.Sprintf("    group %s(cloud)[%s] in %s\n", vpcID, mermaidArchEscape(label), regionGroup))
+		fmt.Fprintf(&sb, "    group %s(cloud)[%s] in %s\n", vpcID, mermaidArchEscape(label), regionGroup)
 		for aIdx, az := range v.azs {
 			azID := fmt.Sprintf("g_v%d_az%d", vIdx, aIdx)
 			azLabel := "AZ"
 			if az.name != "" {
 				azLabel = "AZ " + az.name
 			}
-			sb.WriteString(fmt.Sprintf("    group %s(cloud)[%s] in %s\n", azID, mermaidArchEscape(azLabel), vpcID))
+			fmt.Fprintf(&sb, "    group %s(cloud)[%s] in %s\n", azID, mermaidArchEscape(azLabel), vpcID)
 			for sIdx, s := range az.subnets {
 				snID := fmt.Sprintf("g_v%d_az%d_sn%d", vIdx, aIdx, sIdx)
 				pub, _ := s.res.Inputs["MapPublicIpOnLaunch"].(bool)
@@ -95,7 +95,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 				if cidr != "" {
 					snLabel = kind + " " + cidr
 				}
-				sb.WriteString(fmt.Sprintf("    group %s(cloud)[%s] in %s\n", snID, mermaidArchEscape(snLabel), azID))
+				fmt.Fprintf(&sb, "    group %s(cloud)[%s] in %s\n", snID, mermaidArchEscape(snLabel), azID)
 				subnetGroups = append(subnetGroups, subnetGroup{id: snID, sn: s})
 			}
 		}
@@ -104,7 +104,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 	// ─── Services ───
 	// Edge services live outside the region group.
 	usersID := "svc_users"
-	sb.WriteString(fmt.Sprintf("    service %s(internet)[Public users]\n", usersID))
+	fmt.Fprintf(&sb, "    service %s(internet)[Public users]\n", usersID)
 	for _, r := range edges {
 		emitArchService(&sb, idFor(r.URN), r, "")
 	}
@@ -137,7 +137,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 	// ─── Edges ───
 	// Implicit: users → all edge services.
 	for _, r := range edges {
-		sb.WriteString(fmt.Sprintf("    %s:R --> L:%s\n", usersID, idFor(r.URN)))
+		fmt.Fprintf(&sb, "    %s:R --> L:%s\n", usersID, idFor(r.URN))
 	}
 	// Real edges from the SVG's inference pipeline.
 	all := inferConnections(resources, idToURN)
@@ -157,7 +157,7 @@ func BuildArchitectureDiagram(resources []DiscoveredResource, components []group
 			continue
 		}
 		emitted[key] = true
-		sb.WriteString(fmt.Sprintf("    %s:R --> L:%s\n", from, to))
+		fmt.Fprintf(&sb, "    %s:R --> L:%s\n", from, to)
 	}
 
 	// Sort lines deterministically (idempotent runs for diffs).
@@ -171,9 +171,9 @@ func emitArchService(sb *strings.Builder, id string, r DiscoveredResource, paren
 	icon := iconifyForCFNType(r.Type)
 	label := shortServiceLabel(r)
 	if parentGroup != "" {
-		sb.WriteString(fmt.Sprintf("    service %s(%s)[%s] in %s\n", id, icon, mermaidArchEscape(label), parentGroup))
+		fmt.Fprintf(sb, "    service %s(%s)[%s] in %s\n", id, icon, mermaidArchEscape(label), parentGroup)
 	} else {
-		sb.WriteString(fmt.Sprintf("    service %s(%s)[%s]\n", id, icon, mermaidArchEscape(label)))
+		fmt.Fprintf(sb, "    service %s(%s)[%s]\n", id, icon, mermaidArchEscape(label))
 	}
 }
 
@@ -256,25 +256,6 @@ func mermaidArchEscape(s string) string {
 		"·", "-",
 	)
 	return `"` + r.Replace(s) + `"`
-}
-
-// sanitizeID turns an arbitrary string into a mermaid-safe identifier.
-// Retained for legacy callers — the new flowchart layout uses opaque
-// "svcN" ids assigned by idFor.
-func sanitizeID(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	if b.Len() == 0 {
-		return "x"
-	}
-	return b.String()
 }
 
 // Unused legacy sort helper retained so callers in tests still compile.

@@ -24,9 +24,9 @@ func (a *checkovAdapter) SupportsSource() bool { return true }
 // ScanSource invokes checkov against the user's IaC directory directly,
 // using its native -d (directory) input mode rather than the synthesized
 // state file used in state mode. parseCheckovOutput is reused unchanged.
-func (a *checkovAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+func (a *checkovAdapter) ScanSource(ctx context.Context, dir string) ([]Finding, error) {
 	meta := scannerRegistry["checkov"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
@@ -35,7 +35,7 @@ func (a *checkovAdapter) ScanSource(_ context.Context, dir string) ([]Finding, e
 	// it as an exec failure, and the JSON envelope never reaches the
 	// parser — even though the run was successful from our perspective.
 	// tfsec uses the same flag for the same reason.
-	out, err := runScanner(meta.Name, []string{"-d", dir, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{"-d", dir, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running checkov: %w\noutput: %s", err, string(out))
 	}
@@ -43,9 +43,9 @@ func (a *checkovAdapter) ScanSource(_ context.Context, dir string) ([]Finding, e
 	return parseCheckovOutput(out)
 }
 
-func (a *checkovAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
+func (a *checkovAdapter) Scan(ctx context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["checkov"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
@@ -53,9 +53,9 @@ func (a *checkovAdapter) Scan(_ context.Context, resources []Resource) ([]Findin
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(filepath.Dir(statePath))
+	defer func() { _ = os.RemoveAll(filepath.Dir(statePath)) }()
 
-	out, err := runScanner(meta.Name, []string{"-f", statePath, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{"-f", statePath, "--output", "json", "--compact", "--quiet", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running checkov: %w\noutput: %s", err, string(out))
 	}

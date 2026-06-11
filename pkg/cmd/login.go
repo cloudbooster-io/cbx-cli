@@ -131,15 +131,6 @@ func runStatus(cmd *cobra.Command) error {
 		return nil
 	}
 
-	token, err := auth.LoadToken(kr)
-	if err != nil {
-		if output.JSON() {
-			return output.PrintJSON(map[string]string{"status": "not_logged_in"}, nil)
-		}
-		fmt.Print(renderNotLoggedInCard())
-		return nil
-	}
-
 	httpClient, err := auth.AuthenticatedClient(cmd.Context(), cfg.APIURL, kr)
 	if err != nil {
 		if output.JSON() {
@@ -190,7 +181,7 @@ func runStatus(cmd *cobra.Command) error {
 	}
 
 	// Reload token from keyring in case AuthenticatedClient silently refreshed it.
-	token, err = auth.LoadToken(kr)
+	token, err := auth.LoadToken(kr)
 	if err != nil {
 		token = nil
 	}

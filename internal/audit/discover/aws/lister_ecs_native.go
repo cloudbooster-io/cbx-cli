@@ -312,7 +312,18 @@ func containerDefinitionsToCFN(defs []ecstypes.ContainerDefinition) []any {
 			for _, kv := range cd.Environment {
 				e := map[string]any{}
 				putStr(e, "Name", kv.Name)
-				putStr(e, "Value", kv.Value)
+				// There is no TaskDefinition describer, so these Properties are
+				// read directly by the grounded LLM — a secret-shaped Name's
+				// VALUE must be masked HERE or it ships verbatim into the
+				// `claude -p` prompt. Same key heuristic as the Lambda
+				// describer (keyLooksLikeSecret); arn:-prefixed values pass
+				// through because they are the indirection shape the grounded
+				// plaintext-env rule's suppress path keys off, not secrets.
+				if kv.Name != nil && kv.Value != nil && keyLooksLikeSecret(*kv.Name) && !secretValueIsReference(*kv.Value) {
+					e["Value"] = redactedEnvValue
+				} else {
+					putStr(e, "Value", kv.Value)
+				}
 				env = append(env, e)
 			}
 			c["Environment"] = env

@@ -157,7 +157,7 @@ func TestPipelineCancel(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
 			for i := 0; i < 10; i++ {
-				fmt.Fprintln(w, fmt.Sprintf("data: {\"name\":\"C%d\",\"description\":\"d\",\"service\":\"S\"}", i))
+				fmt.Fprintf(w, "data: {\"name\":\"C%d\",\"description\":\"d\",\"service\":\"S\"}\n", i)
 				w.(http.Flusher).Flush()
 				time.Sleep(50 * time.Millisecond)
 			}

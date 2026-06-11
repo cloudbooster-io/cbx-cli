@@ -43,6 +43,41 @@ type DiscoveredResource = audit.DiscoveredResource
 // can render Components without taking a transitive group import.
 type Component = group.Component
 
+// FindingProvider is the scanner contract the audit pipeline
+// dispatches over — Scan for state-mode resources, ScanSource for an
+// on-disk IaC tree. Re-exported so downstream consumers can implement
+// custom providers without importing internal/audit.
+type FindingProvider = audit.FindingProvider
+
+// LLMConnection is one architecture data-flow edge the grounded
+// analyzer inferred (CloudFront → S3 origin, API Gateway → Lambda,
+// etc.). Escapes through Result.LLMConnections and
+// AuditState.LLMConnections.
+type LLMConnection = audit.LLMConnection
+
+// --- account posture (live-AWS probes) ---
+
+// AccountPosture carries the AWS account-level configuration probes
+// (default EBS encryption, IAM summary, CloudTrail / GuardDuty /
+// Config coverage, Glue catalog policy, credential report). Escapes
+// through Options.AWSAccountPosture and AWSAuditContext.AccountPosture.
+type AccountPosture = audit.AccountPosture
+
+// ConfigRecorderState is the per-region AWS Config
+// configuration-recorder shape carried in
+// AccountPosture.ConfigRecorderByRegion.
+type ConfigRecorderState = audit.ConfigRecorderState
+
+// CredentialReportPosture summarises IAM console-login MFA coverage
+// from the credential report. Carried in
+// AccountPosture.CredentialReport.
+type CredentialReportPosture = audit.CredentialReportPosture
+
+// GlueCatalogPolicy summarises the Glue Data Catalog resource policy
+// discovered in one region. Carried in
+// AccountPosture.GlueCatalogPolicyByRegion.
+type GlueCatalogPolicy = audit.GlueCatalogPolicy
+
 // --- severity constants ---
 
 // Severity levels for findings. Surface-compatible with anything that
@@ -112,6 +147,22 @@ type AWSAuditContext = audit.AWSAuditContext
 // under their primary component, and an Account-wide Findings section
 // for everything else). Plan §7.7 + §7.12.
 var RenderAWSMarkdown = audit.RenderAWSMarkdown
+
+// --- audit state sidecar (render replay) ---
+
+// AuditState is the sidecar .state.json shape RunFromResources writes
+// next to every AWS audit report — everything the diagram + report
+// renderer needs to re-render without re-running discovery, scanners,
+// or the LLM call.
+type AuditState = audit.AuditState
+
+// SaveAuditState marshals an AuditState to pretty-printed JSON at the
+// given path.
+var SaveAuditState = audit.SaveAuditState
+
+// LoadAuditState reads + unmarshals an AuditState from a JSON file,
+// rejecting a file whose schema version the renderer doesn't support.
+var LoadAuditState = audit.LoadAuditState
 
 // --- rendering / exit helpers ---
 

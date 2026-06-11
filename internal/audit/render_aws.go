@@ -99,12 +99,11 @@ func writeExecutiveBrief(sb *strings.Builder, ctx AWSAuditContext, result *Resul
 	} else {
 		region = "`" + region + "`"
 	}
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		"This audit reviewed **%d component%s** in %s and identified **%d finding%s** grounded against CloudBooster's curated AWS knowledge.\n\n",
 		len(result.Components), plural(len(result.Components)),
 		region,
-		len(result.Findings), plural(len(result.Findings)),
-	))
+		len(result.Findings), plural(len(result.Findings)))
 
 	// Posture rating — one-glance verdict before the breakdown.
 	counts := countBySeverity(result.Findings)
@@ -120,7 +119,7 @@ func writeExecutiveBrief(sb *strings.Builder, ctx AWSAuditContext, result *Resul
 	}
 	sb.WriteString("**Top concerns:**\n\n")
 	for i, t := range top {
-		sb.WriteString(fmt.Sprintf("%d. %s %s — `%s`\n", i+1, severityEmoji(t.Severity), t.Title, shortResourceForBrief(t.Resource)))
+		fmt.Fprintf(sb, "%d. %s %s — `%s`\n", i+1, severityEmoji(t.Severity), t.Title, shortResourceForBrief(t.Resource))
 	}
 	sb.WriteString("\nSee the severity sections below for full details and remediations.\n\n---\n\n")
 }
@@ -235,8 +234,8 @@ func writeReportHeader(sb *strings.Builder, ctx AWSAuditContext, result *Result)
 	if ctx.Identity != "" {
 		sb.WriteString("> **Identity** `" + ctx.Identity + "`  \n")
 	}
-	sb.WriteString(fmt.Sprintf("> **Findings** %d  ·  **Components** %d  ·  **CloudTrail** ~%d Read events\n\n",
-		len(result.Findings), len(result.Components), ctx.EventCount))
+	fmt.Fprintf(sb, "> **Findings** %d  ·  **Components** %d  ·  **CloudTrail** ~%d Read events\n\n",
+		len(result.Findings), len(result.Components), ctx.EventCount)
 }
 
 // writeExecutiveSummary renders the severity breakdown as a three-
@@ -266,8 +265,8 @@ func writeExecutiveSummary(sb *strings.Builder, findings []Finding) {
 		if c == 0 {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("| %s | **%s** | %d | %s |\n",
-			severityEmoji(sev), strings.ToUpper(sev), c, actions[sev]))
+		fmt.Fprintf(sb, "| %s | **%s** | %d | %s |\n",
+			severityEmoji(sev), strings.ToUpper(sev), c, actions[sev])
 	}
 	sb.WriteString("\n")
 }
@@ -322,7 +321,7 @@ func writeTableOfContents(sb *strings.Builder, findings []Finding) {
 		}
 		title := severityTitle(sev)
 		anchor := strings.ToLower(strings.ReplaceAll(title, " ", "-"))
-		sb.WriteString(fmt.Sprintf("- %s [%s](#%s) — %d\n", severityEmoji(sev), title, anchor, c))
+		fmt.Fprintf(sb, "- %s [%s](#%s) — %d\n", severityEmoji(sev), title, anchor, c)
 	}
 	sb.WriteString("\n")
 }
@@ -338,7 +337,7 @@ func writeFindingsBySeverity(sb *strings.Builder, findings []Finding, urnToCompo
 			continue
 		}
 		title := severityTitle(sev)
-		sb.WriteString(fmt.Sprintf("## %s %s\n\n", severityEmoji(sev), title))
+		fmt.Fprintf(sb, "## %s %s\n\n", severityEmoji(sev), title)
 		for i, f := range list {
 			writeFindingCard(sb, f, urnToComponent[f.Resource])
 			if i < len(list)-1 {
@@ -423,8 +422,8 @@ func writeComponentsSection(sb *strings.Builder, components []group.Component) {
 	sb.WriteString("_Resources grouped by CB primitive or tag-based component. Findings are listed under each component for cross-reference._\n\n")
 
 	for _, c := range components {
-		sb.WriteString(fmt.Sprintf("- **%s** `%s` — %d resource%s\n",
-			c.Kind, c.Name, len(c.Resources), plural(len(c.Resources))))
+		fmt.Fprintf(sb, "- **%s** `%s` — %d resource%s\n",
+			c.Kind, c.Name, len(c.Resources), plural(len(c.Resources)))
 		for _, urn := range c.Resources {
 			sb.WriteString("  - `" + urn + "`\n")
 		}
@@ -535,21 +534,6 @@ func componentLabelByURN(components []group.Component) map[string]string {
 		}
 	}
 	return out
-}
-
-// worstSeverity returns the most-urgent severity present in a finding
-// list. Empty list returns "" so callers can branch on no-findings.
-func worstSeverity(findings []Finding) string {
-	rank := map[string]int{SeverityCritical: 4, SeverityHigh: 3, SeverityWarning: 2, SeverityInfo: 1}
-	worst := ""
-	worstRank := 0
-	for _, f := range findings {
-		if r := rank[strings.ToLower(f.Severity)]; r > worstRank {
-			worst = f.Severity
-			worstRank = r
-		}
-	}
-	return worst
 }
 
 // partitionFindingsByComponent assigns each finding to at most one

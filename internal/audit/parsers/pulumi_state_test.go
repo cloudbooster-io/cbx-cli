@@ -74,6 +74,37 @@ func TestParsePulumiStateTopLevelResources(t *testing.T) {
 	}
 }
 
+func TestParsePulumiStateBothArraysNoDuplicates(t *testing.T) {
+	state := map[string]interface{}{
+		"version": 3,
+		"deployment": map[string]interface{}{
+			"resources": []interface{}{
+				map[string]interface{}{
+					"urn":  "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket",
+					"type": "aws:s3/bucket:Bucket",
+				},
+			},
+		},
+		"resources": []interface{}{
+			map[string]interface{}{
+				"urn":  "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket",
+				"type": "aws:s3/bucket:Bucket",
+			},
+		},
+	}
+
+	resources, err := ParsePulumiState(state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource (no double-count), got %d", len(resources))
+	}
+	if resources[0].URN != "urn:pulumi:dev::stack::aws:s3/bucket:Bucket::my-bucket" {
+		t.Fatalf("unexpected URN: %s", resources[0].URN)
+	}
+}
+
 func TestParsePulumiStateEmptyResources(t *testing.T) {
 	state := map[string]interface{}{
 		"version": 3,

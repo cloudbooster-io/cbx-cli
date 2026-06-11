@@ -56,16 +56,6 @@ func RenderAWSHTML(result *Result, ctx AWSAuditContext, markdownSource string) s
 	return renderHTMLShell(body.String(), markdownSource, mdName, ctx)
 }
 
-// architectureDiagramHTML emits the diagram section block. The SVG
-// payload is server-rendered (see BuildArchitectureSVG) and dropped
-// verbatim into the page — no client-side JS, no external assets,
-// no font loads. The mermaid source is offered as a secondary,
-// collapsible alternative because some readers will want to copy it
-// into a doc that doesn't render SVG.
-func architectureDiagramHTML(sb *strings.Builder, svg, mermaid string) {
-	architectureDiagramHTMLBlueprint(sb, svg, mermaid, nil, AWSAuditContext{}, nil)
-}
-
 // architectureDiagramHTMLBlueprint emits the diagram section with the
 // Blueprint title block, a height-capped scrollable schematic, and
 // an "Open in fullscreen" button. The NOTES keyed-findings table
@@ -166,27 +156,6 @@ func renderBPCell(sb *strings.Builder, label, value string, mono bool) {
 	sb.WriteString(`<div class="` + cls + `"><div class="bp-cell-label">` + label + `</div><div class="bp-cell-value">` + value + `</div></div>`)
 }
 
-// renderBlueprintFootnoteTable emits the NOTES · KEYED FINDINGS box
-// with every C1/H1/W1/I1 chip linked to its underlying finding title.
-func renderBlueprintFootnoteTable(sb *strings.Builder, findings []Finding) {
-	_, keys := assignFindingKeys(findings)
-	if len(keys) == 0 {
-		return
-	}
-	sb.WriteString(`<div class="bp-notes">`)
-	sb.WriteString(`<div class="bp-notes-head"><span class="bp-notes-title">NOTES · KEYED FINDINGS</span><span class="bp-notes-hint">see chips on resource boxes</span></div>`)
-	sb.WriteString(`<div class="bp-notes-grid">`)
-	for _, k := range keys {
-		colour := severityChipColourBySeverity(k.Severity)
-		sb.WriteString(`<div class="bp-note">`)
-		sb.WriteString(`<span class="bp-note-key" style="background:` + colour + `">` + k.Key + `</span>`)
-		sb.WriteString(`<span class="bp-note-txt">` + htmlEscape(k.Title) + `</span>`)
-		sb.WriteString(`</div>`)
-	}
-	sb.WriteString(`</div>`) // .bp-notes-grid
-	sb.WriteString(`</div>`) // .bp-notes
-}
-
 // shortIdentity trims an "arn:aws:sts::123:assumed-role/Role/foo" to
 // just the trailing user identifier so it fits in the title meta cell.
 func shortIdentity(id string) string {
@@ -228,8 +197,8 @@ func makeFindingID(f Finding, idx int) string {
 }
 
 // severityRank turns a severity string into a sortable int (higher =
-// more urgent). Matches worstSeverity in render_aws.go; kept local so
-// this file can stand alone if extracted later.
+// more urgent). Kept local so this file can stand alone if extracted
+// later.
 func severityRank(sev string) int {
 	switch strings.ToLower(sev) {
 	case SeverityCritical:
@@ -311,14 +280,13 @@ func renderSidebar(sb *strings.Builder, ctx AWSAuditContext, result *Result, cou
 		if count == 0 {
 			extra = " disabled"
 		}
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<button class="filter-pill sev-%s%s" data-sev-toggle="%s" type="button">`+
 				`<span class="filter-dot"></span>`+
 				`<span class="filter-label">%s</span>`+
 				`<span class="filter-count">%d</span>`+
 				`</button>`,
-			sev, extra, sev, strings.ToUpper(sev), count,
-		))
+			sev, extra, sev, strings.ToUpper(sev), count)
 	}
 	sb.WriteString(`</div>`)
 	sb.WriteString(`</div>`)
@@ -368,12 +336,11 @@ func renderSidebarFindingRow(sb *strings.Builder, f Finding, id, chipKey string)
 	// Data attributes drive client-side filtering + sorting without
 	// reparsing the DOM. data-rank holds the severity weight so the
 	// JS sort doesn't have to re-look up.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<a class="finding-row sev-%s" href="#%s" data-target="%s" data-sev="%s" data-rank="%d" data-service="%s" data-resource="%s" data-rule="%s" data-search="%s">`,
 		f.Severity, id, id, f.Severity, severityRank(f.Severity),
 		htmlEscape(strings.ToLower(service)), htmlEscape(strings.ToLower(resourceShort)),
-		htmlEscape(strings.ToLower(f.RuleID)), htmlEscape(searchText),
-	))
+		htmlEscape(strings.ToLower(f.RuleID)), htmlEscape(searchText))
 	sb.WriteString(`<span class="row-bar"></span>`)
 	if chipKey != "" {
 		// Same coloured pill used in the SVG, so the eye can match
@@ -417,16 +384,15 @@ func renderMain(sb *strings.Builder, ctx AWSAuditContext, result *Result, counts
 	// Toolbar
 	sb.WriteString(`<header class="toolbar">`)
 	sb.WriteString(`<div class="toolbar-stats">`)
-	sb.WriteString(fmt.Sprintf(`<div class="toolbar-stat"><div class="ts-count">%d</div><div class="ts-label">Findings</div></div>`, len(result.Findings)))
+	fmt.Fprintf(sb, `<div class="toolbar-stat"><div class="ts-count">%d</div><div class="ts-label">Findings</div></div>`, len(result.Findings))
 	for _, sev := range []string{SeverityCritical, SeverityHigh, SeverityWarning, SeverityInfo} {
 		c := counts[sev]
 		if c == 0 {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<div class="toolbar-stat sev-%s"><div class="ts-count">%d</div><div class="ts-label">%s</div></div>`,
-			sev, c, strings.ToUpper(sev),
-		))
+			sev, c, strings.ToUpper(sev))
 	}
 	sb.WriteString(`</div>`)
 	sb.WriteString(`<div class="toolbar-actions">`)
@@ -455,8 +421,8 @@ func renderMain(sb *strings.Builder, ctx AWSAuditContext, result *Result, counts
 	if len(ctx.Regions) > 0 {
 		sb.WriteString(`<div class="hero-meta-item"><dt>Regions</dt><dd>` + htmlEscape(strings.Join(ctx.Regions, ", ")) + `</dd></div>`)
 	}
-	sb.WriteString(fmt.Sprintf(`<div class="hero-meta-item"><dt>Components</dt><dd>%d</dd></div>`, len(result.Components)))
-	sb.WriteString(fmt.Sprintf(`<div class="hero-meta-item"><dt>CloudTrail</dt><dd>~%d Read events</dd></div>`, ctx.EventCount))
+	fmt.Fprintf(sb, `<div class="hero-meta-item"><dt>Components</dt><dd>%d</dd></div>`, len(result.Components))
+	fmt.Fprintf(sb, `<div class="hero-meta-item"><dt>CloudTrail</dt><dd>~%d Read events</dd></div>`, ctx.EventCount)
 	sb.WriteString(`</dl>`)
 	sb.WriteString(`</section>`)
 
@@ -512,14 +478,13 @@ func buildURNToComponentMap(components []group.Component) map[string]string {
 
 func renderFindingCardHTML(sb *strings.Builder, f Finding, id string, component string) {
 	searchText := strings.ToLower(strings.Join([]string{f.Title, f.Resource, f.Service, f.RuleID, f.Description, f.Remediation}, " "))
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<article class="finding sev-%s" id="%s" data-sev="%s" data-rank="%d" data-service="%s" data-resource="%s" data-rule="%s" data-search="%s">`,
 		f.Severity, id, f.Severity, severityRank(f.Severity),
 		htmlEscape(strings.ToLower(f.Service)), htmlEscape(strings.ToLower(shortResource(f.Resource))),
-		htmlEscape(strings.ToLower(f.RuleID)), htmlEscape(searchText),
-	))
+		htmlEscape(strings.ToLower(f.RuleID)), htmlEscape(searchText))
 	sb.WriteString(`<div class="finding-header">`)
-	sb.WriteString(fmt.Sprintf(`<span class="sev-chip sev-%s">%s</span>`, f.Severity, strings.ToUpper(f.Severity)))
+	fmt.Fprintf(sb, `<span class="sev-chip sev-%s">%s</span>`, f.Severity, strings.ToUpper(f.Severity))
 	if component != "" {
 		sb.WriteString(`<span class="component-pill">` + htmlEscape(component) + `</span>`)
 	}

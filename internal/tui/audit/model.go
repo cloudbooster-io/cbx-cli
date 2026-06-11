@@ -261,9 +261,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case key.Matches(msg, m.keymap.Up):
-			m.detail.LineUp(1)
+			m.detail.ScrollUp(1)
 		case key.Matches(msg, m.keymap.Down):
-			m.detail.LineDown(1)
+			m.detail.ScrollDown(1)
 		case key.Matches(msg, m.keymap.PageUp):
 			m.detail.PageUp()
 		case key.Matches(msg, m.keymap.PageDown):
@@ -321,7 +321,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keymap.Up):
 		if m.focus == focusDetail && m.wideMode {
-			m.detail.LineUp(1)
+			m.detail.ScrollUp(1)
 		} else {
 			m.moveCursor(-1)
 		}
@@ -329,7 +329,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keymap.Down):
 		if m.focus == focusDetail && m.wideMode {
-			m.detail.LineDown(1)
+			m.detail.ScrollDown(1)
 		} else {
 			m.moveCursor(1)
 		}

@@ -184,3 +184,32 @@ func TestCachePathXDG(t *testing.T) {
 		t.Fatalf("cachePath() = %q, want %q", got, want)
 	}
 }
+
+func TestDirectAssetURL(t *testing.T) {
+	// Locks the GoReleaser archive name contract: .goreleaser.yml's
+	// archives name_template produces cbx-cli_<TitleOs>_<arch> with
+	// amd64 -> x86_64 and arm64 passing through. The direct-upgrade
+	// download path breaks if the two ever drift apart.
+	tests := []struct {
+		goos, goarch string
+		want         string
+	}{
+		{"darwin", "arm64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Darwin_arm64.tar.gz"},
+		{"darwin", "amd64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Darwin_x86_64.tar.gz"},
+		{"linux", "amd64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Linux_x86_64.tar.gz"},
+		{"linux", "arm64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Linux_arm64.tar.gz"},
+	}
+
+	origGoos, origGoarch := goos, goarch
+	t.Cleanup(func() { goos, goarch = origGoos, origGoarch })
+
+	for _, tc := range tests {
+		t.Run(tc.goos+"_"+tc.goarch, func(t *testing.T) {
+			goos, goarch = tc.goos, tc.goarch
+			got := directAssetURL(&Result{LatestVersion: "v1.2.3"})
+			if got != tc.want {
+				t.Fatalf("directAssetURL(%s/%s) = %q, want %q", tc.goos, tc.goarch, got, tc.want)
+			}
+		})
+	}
+}

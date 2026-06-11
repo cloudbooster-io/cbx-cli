@@ -49,7 +49,7 @@ internal/           private to cbx-cli — audit/, plan/, llm/, tui/, output/, c
 
 ## Audit pipeline
 
-`cbx audit --pulumi-state X | --terraform-state Y` flows: `pkg/cmd/audit.go` → `internal/audit/runner.Collect` → `ParseState` (delegates to `internal/audit/parsers/{pulumi,terraform}_state.go`) → `RunProvidersWithProgress` over `FindingProvider`s. Real scanner adapters (tfsec/checkov/prowler/trivy) live in `internal/audit/adapter_*.go`; **default is `MockScanners` (zero network, no external binaries)** unless `--scanners=...` is passed.
+The CLI surface is `cbx audit aws` only — `pkg/cmd/audit.go` is a thin dispatcher; the earlier IaC inputs (`--pulumi-state`, `--terraform-state`, `--source`, `--scanners`, ...) were **removed from the flag surface**. The state/source pipeline survives as the **library path** through `pkg/audit`: `internal/audit.Collect` → `ParseState` (delegates to `internal/audit/parsers/{pulumi,terraform}_state.go`) → `RunProvidersWithProgress` over `FindingProvider`s. Real scanner adapters (tfsec/checkov/prowler/trivy) live in `internal/audit/adapter_*.go`; library callers pick providers via `Options.MockScanners` / `Options.Scanners` — **`MockScanners` is the zero-network, no-external-binaries set** that preserves the offline property above.
 
 Exit codes are not 0/1: `audit.ExitCodeError` propagates from `Execute` through `ExitCode` in `pkg/cmd/execute.go`. Severity mapping is info→1, warning→2, high/critical→3 (`internal/audit/exit.go`). Don't replace this with a generic `os.Exit(1)`.
 
@@ -69,7 +69,7 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 
 ## Update banner
 
-`pkg/cmd/execute.go` runs a 3-second background update check in parallel with the command, then prints a banner to stderr at the end. It's suppressed in `CI=true`, `CB_NO_UPDATE_CHECK=1`, when `--quiet`/`--json`, or for the `version` and `upgrade` subcommands. New subcommands that emit machine output should make sure they don't fight with this banner (it goes to stderr, so pipelines reading stdout are safe).
+`pkg/cmd/execute.go` runs a 3-second background update check in parallel with the command, then prints a banner to stderr at the end. It's suppressed in `CI=true`, `CBX_NO_UPDATE_CHECK=1` (or the deprecated `CB_NO_UPDATE_CHECK=1`), when `--quiet`/`--json`, or for the `version` and `upgrade` subcommands. New subcommands that emit machine output should make sure they don't fight with this banner (it goes to stderr, so pipelines reading stdout are safe).
 
 ## Workflow specifics for this repo
 

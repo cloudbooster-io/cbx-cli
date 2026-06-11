@@ -231,7 +231,7 @@ func formatTurn(t Turn) string {
 		sb.WriteString(chat.HeaderStyle.Render(fmt.Sprintf("[%s] Intent: %s", ts, t.Input)))
 	}
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("--- Plan v%d ---\n", t.Plan.Version))
+	fmt.Fprintf(&sb, "--- Plan v%d ---\n", t.Plan.Version)
 	sb.WriteString(t.Plan.ADRContent)
 	return sb.String()
 }

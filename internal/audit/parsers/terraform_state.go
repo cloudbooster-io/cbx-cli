@@ -19,19 +19,15 @@ func ParseTerraformState(state map[string]interface{}) ([]DiscoveredResource, er
 	}
 
 	// Terraform state v4 wraps resources under "resources" array directly.
-	// Some older versions may have modules/resources nesting.
-	if rootModule, ok := state["values"].(map[string]interface{}); ok {
-		if rootResources, ok := rootModule["root_module"].(map[string]interface{}); ok {
-			if res, ok := rootResources["resources"].([]interface{}); ok {
-				for _, r := range res {
-					if m, ok := r.(map[string]interface{}); ok {
-						if err := checkProvisionerDenylist(m); err != nil {
-							return nil, err
-						}
-						resources = append(resources, terraformMapToDiscoveredResource(m))
-					}
-				}
+	// `terraform show -json` output nests resources under values/root_module,
+	// with module-managed resources in child_modules (arbitrarily nested).
+	if values, ok := state["values"].(map[string]interface{}); ok {
+		if rootModule, ok := values["root_module"].(map[string]interface{}); ok {
+			moduleResources, err := collectTerraformModuleResources(rootModule)
+			if err != nil {
+				return nil, err
 			}
+			resources = append(resources, moduleResources...)
 		}
 	}
 
@@ -41,6 +37,37 @@ func ParseTerraformState(state map[string]interface{}) ([]DiscoveredResource, er
 			"no resources found in state file",
 			"verify the file is a valid Terraform state export",
 		)
+	}
+
+	return resources, nil
+}
+
+// collectTerraformModuleResources gathers the resources of a `terraform show
+// -json` module object, recursing into its child_modules at every depth.
+func collectTerraformModuleResources(module map[string]interface{}) ([]DiscoveredResource, error) {
+	var resources []DiscoveredResource
+
+	if res, ok := module["resources"].([]interface{}); ok {
+		for _, r := range res {
+			if m, ok := r.(map[string]interface{}); ok {
+				if err := checkProvisionerDenylist(m); err != nil {
+					return nil, err
+				}
+				resources = append(resources, terraformMapToDiscoveredResource(m))
+			}
+		}
+	}
+
+	if children, ok := module["child_modules"].([]interface{}); ok {
+		for _, c := range children {
+			if child, ok := c.(map[string]interface{}); ok {
+				childResources, err := collectTerraformModuleResources(child)
+				if err != nil {
+					return nil, err
+				}
+				resources = append(resources, childResources...)
+			}
+		}
 	}
 
 	return resources, nil

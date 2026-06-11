@@ -100,6 +100,42 @@ func TestLambdaFunctionToRaw_SecurePostureInverse(t *testing.T) {
 	}
 }
 
+// Native-fallback origin of the env-value redaction guard: a secret-shaped
+// Variables entry synthesised by lambdaFunctionToRaw must come out of the
+// toRaw → mapToDiscovered → Enrich pipeline (the exact runJob path) with its
+// VALUE masked — proving the describer choke point covers fallback-discovered
+// functions, not just CloudControl-listed ones — while non-secret values pass
+// through untouched.
+func TestLambdaFunctionToRaw_RedactsSecretEnvValues(t *testing.T) {
+	fn := lambdatypes.FunctionConfiguration{
+		FunctionName: strp("fn-leaky"),
+		Environment: &lambdatypes.EnvironmentResponse{Variables: map[string]string{
+			"DB_PASSWORD": "hunter2",
+			"LOG_LEVEL":   "info",
+		}},
+	}
+	raw, ok := lambdaFunctionToRaw(fn, nil, "eu-central-1")
+	if !ok {
+		t.Fatal("lambdaFunctionToRaw !ok")
+	}
+
+	in := enrichLambda(t, raw)
+	if v, ok := in["cb_describer_env_has_plaintext_secrets"].(bool); !ok || !v {
+		t.Errorf("cb_describer_env_has_plaintext_secrets: got %v, want true (flag computed before the mask)", in["cb_describer_env_has_plaintext_secrets"])
+	}
+	env, _ := in["Environment"].(map[string]any)
+	vars, _ := env["Variables"].(map[string]any)
+	if vars == nil {
+		t.Fatal("Environment.Variables missing from enriched Inputs")
+	}
+	if got := vars["DB_PASSWORD"]; got != "[REDACTED by cbx]" {
+		t.Errorf("DB_PASSWORD = %v, want the redaction marker (value must not reach the prompt)", got)
+	}
+	if got := vars["LOG_LEVEL"]; got != "info" {
+		t.Errorf("LOG_LEVEL = %v, want the non-secret value untouched", got)
+	}
+}
+
 // lambdaFunctionToRaw must carry the env-var encryption CMK under the exact CFN
 // property name crossReferenceKMS walks ("KmsKeyArn") — note the SDK field is
 // KMSKeyArn (all-caps). GetFunctionConfiguration returns it only for a customer

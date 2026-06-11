@@ -35,6 +35,11 @@ import (
 // "DB_PASSWORD" still telegraphs a cleartext store; naming it
 // "DB_PASSWORD_ARN" suggests indirection through Secrets Manager,
 // which the heuristic intentionally skips.
+//
+// Because the full Inputs map is later inlined verbatim into the
+// grounded `claude -p` prompt, Enrich also MASKS the VALUES of
+// secret-shaped env keys in place (redactSecretEnvValues) — after the
+// boolean above is computed, so the heuristic's signal is unchanged.
 type lambdaFunctionDescriber struct{}
 
 func (lambdaFunctionDescriber) CFNType() string { return "AWS::Lambda::Function" }
@@ -58,6 +63,9 @@ func (lambdaFunctionDescriber) Enrich(_ context.Context, _ awsCfg, r *Discovered
 	envVars := lambdaEnvVars(r.Inputs)
 	r.Inputs["cb_describer_env_var_count"] = float64(len(envVars))
 	r.Inputs["cb_describer_env_has_plaintext_secrets"] = anyKeyLooksLikeSecret(envVars)
+	// MUST run after the flag above — it mutates Environment.Variables in
+	// place so secret-shaped values never reach the grounded prompt.
+	redactSecretEnvValues(r.Inputs)
 
 	r.Inputs["cb_describer_dlq_configured"] = lambdaHasDLQ(r.Inputs)
 	if rc, ok := readNumericPtr(r.Inputs, "ReservedConcurrentExecutions"); ok {
@@ -144,11 +152,64 @@ var secretKeyHeuristic = regexp.MustCompile(`(?i)(secret|password|passwd|token|a
 // than guessing.
 var secretKeySafeSuffix = regexp.MustCompile(`(?i)(_arn|_id|_uri|_url)$`)
 
+// keyLooksLikeSecret is the per-key form of the heuristic: a secret-shaped
+// root that does NOT carry the reference-shape suffix. Shared by the
+// boolean flag below, the value redaction here, and the ECS task-definition
+// lister's container-env redaction (lister_ecs_native.go).
+func keyLooksLikeSecret(k string) bool {
+	return secretKeyHeuristic.MatchString(k) && !secretKeySafeSuffix.MatchString(k)
+}
+
 func anyKeyLooksLikeSecret(env map[string]string) bool {
 	for k := range env {
-		if secretKeyHeuristic.MatchString(k) && !secretKeySafeSuffix.MatchString(k) {
+		if keyLooksLikeSecret(k) {
 			return true
 		}
 	}
 	return false
+}
+
+// redactedEnvValue is the marker that replaces a secret-shaped env var's
+// VALUE before the Inputs map is serialised into the grounded prompt
+// (llm_analyzer.go's writeResourceTable inlines the FULL Inputs map, so an
+// unmasked value would ship verbatim to a third-party LLM).
+const redactedEnvValue = "[REDACTED by cbx]"
+
+// secretValueIsReference reports whether a value stored under a
+// secret-shaped key is clearly an indirection — an ARN pointing at Secrets
+// Manager / SSM — rather than secret material. ARNs are public identifiers
+// (nothing to protect), and the grounded rules' suppress paths key off the
+// `arn:` prefix to recognise the indirection shape, so masking one would
+// trade a real suppress signal for zero security gain.
+func secretValueIsReference(v string) bool {
+	return strings.HasPrefix(strings.TrimSpace(v), "arn:")
+}
+
+// redactSecretEnvValues masks the VALUE of every secret-shaped key in
+// Environment.Variables IN PLACE. It runs AFTER the
+// cb_describer_env_has_plaintext_secrets flag is computed — the flag reads
+// only key names, so its semantics are untouched. This describer is the
+// single choke point for both origins: CloudControl-listed functions and
+// the native fallback's synthesised props (lister_lambda_native.go) flow
+// through Enrich identically (runJob enriches fallback raws too). A
+// non-string value under a secret-shaped key can't be shape-checked, so it
+// is masked as well (fail closed).
+func redactSecretEnvValues(m map[string]any) {
+	env, ok := m["Environment"].(map[string]any)
+	if !ok {
+		return
+	}
+	raw, ok := env["Variables"].(map[string]any)
+	if !ok {
+		return
+	}
+	for k, v := range raw {
+		if !keyLooksLikeSecret(k) {
+			continue
+		}
+		if s, isStr := v.(string); isStr && secretValueIsReference(s) {
+			continue
+		}
+		raw[k] = redactedEnvValue
+	}
 }

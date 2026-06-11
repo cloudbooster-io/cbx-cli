@@ -25,6 +25,11 @@ import (
 const (
 	clientID    = "cbx-cli"
 	serviceName = "cloudbooster-cbx"
+
+	// maxAuthResponseBytes bounds reads of auth-endpoint response bodies.
+	// Token and /v1/me payloads are small JSON; 1 MiB is ample headroom
+	// while preventing an unbounded allocation from a misbehaving endpoint.
+	maxAuthResponseBytes = 1 << 20
 )
 
 // UserAgent is sent on every auth-flow HTTP request so the platform can
@@ -107,7 +112,7 @@ func RunPKCEFlow(ctx context.Context, cfg *Config, opts PKCEOptions) (*ExchangeR
 		if err != nil {
 			return nil, fmt.Errorf("listen: %w", err)
 		}
-		defer listener.Close()
+		defer func() { _ = listener.Close() }()
 		port := listener.Addr().(*net.TCPAddr).Port
 		redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
@@ -358,7 +363,7 @@ func doTokenRequest(ctx context.Context, tokenURL string, data url.Values) (*Exc
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAuthResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("reading token response: %w", err)
 	}
@@ -413,7 +418,7 @@ func fetchEmail(ctx context.Context, apiURL string, token *oauth2.Token) (string
 	var body struct {
 		Email string `json:"email"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAuthResponseBytes)).Decode(&body); err != nil {
 		return "", err
 	}
 	return body.Email, nil

@@ -94,7 +94,7 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	// or the HTTP LLMCaller (BYO API key). Both satisfy the same Stream
 	// contract; a failure in either degrades gracefully to the proposed
 	// components rather than aborting the run.
-	stream := func(string) error { return nil }
+	var stream func(string) error
 	if cliExecutor {
 		cli, err := newCLIStreamer(provider)
 		if err != nil {

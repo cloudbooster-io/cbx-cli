@@ -461,7 +461,7 @@ func parseConsoleURL(arg string) (region, accountID string, ok bool) {
 	// Accept both regional (us-east-1.console.aws.amazon.com) and the
 	// global landing (console.aws.amazon.com). Anything else is treated
 	// as a non-console URL → fall through to profile-name handling.
-	if !(host == "console.aws.amazon.com" || strings.HasSuffix(host, ".console.aws.amazon.com")) {
+	if host != "console.aws.amazon.com" && !strings.HasSuffix(host, ".console.aws.amazon.com") {
 		return "", "", false
 	}
 	// The hostname is one of:

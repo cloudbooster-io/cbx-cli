@@ -349,14 +349,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) bool {
 		}
 
 	case "pgup":
-		m.viewport.LineUp(3)
+		m.viewport.ScrollUp(3)
 		if m.streamRenderer != nil {
 			m.streamRenderer.SetAutoScroll(false)
 		}
 		return true
 
 	case "pgdown":
-		m.viewport.LineDown(3)
+		m.viewport.ScrollDown(3)
 		if m.streamRenderer != nil {
 			m.streamRenderer.SetAutoScroll(true)
 			m.viewport.GotoBottom()

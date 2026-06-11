@@ -20,6 +20,20 @@ validate:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
 
+lint:
+  stage: validate
+  # Pinned to major.minor so CI matches the maintainers' local v2.11.x.
+  image: golangci/golangci-lint:v2.11
+  # Shares the e2e_compile resource_group with `test`/`e2e`/`e2e-staging`:
+  # the lint run typechecks the aws-sdk-go-v2 tree, which is the same heavy
+  # compile those jobs serialize — see the note on the `test` job.
+  resource_group: e2e_compile
+  script:
+    - golangci-lint run ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
 codegen-check:
   stage: validate
   image: golang:${GO_VERSION}

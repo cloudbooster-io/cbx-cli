@@ -11,10 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `cbx audit aws [profile]` audits a live AWS account read directly via
   the SDK — single-account, ad-hoc, user-initiated. Resolves credentials
-  through the standard precedence (`--config` > positional profile >
+  through the standard precedence (`--credentials-file` > positional profile >
   `AWS_PROFILE` > `default`); resolves regions explicitly via
-  `--regions us-east-1,…` / `--regions all` or interactively when the
-  profile has none; runs an STS preflight; discovers resources via
+  `--region us-east-1 --region …` (repeatable) / `--region all` or
+  interactively when the profile has none; runs an STS preflight;
+  discovers resources via
   CloudFormation CloudControl (`cloudformation:ListResources` /
   `GetResource`) across a curated set of CFN types covering the common
   workload primitives; emits findings against the same `Finding` shape

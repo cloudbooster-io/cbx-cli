@@ -15,5 +15,5 @@ func PrintPhase(w io.Writer, phase, total int, label string) {
 	if w == nil {
 		w = os.Stderr
 	}
-	fmt.Fprintf(w, "%s Phase %d/%d: %s\n", Symbol("phase"), phase, total, label)
+	_, _ = fmt.Fprintf(w, "%s Phase %d/%d: %s\n", Symbol("phase"), phase, total, label)
 }

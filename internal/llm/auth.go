@@ -79,12 +79,12 @@ func validateClaude(client *http.Client, token string) error {
 	if err != nil {
 		return fmt.Errorf("validating Claude token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("invalid Claude API key")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Claude API returned status %d", resp.StatusCode)
+		return fmt.Errorf("claude API returned status %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func validateCodex(client *http.Client, token string) error {
 	if err != nil {
 		return fmt.Errorf("validating Codex token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("invalid OpenAI API key")
 	}
