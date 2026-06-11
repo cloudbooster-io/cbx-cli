@@ -51,6 +51,16 @@ type llmAnalyzer struct {
 	// on root, etc.). Nil for non-AWS audits.
 	posture *AccountPosture
 
+	// rules is the resolved rule pack that grounds the prompt's policy
+	// sections (see rulepack_resolve.go); rulesProv records which rung
+	// of the resolve ladder served it, surfaced post-scan as the
+	// LLM-CB-RULES-* meta-findings. Nil rules fall back to the embedded
+	// pack in buildPrompt (zero-value analyzers in tests / direct
+	// library construction); zero-value rulesProv suppresses the
+	// provenance findings for the same reason.
+	rules     *rulesbundle.RulePack
+	rulesProv rulesbundle.Provenance
+
 	// lastConnections holds the architecture-diagram edges extracted
 	// from the most recent grounded response. Read by
 	// CollectFromResources after ScanResources returns so the
@@ -89,6 +99,16 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Rule pack: the CLI preflight (pkg/cmd/audit_aws.go) already
+			// resolved + memoized it pre-discovery; this returns the memo.
+			// Library callers without that preflight resolve here WITHOUT
+			// the network rung (override file → cache → embedded) — see
+			// rulepack_resolve.go. Failure is abort-class (broken override
+			// / unsatisfiable pin), matching the streamer-preflight posture.
+			rules, rulesProv, err := currentRulePack(context.Background())
+			if err != nil {
+				return nil, err
+			}
 			// LLMMaxCost semantics: 0 means "no cap" (no warning ever
 			// emitted). The CLI default is 2.00 (set in audit_aws.go).
 			// Library callers wiring Options directly take the field as
@@ -104,6 +124,8 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 				cbKnowledge:       true,
 				maxCostUSD:        opts.LLMMaxCost,
 				posture:           opts.AWSAccountPosture,
+				rules:             rules,
+				rulesProv:         rulesProv,
 			}, nil
 		}
 		streamer, err := newClaudeCLIStreamer()
@@ -232,6 +254,7 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 		_, omitted := capPromptResources(resources)
 		findings = l.appendTruncationFinding(findings, len(resources), omitted)
 		findings = l.appendKnowledgePartialFinding(findings, bundle)
+		findings = l.appendRulesProvenanceFindings(findings)
 	}
 	return findings, nil
 }
@@ -546,7 +569,14 @@ func (l *llmAnalyzer) appendKnowledgePartialFinding(findings []Finding, bundle *
 // that explicitly).
 func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	if l.cbKnowledge {
-		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture, rulesbundle.Embedded())
+		rules := l.rules
+		if rules == nil {
+			// Zero-value analyzers (tests, direct library construction)
+			// ground on the embedded pack — same bytes the resolve
+			// ladder's last rung serves.
+			rules = rulesbundle.Embedded()
+		}
+		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture, rules)
 	}
 	return buildLLMPrompt(l.iacType, files)
 }

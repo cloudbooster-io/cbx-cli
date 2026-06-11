@@ -11,6 +11,7 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 	awsdisc "github.com/cloudbooster-io/cbx-cli/internal/audit/discover/aws"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
 	audittui "github.com/cloudbooster-io/cbx-cli/internal/tui/audit"
@@ -36,6 +37,7 @@ func newAuditAWSCmd() *cobra.Command {
 		dryRun          bool
 		noTUI           bool
 		strict          bool
+		rulepackVersion int
 	)
 
 	cmd := &cobra.Command{
@@ -193,6 +195,24 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			}
 
 			ctx := context.Background()
+
+			// Rulepack preflight (P1): resolve the audit rule pack BEFORE
+			// any AWS spend. A registry outage degrades down the resolve
+			// ladder (cache → embedded) without failing the run — the
+			// abort cases are an unsatisfiable --rulepack-version pin, a
+			// broken CBX_AUDIT_RULES_FILE override, and a pack requiring a
+			// newer engine ("run `cbx upgrade`"), all conditions where
+			// burning discovery calls first would be waste. The result is
+			// memoized; the LLM analyzer consumes it via the same memo.
+			audit.SetEngineVersion(Version)
+			_, rulePackProv, rpErr := audit.ResolveRulePack(ctx, rulepackVersion)
+			if rpErr != nil {
+				if output.JSON() {
+					_ = output.PrintJSON(nil, output.JSONError(rpErr))
+				}
+				return rpErr
+			}
+
 			discResult, err := awsdisc.Discover(ctx, discoverParams)
 			ui.Done()
 			if err != nil {
@@ -211,7 +231,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			// the user gets the same region/account picture they'd see
 			// in a real run.
 			if dryRun {
-				return renderDryRun(outputFormat, discResult, discoverParams)
+				return renderDryRun(outputFormat, discResult, rulePackProv)
 			}
 
 			// Discovery header card — what we just learned about the
@@ -291,6 +311,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				EventCount:                 discResult.EventCount,
 				AccountPosture:             discResult.AccountPosture,
 				DiscoveryIntegrityFindings: integrityFindings,
+				RulePack:                   &rulePackProv,
 			}
 
 			// Grounding-phase spinner. RunFromResources spawns claude -p
@@ -333,6 +354,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 					"components":                 result.Components,
 					"permission_errors":          permErrsToJSON(discResult.PermissionErr),
 					"discovery_integrity":        integrityWarningsToJSON(discResult.IntegrityWarnings),
+					"rulepack":                   rulePackProv,
 				}
 				if err := output.PrintJSON(payload, nil); err != nil {
 					return err
@@ -419,6 +441,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Gate the exit code on discovery-integrity warnings too. By default they're advisory — a flaky CloudControl re-list won't fail an otherwise-clean audit; --strict restores the non-zero exit so CI fails on a possibly-incomplete discovery.")
+	cmd.Flags().IntVar(&rulepackVersion, "rulepack-version", 0, "Pin the CB audit rule pack to an exact pack_version (0 = latest; env CBX_RULEPACK_VERSION). The audit aborts before any AWS call if no source can satisfy the pin — reproducible-run / sweep-bisection lever. Local override: CBX_AUDIT_RULES_FILE=<path>.")
 
 	return cmd
 }
@@ -524,7 +547,7 @@ func isLikelyAWSRegion(s string) bool {
 // has already run with ScoutOnly=true so we have the resolved regions
 // and an accurate event-count estimate, but no CloudControl traffic
 // fired and no LLM was invoked.
-func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.DiscoverParams) error {
+func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, rulePack rulesbundle.Provenance) error {
 	_, claudeErr := exec.LookPath("claude")
 	claudeOK := claudeErr == nil
 	cfnCount := awsdisc.DiscoverableTypeCount()
@@ -537,6 +560,7 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 			"cfn_type_count":             cfnCount,
 			"cloudtrail_events_estimate": dr.EventCount,
 			"claude_cli_available":       claudeOK,
+			"rulepack":                   rulePack,
 		}
 		return output.PrintJSON(payload, nil)
 	}
@@ -552,6 +576,11 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, _ awsdisc.Dis
 	fmt.Fprintf(os.Stderr, "  CFN types queried: %d\n", cfnCount)
 	fmt.Fprintf(os.Stderr, "  est CloudTrail Read events: ~%d\n", dr.EventCount)
 	fmt.Fprintf(os.Stderr, "  claude CLI on PATH: %v\n", claudeOK)
+	rulesLine := fmt.Sprintf("pack v%d (schema %d, source %s)", rulePack.PackVersion, rulePack.SchemaVersion, rulePack.Source)
+	if rulePack.Stale || rulePack.Degraded {
+		rulesLine += " — DEGRADED/STALE"
+	}
+	fmt.Fprintln(os.Stderr, "  audit rules:       "+rulesLine)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "(no CloudControl Discover or LLM calls were made)")
 	return nil
