@@ -3,6 +3,7 @@ package audit
 import (
 	"testing"
 
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
@@ -31,5 +32,21 @@ func TestRulePackWireContractMatchesEngine(t *testing.T) {
 
 	if got := rulesbundle.Embedded().Manifest.WireContract.ResponseSchema; got != rulesbundle.ResponseSchemaVersion {
 		t.Errorf("embedded pack response_schema %d != engine version %d", got, rulesbundle.ResponseSchemaVersion)
+	}
+}
+
+// TestEmbeddedPackRequiresFieldsKnown: every cb_describer_* field the
+// embedded rulepack's rules declare in requires_fields must exist in
+// the engine's generated describer-field manifest. The embedded pack
+// ships WITH the engine, so it can never legitimately be AHEAD of it —
+// a violation here means either rule metadata names a field wrong or a
+// describer was removed without a rulepack update.
+func TestEmbeddedPackRequiresFieldsKnown(t *testing.T) {
+	for _, r := range rulesbundle.Embedded().Rules {
+		for _, f := range r.RequiresFields {
+			if !parsers.DescriberFieldKnown(f) {
+				t.Errorf("rule %s requires_fields names %q, which no describer/lister/cross-ref emits", r.ID, f)
+			}
+		}
 	}
 }
