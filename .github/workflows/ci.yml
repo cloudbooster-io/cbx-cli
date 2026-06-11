@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # Pinned to major.minor so CI matches the maintainers' local v2.11.x
           # (same pin as the GitLab golangci/golangci-lint:v2.11 image).
