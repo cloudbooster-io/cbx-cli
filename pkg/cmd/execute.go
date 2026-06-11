@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -143,7 +144,8 @@ func Execute() error {
 	// Exit-code carriers (--llm cost warning, severity-based exits)
 	// are not real failures — skip those to keep the dashboard clean.
 	if err != nil {
-		if _, isExitCode := err.(*audit.ExitCodeError); !isExitCode {
+		var exitErr *audit.ExitCodeError
+		if !errors.As(err, &exitErr) {
 			telemetry.CaptureError(err)
 		}
 	}
@@ -169,8 +171,9 @@ func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	if ec, ok := err.(*audit.ExitCodeError); ok {
-		return ec.Code
+	var exitErr *audit.ExitCodeError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1
