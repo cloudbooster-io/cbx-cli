@@ -5,12 +5,33 @@ stages:
   - validate
   - test
   - e2e
+  - release
+
+# ---------------------------------------------------------------------------
+# Shared Go module cache — extended by every Go job.
+# GOPATH moves under the project dir because GitLab can only cache paths
+# inside CI_PROJECT_DIR; the cache key tracks go.sum so it is reused until
+# dependencies change. Without this every job re-downloads the aws-sdk-go-v2
+# tree. -modcacherw keeps the module cache writable so the runner's
+# `git clean` and cache archiving don't trip over Go's read-only cache layout.
+# ---------------------------------------------------------------------------
+.go-cache:
+  variables:
+    GOPATH: "$CI_PROJECT_DIR/.go"
+    GOFLAGS: "-modcacherw"
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
 
 # ---------------------------------------------------------------------------
 # Validate
 # ---------------------------------------------------------------------------
 validate:
   stage: validate
+  extends: .go-cache
   image: golang:${GO_VERSION}
   script:
     - go mod download
@@ -22,6 +43,7 @@ validate:
 
 lint:
   stage: validate
+  extends: .go-cache
   # Pinned to major.minor so CI matches the maintainers' local v2.11.x.
   image: golangci/golangci-lint:v2.11
   # Shares the e2e_compile resource_group with `test`/`e2e`/`e2e-staging`:
@@ -36,6 +58,7 @@ lint:
 
 codegen-check:
   stage: validate
+  extends: .go-cache
   image: golang:${GO_VERSION}
   script:
     - go mod download
@@ -49,14 +72,18 @@ codegen-check:
 # ---------------------------------------------------------------------------
 test:
   stage: test
+  extends: .go-cache
   image: golang:${GO_VERSION}
-  # Shares the e2e_compile resource_group with `e2e`/`e2e-staging`: `go test ./...`
-  # also compiles aws-sdk-go-v2, so a concurrent run alongside an e2e job (e.g. a
-  # post-merge `main` pipeline) OOM-wedges the 2-slot runner pool. Serializing all
+  # Shares the e2e_compile resource_group with `e2e`/`e2e-staging`: the unit-test
+  # run also compiles aws-sdk-go-v2, so a concurrent run alongside an e2e job (e.g.
+  # a post-merge `main` pipeline) OOM-wedges the 2-slot runner pool. Serializing all
   # three heavy compiles project-wide closes the gap the e2e-only fix left open.
   resource_group: e2e_compile
   script:
-    - go test -v ./...
+    # ./e2e is excluded: the dedicated `e2e` job below runs that suite, and
+    # `go test -v ./...` executed it a second time per pipeline (pure waste —
+    # the duplicate runs were merely serialized by the shared resource_group).
+    - go test -v $(go list ./... | grep -v /e2e)
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -91,6 +118,7 @@ mermaid-validate:
 # ---------------------------------------------------------------------------
 e2e:
   stage: e2e
+  extends: .go-cache
   image: golang:${GO_VERSION}
   # Serialized against e2e-staging via a shared resource_group: both compile
   # aws-sdk-go-v2, and running them concurrently OOM-wedges the 2-slot runner
@@ -115,6 +143,7 @@ e2e:
 # ---------------------------------------------------------------------------
 e2e-staging:
   stage: e2e
+  extends: .go-cache
   image: golang:${GO_VERSION}
   # Shares the e2e_compile resource_group with `e2e` so the two never compile
   # aws-sdk-go-v2 concurrently — see the note on the `e2e` job above.
@@ -128,17 +157,67 @@ e2e-staging:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
 # ---------------------------------------------------------------------------
+# Release — tag-triggered GoReleaser run.
+#
+# Publishes GitHub Releases + Homebrew cask + Scoop manifest + .deb/.rpm per
+# .goreleaser.yml, with keyless Cosign signing and Syft SBOMs (both tools ship
+# in the goreleaser image). Keyless signing needs an OIDC token: the id_tokens
+# block mints SIGSTORE_ID_TOKEN (aud: sigstore), which cosign >= 2.0 picks up
+# automatically in CI.
+#
+# Required CI/CD variables (maintainer-configured, masked + protected):
+#   GITHUB_TOKEN  PAT with repo scope on cloudbooster-io/cbx-cli,
+#                 cloudbooster-io/homebrew-tap and cloudbooster-io/scoop-bucket
+#                 — GoReleaser publishes to GitHub even though CI runs on GitLab.
+#   SENTRY_DSN    telemetry endpoint baked into the binary via ldflags (see the
+#                 env block in .goreleaser.yml); optional — when unset the
+#                 release ships with no telemetry endpoint.
+#
+# Go toolchain: the image bundles go1.26.x; if that ever trails the go.mod
+# `toolchain go1.26.4` pin, GOTOOLCHAIN=auto (the default) downloads the exact
+# pinned toolchain before building.
+# ---------------------------------------------------------------------------
+release:
+  stage: release
+  image:
+    # Pinned v2 release; bundles Go 1.26, cosign and syft. Bump deliberately.
+    name: goreleaser/goreleaser:v2.16.0
+    # The image's entrypoint is goreleaser itself — blank it so the runner can
+    # execute the script in a shell (per the GoReleaser GitLab CI docs).
+    entrypoint: [""]
+  variables:
+    # Full clone: GoReleaser needs the whole tag history for the changelog and
+    # refuses to release from a shallow checkout.
+    GIT_DEPTH: 0
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - goreleaser release --clean
+  rules:
+    - if: '$CI_COMMIT_TAG'
+
+# ---------------------------------------------------------------------------
 # Brew smoke test — post-release verification
 # Runs only on tags or when explicitly requested.
 # ---------------------------------------------------------------------------
 smoke-brew:
-  stage: e2e
+  stage: release
   image: homebrew/brew:latest
   tags:
     - darwin
+  # Ordered after `release` so the cask exists in the tap before the smoke
+  # test installs it. `optional: true` keeps RUN_SMOKE_BREW pipelines (where
+  # the release job is absent) valid.
+  needs:
+    - job: release
+      optional: true
   script:
     - ./scripts/smoke-brew.sh
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$RUN_SMOKE_BREW == "true"'
-  allow_failure: true  # TODO: remove once brew tap is public and L1.19 ships
+  # TODO(N9): drop allow_failure once the brew tap is public and the `release`
+  # job above has cut a cask release (L1.19) — then a red smoke-brew is real
+  # signal of a broken install path.
+  allow_failure: true
