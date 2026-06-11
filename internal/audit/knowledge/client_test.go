@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -122,6 +123,24 @@ func TestCompositionFor_PostBody(t *testing.T) {
 	}
 	if got := sawBody["type_ids"]; len(got) != 2 || got[0] != "aws:s3/bucket@v1" || got[1] != "aws:cdn/distribution@v1" {
 		t.Errorf("type_ids body: got %v", got)
+	}
+}
+
+func TestDo_OversizedBodyRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// One byte past the cap is enough to trip the guard; spaces keep
+		// the test cheap — the client errors before any JSON decoding.
+		_, _ = w.Write(bytes.Repeat([]byte{' '}, maxResponseBytes+1))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_, err := c.LookupPrimitive(context.Background(), "aws:s3/bucket@v1")
+	if err == nil {
+		t.Fatalf("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds 4 MiB") {
+		t.Errorf("error should mention the size cap: %v", err)
 	}
 }
 

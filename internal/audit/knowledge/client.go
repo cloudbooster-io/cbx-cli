@@ -37,6 +37,12 @@ import (
 // Callers should record a placeholder, not abort.
 var ErrNotAuthored = errors.New("knowledge: not authored")
 
+// maxResponseBytes caps how much of a knowledge response body we read.
+// The endpoints serve curated prose chunks — real payloads are tens of
+// KiB — so 4 MiB is generous headroom while still bounding memory on a
+// public unauthenticated endpoint.
+const maxResponseBytes = 4 << 20 // 4 MiB
+
 // Chunk mirrors KnowledgeChunkResponse from platform-app — the prose body
 // the LLM will read. Only the fields the grounding enumerator actually
 // puts in the prompt are kept; extras roll into Extra so callers can
@@ -145,9 +151,14 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, ErrNotAuthored
 	}
-	raw, err := io.ReadAll(resp.Body)
+	// Read at most one byte past the cap so an oversized body is a clear
+	// error rather than silently truncated (and broken) JSON.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("knowledge: read body: %w", err)
+	}
+	if len(raw) > maxResponseBytes {
+		return nil, fmt.Errorf("knowledge: %s %s: response exceeds %d MiB", req.Method, req.URL, maxResponseBytes>>20)
 	}
 	if resp.StatusCode >= 400 {
 		// Surface the backend's message verbatim when it's short JSON —
