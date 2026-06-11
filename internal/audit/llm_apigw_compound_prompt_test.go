@@ -3,6 +3,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestBuildGroundedPrompt_APIGatewayV2CompoundInputs is the end-to-end wiring
@@ -60,7 +62,7 @@ func TestBuildGroundedPrompt_APIGatewayV2CompoundInputs(t *testing.T) {
 		},
 	}
 
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil, rulesbundle.Embedded())
 
 	for _, want := range []string{
 		`"AuthorizationType": "NONE"`,                   // the unauthenticated-route signal

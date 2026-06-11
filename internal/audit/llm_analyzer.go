@@ -15,6 +15,7 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 )
@@ -545,7 +546,7 @@ func (l *llmAnalyzer) appendKnowledgePartialFinding(findings []Finding, bundle *
 // that explicitly).
 func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	if l.cbKnowledge {
-		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture)
+		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture, rulesbundle.Embedded())
 	}
 	return buildLLMPrompt(l.iacType, files)
 }
@@ -584,6 +585,14 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 // here as plain text. The model's job is purely to reason over the
 // frozen knowledge bundle and emit findings.
 //
+// The policy prose — the baseline rule bullets, the no-merge-orthogonal
+// block, and the severity rubric — comes from the rules pack (P0 of the
+// local-knowledge-registry refactor: always rulesbundle.Embedded(), a
+// byte-for-byte extraction of the former inline literals). rules must
+// be non-nil and validated; Render reproduces the original byte stream
+// exactly, pinned by the prompt golden test and the embedded-artifact
+// SHA test.
+//
 // Determinism is load-bearing: this function must produce byte-identical
 // output for identical inputs across runs. That means:
 //   - bundle slices are pre-sorted by BuildGrounding,
@@ -595,7 +604,80 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 // rendered as "(no CB entry)" placeholders, never silently omitted —
 // otherwise a backend deploy that adds or removes a primitive would
 // shift the prompt invisibly.
-func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
+func buildGroundedPrompt(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture, rules *rulesbundle.RulePack) string {
+	var sb strings.Builder
+	sb.WriteString("You are CloudBooster's AWS security and architecture auditor.\n\n")
+	sb.WriteString("You will be given: (a) a CB knowledge bundle with CloudBooster's curated AWS posture, (b) an account-posture block with account-level configuration, and (c) every discovered resource with its full deployed state (raw CFN Properties + describer enrichment).\n\n")
+	sb.WriteString("DO NOT call any tools — none are available in this run.\n\n")
+	sb.WriteString("Reasoning rules:\n")
+	// Reasoning-rules item 1 (the 47 baseline rule bullets + sub-items,
+	// intro/outro included) and item 2 (the DO-NOT-MERGE-ORTHOGONAL
+	// block) render from the rule pack, byte-identical to the former
+	// inline literals.
+	sb.WriteString(rules.Render(rulesbundle.SectionBaselineRules))
+	sb.WriteString(rules.Render(rulesbundle.SectionOrthogonality))
+	sb.WriteString("  3. Use the CB knowledge bundle as authoritative context for CB's RECOMMENDED posture. When a finding aligns with CB-authored guidance, quote the relevant phrase in `cb_source.snippet` and set `cb_source.tool` to the bundle section (`aws_lookup_primitive` / `aws_best_practices_for` / `aws_composition_for`) with `key` set to the primitive id / workload slug / \"composition\".\n")
+	sb.WriteString("  4. When a finding has no exact CB-authored anchor (baseline AWS hygiene), set `cb_source` to {tool: \"aws_baseline\", key: \"<short-rule-name>\", snippet: \"<the AWS-baseline rule you applied>\"} so the report still carries a justification.\n")
+	sb.WriteString("  5. Use the resource's URN as `resource` for resource-scoped findings, and `account:<accountId>` for account-posture findings.\n")
+	sb.WriteString("  6. Don't invent file/line fields — set `file: \"\"` and `line: 0` for live-AWS findings.\n\n")
+
+	sb.WriteString("ARCHITECTURE CONNECTIONS — Alongside findings, also emit a `connections` array describing the SEMANTIC data-flow relationships between discovered resources. These power the architecture diagram. Only emit edges you can support from concrete fields in the resource data:\n")
+	sb.WriteString("  • CloudFront → S3 origin: when an `AWS::CloudFront::Distribution` has `Origins[*].S3OriginConfig` AND the origin's `DomainName` resolves to a discovered S3 bucket (match the bucket name prefix of `DomainName` against discovered bucket IDs).\n")
+	sb.WriteString("  • CloudFront → ALB origin: when `Origins[*].CustomOriginConfig` plus `DomainName` resolves to a discovered ALB/ELB DNS name.\n")
+	sb.WriteString("  • API Gateway → Lambda: when `AWS::APIGateway::Method.Integration.Uri` ARN references a discovered Lambda function ARN, or `AWS::ApiGatewayV2::Integration.IntegrationUri` does.\n")
+	sb.WriteString("  • Lambda → DynamoDB / S3 / Secrets / KMS: when the Lambda's execution role's INLINE or ATTACHED policy lists Allow actions (`dynamodb:*`, `s3:*`, `secretsmanager:GetSecretValue`, `kms:Decrypt`, etc.) targeting a specific Resource ARN that matches a discovered resource. Skip wildcard `Resource: \"*\"` cases — the edge isn't specific enough to draw.\n")
+	sb.WriteString("  • AppSync → Lambda / DynamoDB: from data source definitions in the GraphQL API.\n")
+	sb.WriteString("  • SNS / SQS / EventBridge → Lambda subscriptions: from event source mappings or subscriptions.\n")
+	sb.WriteString("  • RDS / DynamoDB → KMS CMK: when the database's `KmsKeyId` / `SSESpecification.KMSMasterKeyId` matches a discovered KMS key.\n\n")
+	sb.WriteString("RULES for connections:\n")
+	sb.WriteString("  (a) `from` and `to` must be the EXACT discovered URNs (the `urn` field on each resource). Do not invent or paraphrase URNs.\n")
+	sb.WriteString("  (b) Skip the edge if either endpoint isn't in the discovered set.\n")
+	sb.WriteString("  (c) `label` is a 1-3 word verb describing the flow (\"origin\", \"invokes\", \"reads\", \"writes\", \"publishes to\", \"encrypts\"). Keep it short — it overlays the arrow on the diagram.\n")
+	sb.WriteString("  (d) Don't emit duplicate edges (same from+to+label). Don't emit edges between resources in the same Component the audit already groups together (those are implicit).\n")
+	sb.WriteString("  (e) When uncertain, OMIT the edge. A clean smaller graph beats a noisy speculative one.\n\n")
+
+	sb.WriteString("Return a single JSON object:\n")
+	sb.WriteString(`{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"","line":0,"cb_source":{"tool":"…","key":"…","snippet":"…"}}],"connections":[{"from":"<urn>","to":"<urn>","label":"…"}]}`)
+	sb.WriteString("\n\nOnly emit JSON. No commentary, no code fences. If you find nothing return {\"findings\":[],\"connections\":[]}.\n\n")
+
+	sb.WriteString(rules.Render(rulesbundle.SectionSeverityRubric))
+
+	writeAccountPosture(&sb, posture)
+	writeGroundingBundle(&sb, bundle)
+	writeResourceTable(&sb, resources)
+
+	if len(files) > 0 {
+		sb.WriteString("Source files follow. Use the paths exactly as given.\n\n")
+		for _, f := range files {
+			sb.WriteString("==== FILE: ")
+			sb.WriteString(f.Path)
+			if f.Truncated {
+				sb.WriteString(" (truncated)")
+			}
+			sb.WriteString(" ====\n")
+			sb.Write(f.Content)
+			sb.WriteString("\n\n")
+		}
+	} else {
+		// AWS / live-discovery mode: no source files. Tell the model
+		// explicitly that it is grounding against deployed state read
+		// from AWS APIs (CloudControl + per-service describers) rather
+		// than declared IaC, so it doesn't ask for file references that
+		// don't exist and so its `file`/`line` fields stay empty.
+		sb.WriteString("Audit context: this audit operates against LIVE AWS resources discovered via CloudControl + per-service describers. No source files are available. Emit findings with file=\"\" and line=0; reference resources by the URN shown above.\n\n")
+	}
+	_ = iacType // currently unused in grounded variant; primitives carry the type info
+	return sb.String()
+}
+
+// buildGroundedPromptLegacy is the pre-rulepack prompt builder with the
+// policy prose still inline, kept ONLY as the byte-identity oracle for
+// the P0 extraction: TestGroundedPromptByteIdentical asserts the
+// rulepack-backed builder above reproduces this output byte-for-byte
+// across the fixture matrix. Deleted in the follow-up commit, where the
+// prompt golden file + the embedded-artifact SHA pin take over as the
+// permanent guards.
+func buildGroundedPromptLegacy(iacType string, files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	var sb strings.Builder
 	sb.WriteString("You are CloudBooster's AWS security and architecture auditor.\n\n")
 	sb.WriteString("You will be given: (a) a CB knowledge bundle with CloudBooster's curated AWS posture, (b) an account-posture block with account-level configuration, and (c) every discovered resource with its full deployed state (raw CFN Properties + describer enrichment).\n\n")

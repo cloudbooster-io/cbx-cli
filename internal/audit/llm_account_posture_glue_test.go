@@ -3,6 +3,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestWriteAccountPosture_RendersGlueCatalogPolicy asserts the Glue
@@ -64,7 +66,7 @@ func TestWriteAccountPosture_OmitsGlueWhenNoPolicies(t *testing.T) {
 // silently drop the Athena workgroup (enforce/encryption) or Glue
 // Data Catalog wildcard-principal guidance from rule #1.
 func TestBuildGroundedPrompt_HasGlueAndAthenaRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"AWS::Athena::WorkGroup",
 		"EnforceWorkGroupConfiguration",
