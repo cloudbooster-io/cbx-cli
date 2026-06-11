@@ -34,6 +34,30 @@ type GroundingBundle struct {
 	// ids. Nil when no primitives were discovered or composition is
 	// not authored — Missing tells them apart.
 	Composition *CompositionKnowledge
+	// Misses: lookups whose fetch failed transiently (5xx after the
+	// client's bounded retry, transport error, timeout). The
+	// corresponding Primitives / Practices / Composition slots still
+	// hold Missing=true placeholders so the prompt structure stays
+	// stable; Misses is what distinguishes "CB has no authored entry"
+	// (expected 404) from "CB's entry was unreachable" (degraded
+	// grounding — surfaced as an LLM-CB-KNOWLEDGE-PARTIAL finding).
+	// Sorted by (Kind, Key) for determinism.
+	Misses []GroundingMiss
+}
+
+// GroundingMiss records one CB-knowledge lookup that failed transiently
+// during BuildGrounding's fan-out. 404s are NEVER misses — ErrNotAuthored
+// maps to a Missing=true placeholder entry (CB simply has no authored
+// entry, an expected state). A miss means the audit ran with REDUCED
+// grounding for that key.
+type GroundingMiss struct {
+	// Kind is the lookup family: "primitive", "practices", or "composition".
+	Kind string
+	// Key is the lookup key — primitive type_id, workload slug, or the
+	// comma-joined composition type_ids.
+	Key string
+	// Err is the stringified fetch error, kept for the finding description.
+	Err string
 }
 
 // PrimitiveKnowledge bundles the CB lookup result for one primitive
@@ -76,10 +100,18 @@ type CompositionKnowledge struct {
 // ordering. 404s collapse into Missing=true entries — knowledge gaps
 // are normal and must be surfaced, not silently dropped.
 //
-// The first non-404 error from any fetch aborts the whole operation:
-// a knowledge backend that's reachable for primitives but failing
-// composition would otherwise produce a half-grounded audit, which
-// is worse than failing loudly.
+// Error policy (review L24): a transient failure on any SINGLE lookup
+// (5xx after the client's bounded retry, transport error, timeout) does
+// NOT cancel the fan-out — the slot keeps a Missing placeholder, the
+// failure is recorded in bundle.Misses, and the remaining lookups
+// proceed, so one flaky primitive degrades the audit instead of
+// aborting it. Two failure classes still abort the whole operation,
+// because they break the audit's grounding premise rather than dent it:
+//   - auth-class responses (401/403) — the backend is rejecting this
+//     client, so every remaining lookup would fail identically;
+//   - a total wipeout — zero lookups answered (not even a 404) and at
+//     least one error — the backend is unreachable, and a "grounded"
+//     audit holding no CB knowledge at all would be a lie.
 func BuildGrounding(
 	ctx context.Context,
 	client *knowledge.Client,
@@ -100,19 +132,47 @@ func BuildGrounding(
 		Practices:  make([]WorkloadKnowledge, len(workloadSlugs)),
 	}
 
+	// Miss bookkeeping for the degradation policy above. fetched counts
+	// lookups the backend answered DEFINITIVELY (a payload or a 404) —
+	// it gates the total-wipeout abort. Both are touched from the
+	// fan-out workers, hence the mutex.
+	var (
+		missMu  sync.Mutex
+		misses  []GroundingMiss
+		fetched int
+	)
+	recordMiss := func(kind, key string, err error) {
+		missMu.Lock()
+		defer missMu.Unlock()
+		misses = append(misses, GroundingMiss{Kind: kind, Key: key, Err: err.Error()})
+	}
+	recordFetched := func() {
+		missMu.Lock()
+		defer missMu.Unlock()
+		fetched++
+	}
+
 	// Fan out primitive lookups in parallel but write to a fixed slot
 	// per id, keeping the output slice's order tied to the sorted ids.
 	if err := fanOut(ctx, len(primitiveIDs), concurrency, func(i int) error {
 		typeID := primitiveIDs[i]
 		resp, err := client.LookupPrimitive(ctx, typeID)
-		if err != nil {
-			if errors.Is(err, knowledge.ErrNotAuthored) {
-				bundle.Primitives[i] = PrimitiveKnowledge{TypeID: typeID, Missing: true}
-				return nil
-			}
+		switch {
+		case err == nil:
+			bundle.Primitives[i] = PrimitiveKnowledge{TypeID: typeID, Data: resp}
+			recordFetched()
+		case errors.Is(err, knowledge.ErrNotAuthored):
+			bundle.Primitives[i] = PrimitiveKnowledge{TypeID: typeID, Missing: true}
+			recordFetched()
+		case isKnowledgeAuthError(err):
 			return fmt.Errorf("lookup primitive %s: %w", typeID, err)
+		default:
+			// Transient: a placeholder keeps the prompt structure
+			// stable, the miss keeps the report honest. Siblings
+			// keep fetching.
+			bundle.Primitives[i] = PrimitiveKnowledge{TypeID: typeID, Missing: true}
+			recordMiss("primitive", typeID, err)
 		}
-		bundle.Primitives[i] = PrimitiveKnowledge{TypeID: typeID, Data: resp}
 		return nil
 	}); err != nil {
 		return nil, nil, err
@@ -121,14 +181,19 @@ func BuildGrounding(
 	if err := fanOut(ctx, len(workloadSlugs), concurrency, func(i int) error {
 		slug := workloadSlugs[i]
 		resp, err := client.BestPracticesFor(ctx, slug)
-		if err != nil {
-			if errors.Is(err, knowledge.ErrNotAuthored) {
-				bundle.Practices[i] = WorkloadKnowledge{Workload: slug, Missing: true}
-				return nil
-			}
+		switch {
+		case err == nil:
+			bundle.Practices[i] = WorkloadKnowledge{Workload: slug, Data: resp}
+			recordFetched()
+		case errors.Is(err, knowledge.ErrNotAuthored):
+			bundle.Practices[i] = WorkloadKnowledge{Workload: slug, Missing: true}
+			recordFetched()
+		case isKnowledgeAuthError(err):
 			return fmt.Errorf("best practices for %s: %w", slug, err)
+		default:
+			bundle.Practices[i] = WorkloadKnowledge{Workload: slug, Missing: true}
+			recordMiss("practices", slug, err)
 		}
-		bundle.Practices[i] = WorkloadKnowledge{Workload: slug, Data: resp}
 		return nil
 	}); err != nil {
 		return nil, nil, err
@@ -142,14 +207,52 @@ func BuildGrounding(
 		switch {
 		case err == nil:
 			bundle.Composition = &CompositionKnowledge{TypeIDs: primitiveIDs, Data: resp}
+			recordFetched()
 		case errors.Is(err, knowledge.ErrNotAuthored):
 			bundle.Composition = &CompositionKnowledge{TypeIDs: primitiveIDs, Missing: true}
-		default:
+			recordFetched()
+		case isKnowledgeAuthError(err):
 			return nil, nil, fmt.Errorf("composition: %w", err)
+		default:
+			bundle.Composition = &CompositionKnowledge{TypeIDs: primitiveIDs, Missing: true}
+			recordMiss("composition", strings.Join(primitiveIDs, ","), err)
 		}
 	}
 
+	// Fan-out completion order is scheduling-dependent — sort so the
+	// miss-list (and the finding text built from it) is deterministic.
+	sort.Slice(misses, func(i, j int) bool {
+		if misses[i].Kind != misses[j].Kind {
+			return misses[i].Kind < misses[j].Kind
+		}
+		return misses[i].Key < misses[j].Key
+	})
+
+	// Total wipeout: nothing answered (not even a 404) and at least one
+	// fetch errored — the backend is unreachable; abort like the old
+	// first-error policy did, since there is no knowledge to be partial OF.
+	if fetched == 0 && len(misses) > 0 {
+		return nil, nil, fmt.Errorf("cb knowledge backend unreachable: all %d lookups failed (first: %s)", len(misses), misses[0].Err)
+	}
+	bundle.Misses = misses
+
 	return bundle, bundle.toEvents(), nil
+}
+
+// isKnowledgeAuthError reports whether err is an auth-class (401/403)
+// response from the knowledge backend. Auth failures abort the whole
+// grounding fetch: the backend is rejecting this client, so every
+// remaining lookup would fail identically and a "partial" bundle would
+// just be an empty one. The knowledge client formats the HTTP status
+// into the error message rather than exposing a typed status error, so
+// this matches doOnce's stable "returned <code>:" fragment — swap for
+// errors.As over a typed error if/when the client grows one.
+func isKnowledgeAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, " returned 401:") || strings.Contains(msg, " returned 403:")
 }
 
 // toEvents flattens the bundle into the existing GroundingEvent shape

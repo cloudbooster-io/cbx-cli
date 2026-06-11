@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,5 +321,133 @@ func TestScanResources_NoTruncationFindingUnderCap(t *testing.T) {
 		if f.RuleID == "LLM-CB-TRUNCATED" {
 			t.Errorf("no truncation finding expected under the cap, got %+v", f)
 		}
+		if f.RuleID == "LLM-CB-KNOWLEDGE-PARTIAL" {
+			t.Errorf("no knowledge-partial finding expected against a healthy backend, got %+v", f)
+		}
+	}
+}
+
+// flakyPrimitiveResource is a resource whose describer-resolved primitive
+// id contains "flaky", so a newFailingKnowledgeServer(t, "flaky", …)
+// backend 5xx's exactly this one lookup and nothing else.
+func flakyPrimitiveResource() DiscoveredResource {
+	return DiscoveredResource{
+		Type:   "AWS::Lambda::Function",
+		URN:    "aws://us-east-1/AWS::Lambda::Function/f-flaky",
+		ID:     "f-flaky",
+		Region: "us-east-1",
+		Inputs: map[string]any{"cb_describer_primitive_resolved": "aws:fake/flaky@v1"},
+	}
+}
+
+// TestScanResources_EmitsKnowledgePartialFinding is the analyzer-level
+// half of the review-L24 degradation policy: one primitive's CB
+// knowledge 503s (after retry), the analysis must still run on the
+// fetched remainder, and the report must carry exactly ONE
+// warning-severity LLM-CB-KNOWLEDGE-PARTIAL finding naming the missed
+// primitive — never the abort-everything LLM-ERROR.
+func TestScanResources_EmitsKnowledgePartialFinding(t *testing.T) {
+	srv := newFailingKnowledgeServer(t, "flaky", http.StatusServiceUnavailable)
+	t.Cleanup(srv.Close)
+	t.Setenv(cbAPIURLEnv, srv.URL)
+
+	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
+	a := newTestAnalyzer(stream)
+	a.iacType = IaCTypeCloudFormation
+	a.cbKnowledge = true
+
+	resources := append(syntheticResources(3), flakyPrimitiveResource())
+
+	findings, err := a.ScanResources(context.Background(), resources)
+	if err != nil {
+		t.Fatalf("ScanResources: %v", err)
+	}
+
+	var partial *Finding
+	for i := range findings {
+		switch findings[i].RuleID {
+		case "LLM-ERROR":
+			t.Fatalf("a transient knowledge miss must degrade, not abort: %+v", findings[i])
+		case "LLM-CB-KNOWLEDGE-PARTIAL":
+			if partial != nil {
+				t.Fatalf("expected exactly ONE knowledge-partial finding, got a second: %+v", findings[i])
+			}
+			partial = &findings[i]
+		}
+	}
+	if partial == nil {
+		t.Fatalf("expected an LLM-CB-KNOWLEDGE-PARTIAL finding, got %+v", findings)
+	}
+	if partial.Severity != SeverityWarning {
+		t.Errorf("knowledge-partial severity = %q, want %q (reduced grounding must be exit-code visible)", partial.Severity, SeverityWarning)
+	}
+	if !strings.Contains(partial.Description, "aws:fake/flaky@v1") {
+		t.Errorf("knowledge-partial finding should list the missed primitive, got %q", partial.Description)
+	}
+	// The analysis itself must have run: the prompt was built and streamed.
+	if stream.prompt == "" {
+		t.Errorf("the LLM stream should still run on the partial bundle")
+	}
+}
+
+// TestScanResources_PartialAndTruncationCoexist guards the interplay of
+// the two degradation findings: a capped resource table (LLM-CB-TRUNCATED,
+// !74) and a partial knowledge bundle (LLM-CB-KNOWLEDGE-PARTIAL) trip on
+// independent conditions and must BOTH land in the same report.
+func TestScanResources_PartialAndTruncationCoexist(t *testing.T) {
+	srv := newFailingKnowledgeServer(t, "flaky", http.StatusServiceUnavailable)
+	t.Cleanup(srv.Close)
+	t.Setenv(cbAPIURLEnv, srv.URL)
+
+	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
+	a := newTestAnalyzer(stream)
+	a.iacType = IaCTypeCloudFormation
+	a.cbKnowledge = true
+
+	resources := append(syntheticResources(defaultLLMMaxPromptResources+2), flakyPrimitiveResource())
+
+	findings, err := a.ScanResources(context.Background(), resources)
+	if err != nil {
+		t.Fatalf("ScanResources: %v", err)
+	}
+	seen := map[string]int{}
+	for _, f := range findings {
+		seen[f.RuleID]++
+	}
+	if seen["LLM-CB-TRUNCATED"] != 1 {
+		t.Errorf("expected exactly one LLM-CB-TRUNCATED finding, got %d", seen["LLM-CB-TRUNCATED"])
+	}
+	if seen["LLM-CB-KNOWLEDGE-PARTIAL"] != 1 {
+		t.Errorf("expected exactly one LLM-CB-KNOWLEDGE-PARTIAL finding, got %d", seen["LLM-CB-KNOWLEDGE-PARTIAL"])
+	}
+}
+
+// TestScanResources_KnowledgeAuthErrorAborts pins the retained abort
+// path at the analyzer level: an auth-class (401) knowledge backend
+// means the grounding premise is broken — the analysis must NOT run on
+// an empty bundle; it degrades to the single LLM-ERROR finding exactly
+// as before L24.
+func TestScanResources_KnowledgeAuthErrorAborts(t *testing.T) {
+	srv := newFailingKnowledgeServer(t, "", http.StatusUnauthorized)
+	t.Cleanup(srv.Close)
+	t.Setenv(cbAPIURLEnv, srv.URL)
+
+	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
+	a := newTestAnalyzer(stream)
+	a.iacType = IaCTypeCloudFormation
+	a.cbKnowledge = true
+
+	findings, err := a.ScanResources(context.Background(), syntheticResources(2))
+	if err != nil {
+		t.Fatalf("ScanResources: %v", err)
+	}
+	if len(findings) != 1 || findings[0].RuleID != "LLM-ERROR" {
+		t.Fatalf("expected the single LLM-ERROR abort finding, got %+v", findings)
+	}
+	if !strings.Contains(findings[0].Description, "401") {
+		t.Errorf("abort finding should surface the auth status, got %q", findings[0].Description)
+	}
+	if stream.prompt != "" {
+		t.Errorf("the LLM stream must not run when grounding aborts")
 	}
 }

@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -12,10 +13,10 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 )
 
-// newFakeKnowledgeServer stands up an httptest server that answers the
-// three CB knowledge endpoints with predictable, content-stable bodies.
-func newFakeKnowledgeServer(t *testing.T) *httptest.Server {
-	t.Helper()
+// fakeKnowledgeHandler answers the three CB knowledge endpoints with
+// predictable, content-stable bodies. Shared by the healthy fake server
+// and the failure-injecting variant below.
+func fakeKnowledgeHandler() http.HandlerFunc {
 	envelope := func(data map[string]interface{}) string {
 		body, _ := json.Marshal(map[string]interface{}{
 			"schema_version": "1",
@@ -25,7 +26,7 @@ func newFakeKnowledgeServer(t *testing.T) *httptest.Server {
 		return string(body)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/knowledge/aws/primitives/"):
 			typeID := strings.TrimPrefix(r.URL.Path, "/v1/knowledge/aws/primitives/")
@@ -68,8 +69,31 @@ func newFakeKnowledgeServer(t *testing.T) *httptest.Server {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
+	}
+}
+
+// newFakeKnowledgeServer stands up an httptest server over the healthy
+// handler above.
+func newFakeKnowledgeServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(fakeKnowledgeHandler())
+}
+
+// newFailingKnowledgeServer answers like newFakeKnowledgeServer except
+// requests whose URL path contains failSubstr get `status` back instead.
+// failSubstr == "" fails EVERY request (wipeout / auth-abort tests).
+// Note the composition endpoint carries type_ids in the POST body, not
+// the path — a primitive-id failSubstr leaves composition healthy.
+func newFailingKnowledgeServer(t *testing.T, failSubstr string, status int) *httptest.Server {
+	t.Helper()
+	healthy := fakeKnowledgeHandler()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failSubstr == "" || strings.Contains(r.URL.Path, failSubstr) {
+			w.WriteHeader(status)
+			return
+		}
+		healthy(w, r)
 	}))
-	return srv
 }
 
 // fakeKnowledgeServer returns a knowledge.Client bound to a fresh fake
@@ -523,6 +547,107 @@ func TestBuildGrounding_404IsPlaceholder(t *testing.T) {
 	}
 	if !bundle.Primitives[0].Missing {
 		t.Errorf("expected Missing=true for 404'd primitive, got %+v", bundle.Primitives[0])
+	}
+	// 404 is the EXPECTED not-authored state, never a transient miss —
+	// it must not feed the LLM-CB-KNOWLEDGE-PARTIAL finding.
+	if len(bundle.Misses) != 0 {
+		t.Errorf("a 404 must not be recorded as a miss, got %+v", bundle.Misses)
+	}
+}
+
+// TestBuildGrounding_TransientMissDegradesNotAborts pins the review-L24
+// degradation policy: a 5xx (after the client's bounded retry) on ONE
+// primitive must not cancel the fan-out. The failed slot keeps a Missing
+// placeholder (stable prompt structure), the failure lands in
+// bundle.Misses, and every other lookup — including composition — still
+// completes with real data.
+func TestBuildGrounding_TransientMissDegradesNotAborts(t *testing.T) {
+	srv := newFailingKnowledgeServer(t, "flaky", http.StatusServiceUnavailable)
+	defer srv.Close()
+
+	client := knowledge.New(srv.URL)
+	resources := []DiscoveredResource{
+		{Type: "aws_s3_bucket", URN: "urn:a"}, // resolves to aws:s3/bucket@v1 — healthy
+		{
+			Type: "aws_lambda_function", URN: "urn:b",
+			Inputs: map[string]any{"cb_describer_primitive_resolved": "aws:fake/flaky@v1"},
+		},
+	}
+
+	bundle, _, err := BuildGrounding(context.Background(), client, resources, []string{"static-site"}, 2)
+	if err != nil {
+		t.Fatalf("a single transient failure must degrade, not abort: %v", err)
+	}
+
+	if len(bundle.Misses) != 1 {
+		t.Fatalf("expected exactly 1 miss, got %+v", bundle.Misses)
+	}
+	miss := bundle.Misses[0]
+	if miss.Kind != "primitive" || miss.Key != "aws:fake/flaky@v1" {
+		t.Errorf("miss = %+v, want primitive aws:fake/flaky@v1", miss)
+	}
+	if !strings.Contains(miss.Err, "503") {
+		t.Errorf("miss should carry the underlying error, got %q", miss.Err)
+	}
+
+	for _, p := range bundle.Primitives {
+		switch p.TypeID {
+		case "aws:fake/flaky@v1":
+			if !p.Missing || p.Data != nil {
+				t.Errorf("failed primitive must hold a Missing placeholder, got %+v", p)
+			}
+		default:
+			if p.Missing || p.Data == nil {
+				t.Errorf("sibling primitive %s must still be fetched, got %+v", p.TypeID, p)
+			}
+		}
+	}
+	if len(bundle.Practices) != 1 || bundle.Practices[0].Data == nil {
+		t.Errorf("practices lookup must still complete, got %+v", bundle.Practices)
+	}
+	if bundle.Composition == nil || bundle.Composition.Data == nil {
+		t.Errorf("composition lookup must still complete, got %+v", bundle.Composition)
+	}
+}
+
+// TestBuildGrounding_TotalWipeoutAborts pins the abort half of the L24
+// policy: when the backend answers NOTHING (every lookup 5xx, not even a
+// 404), there is no knowledge to be partial of — BuildGrounding must
+// fail loudly like the old first-error policy did.
+func TestBuildGrounding_TotalWipeoutAborts(t *testing.T) {
+	srv := newFailingKnowledgeServer(t, "", http.StatusServiceUnavailable)
+	defer srv.Close()
+
+	client := knowledge.New(srv.URL)
+	resources := []DiscoveredResource{{Type: "aws_s3_bucket", URN: "urn:a"}}
+
+	bundle, _, err := BuildGrounding(context.Background(), client, resources, nil, 1)
+	if err == nil {
+		t.Fatalf("expected a total-wipeout abort, got bundle %+v", bundle)
+	}
+	if !strings.Contains(err.Error(), "unreachable") {
+		t.Errorf("wipeout error should say the backend is unreachable, got %q", err)
+	}
+}
+
+// TestBuildGrounding_AuthErrorAborts pins the other abort class: 401/403
+// mean the backend is rejecting this client, so every remaining lookup
+// would fail identically — keep the fail-fast behavior, never degrade.
+func TestBuildGrounding_AuthErrorAborts(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := newFailingKnowledgeServer(t, "", status)
+
+		client := knowledge.New(srv.URL)
+		resources := []DiscoveredResource{{Type: "aws_s3_bucket", URN: "urn:a"}}
+
+		bundle, _, err := BuildGrounding(context.Background(), client, resources, nil, 1)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("status %d: expected an auth-class abort, got bundle %+v", status, bundle)
+		}
+		if !strings.Contains(err.Error(), fmt.Sprintf("returned %d", status)) {
+			t.Errorf("status %d: error should carry the auth status, got %q", status, err)
+		}
 	}
 }
 
