@@ -6,16 +6,20 @@
 # publish twice (the second run fails on the already-existing GitHub
 # Release, but only after re-pushing the cask/scoop manifests).
 #
-# Required repository secrets (Settings → Secrets and variables → Actions):
-#   RELEASE_GITHUB_TOKEN  PAT with repo scope on cloudbooster-io/cbx-cli,
-#                         cloudbooster-io/homebrew-tap and
-#                         cloudbooster-io/scoop-bucket. The default
-#                         workflow token can create this repo's Release but
-#                         cannot push to the tap/bucket repos, so a PAT is
-#                         still required (same as on GitLab).
-#   SENTRY_DSN            optional — telemetry endpoint baked into the binary
-#                         via ldflags; when unset the release ships with no
-#                         telemetry endpoint (.goreleaser.yml defaults it).
+# Cross-repo publishing (this repo's Release + cask/scoop manifests in
+# homebrew-tap/scoop-bucket) authenticates via the org-owned GitHub App
+# `cbx-release-bot` (Contents: read/write on exactly those three repos).
+# The workflow mints a fresh 1-hour installation token per run — no PAT,
+# no person-bound credential, no expiry rotation.
+#
+# Required configuration (Settings → Secrets and variables → Actions):
+#   RELEASE_APP_ID           variable (not secret) — the App ID from the
+#                            app's General page.
+#   RELEASE_APP_PRIVATE_KEY  secret — the app's private key (.pem contents).
+#   SENTRY_DSN               secret, optional — telemetry endpoint baked into
+#                            the binary via ldflags; when unset the release
+#                            ships with no telemetry endpoint
+#                            (.goreleaser.yml defaults it).
 #
 # Keyless Cosign signing uses the ambient GitHub OIDC token (id-token: write
 # below) — the equivalent of GitLab's SIGSTORE_ID_TOKEN id_tokens block.
@@ -49,6 +53,13 @@ jobs:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@v3
       - uses: anchore/sbom-action/download-syft@v0
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: cloudbooster-io
+          repositories: cbx-cli,homebrew-tap,scoop-bucket
       - uses: goreleaser/goreleaser-action@v6
         with:
           # Pinned to the same GoReleaser release as the GitLab job's
@@ -56,7 +67,7 @@ jobs:
           version: v2.16.0
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
   # Post-release verification of the Homebrew cask install path. Runs on a
