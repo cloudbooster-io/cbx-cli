@@ -80,12 +80,9 @@ var describerFieldPattern = regexp.MustCompile(`^cb_describer_[a-z0-9_]+$`)
 // the prompt's skip-when-absent discipline anyway).
 func deriveDescriberFields(t *testing.T) []string {
 	t.Helper()
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse package: %v", err)
+		t.Fatalf("read package dir: %v", err)
 	}
 
 	seen := map[string]bool{
@@ -93,23 +90,30 @@ func deriveDescriberFields(t *testing.T) []string {
 		// lives in the parsers package, not here.
 		parsers.CBDescriberPrimitiveResolved: true,
 	}
-	for _, pkg := range pkgs {
-		for _, f := range pkg.Files {
-			ast.Inspect(f, func(n ast.Node) bool {
-				lit, ok := n.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				s, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					return true
-				}
-				if describerFieldPattern.MatchString(s) {
-					seen[s] = true
-				}
-				return true
-			})
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
 		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			if describerFieldPattern.MatchString(s) {
+				seen[s] = true
+			}
+			return true
+		})
 	}
 
 	out := make([]string, 0, len(seen))

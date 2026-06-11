@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // AWSAuditContext carries the live-AWS audit metadata RenderAWSMarkdown
@@ -37,6 +38,14 @@ type AWSAuditContext struct {
 	// report inline, so the findings must be merged BEFORE rendering. Empty
 	// on a healthy run.
 	DiscoveryIntegrityFindings []Finding
+
+	// RulePack records which rung of the rulepack resolve ladder served
+	// the rules that grounded this audit (pack version, source, content
+	// hash — see rulesbundle.Provenance). Rendered into the report
+	// header and serialized into the .state.json sidecar; a sweep
+	// verdict that can't name its pack is unscoreable. Nil when unknown
+	// (state/source-mode audits, older state files).
+	RulePack *rulesbundle.Provenance `json:"rule_pack,omitempty"`
 }
 
 // RenderAWSMarkdown emits the AWS-mode report shape per plan §7.7 +
@@ -233,6 +242,17 @@ func writeReportHeader(sb *strings.Builder, ctx AWSAuditContext, result *Result)
 	}
 	if ctx.Identity != "" {
 		sb.WriteString("> **Identity** `" + ctx.Identity + "`  \n")
+	}
+	if p := ctx.RulePack; p != nil {
+		short := p.ContentSHA256
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		fmt.Fprintf(sb, "> **Rules** pack v%d (schema %d)  ·  source `%s`  ·  `%s`", p.PackVersion, p.SchemaVersion, p.Source, short)
+		if p.Stale || p.Degraded {
+			sb.WriteString("  ·  ⚠ degraded — see LLM-CB-RULES-STALE")
+		}
+		sb.WriteString("  \n")
 	}
 	fmt.Fprintf(sb, "> **Findings** %d  ·  **Components** %d  ·  **CloudTrail** ~%d Read events\n\n",
 		len(result.Findings), len(result.Components), ctx.EventCount)
