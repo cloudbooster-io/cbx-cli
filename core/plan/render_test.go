@@ -77,11 +77,42 @@ func TestRenderMermaid(t *testing.T) {
 	if !strings.Contains(mmd, "flowchart LR") {
 		t.Fatalf("expected flowchart header, got:\n%s", mmd)
 	}
-	if !strings.Contains(mmd, "lambda[Lambda]") {
-		t.Fatalf("expected Lambda node, got:\n%s", mmd)
+	if !strings.Contains(mmd, `lambda["Lambda"]`) {
+		t.Fatalf("expected quoted Lambda node, got:\n%s", mmd)
 	}
 	if !strings.Contains(mmd, "click lambda href \"#lambda\"") {
 		t.Fatalf("expected click directive, got:\n%s", mmd)
+	}
+}
+
+// TestRenderMermaidHostileNames pins the label hardening: component names are
+// LLM/user-influenced, so quotes and newlines must not break out of the
+// quoted node-label context and inject arbitrary Mermaid directives.
+func TestRenderMermaidHostileNames(t *testing.T) {
+	hostile := "Bad\"]\nclick users href \"javascript:alert(1)\""
+	p := &Plan{
+		Intent: "api",
+		Components: []Component{
+			{Name: hostile, Description: "Compute", Service: "Lambda"},
+		},
+		Version: 1,
+	}
+	mmd := RenderMermaid(p)
+	if strings.Contains(mmd, "\nclick users href") {
+		t.Fatalf("hostile name broke out of the label context:\n%s", mmd)
+	}
+	if !strings.Contains(mmd, "#quot;") {
+		t.Fatalf("expected embedded quotes escaped as #quot;, got:\n%s", mmd)
+	}
+	// The node ID and slug must stay in their safe charsets.
+	for _, line := range strings.Split(strings.TrimSuffix(mmd, "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, `["`) && !strings.HasSuffix(trimmed, `"]`) {
+			t.Fatalf("unterminated quoted label in line %q", line)
+		}
+	}
+	if strings.Contains(nodeID(hostile), `"`) || strings.Contains(slugID(hostile), `"`) {
+		t.Fatalf("nodeID/slugID leaked quotes: %q / %q", nodeID(hostile), slugID(hostile))
 	}
 }
 
@@ -124,6 +155,24 @@ func TestRenderHTML(t *testing.T) {
 	}
 	if !strings.Contains(html, "Lambda") {
 		t.Fatalf("expected Lambda in HTML, got:\n%s", html)
+	}
+}
+
+func TestRenderHTMLEscapesHostileNames(t *testing.T) {
+	p := &Plan{
+		Intent: "api <script>alert(2)</script>",
+		Components: []Component{
+			{Name: "<script>alert(1)</script>", Description: "Compute", Service: "Lambda"},
+		},
+		Version: 1,
+	}
+	p.MermaidContent = RenderMermaid(p)
+	html := RenderHTML(p)
+	if strings.Contains(html, "<script>alert(1)</script>") || strings.Contains(html, "<script>alert(2)</script>") {
+		t.Fatalf("hostile markup emitted unescaped:\n%s", html)
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("expected entity-escaped component name, got:\n%s", html)
 	}
 }
 

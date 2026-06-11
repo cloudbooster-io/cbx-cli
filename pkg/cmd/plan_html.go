@@ -10,14 +10,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"github.com/pkg/browser"
 
 	"github.com/cloudbooster-io/cbx-cli/internal/assets"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
@@ -30,18 +30,22 @@ type heading struct {
 	ID    string
 }
 
-// planHTMLData is the template payload.
+// planHTMLData is the template payload. MermaidSource stays a plain string —
+// the component names inside it are LLM/user-influenced, so html/template
+// must entity-escape it inside the .mermaid div (the bundled mermaid runtime
+// entity-decodes the div's innerHTML before parsing, so escaped source
+// renders identically).
 type planHTMLData struct {
 	Title         string
 	Timestamp     string
 	ADRHTML       template.HTML
 	Headings      []heading
-	MermaidSource template.HTML
+	MermaidSource string
 	MermaidJS     template.JS
 }
 
 // generatePlanHTML creates a self-contained HTML preview page.
-func generatePlanHTML(intent, adrMarkdown string, mermaidSource template.HTML) ([]byte, error) {
+func generatePlanHTML(intent, adrMarkdown, mermaidSource string) ([]byte, error) {
 	adrHTML, headings, err := markdownToHTML(adrMarkdown)
 	if err != nil {
 		return nil, fmt.Errorf("rendering markdown: %w", err)
@@ -394,7 +398,7 @@ func startPreviewServer(dir string, htmlContent []byte, requestedPort int, noOpe
 	}
 
 	if !noOpen {
-		if err := browser.OpenURL(url); err != nil {
+		if err := openBrowser(url); err != nil {
 			if !quietFlag {
 				fmt.Printf("  (could not open browser: %v)\n", err)
 				fmt.Printf("  Open manually: %s\n", url)
@@ -467,6 +471,30 @@ func bindListener(requestedPort int) (net.Listener, int, error) {
 		return ln, ln.Addr().(*net.TCPAddr).Port, nil
 	}
 	return nil, 0, err
+}
+
+// openBrowser opens url in the default browser without blocking. Local
+// replacement for the archived github.com/pkg/browser.
+func openBrowser(url string) error {
+	ctx := context.Background()
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.CommandContext(ctx, "open", url)
+	case "windows":
+		// `start` is a cmd.exe builtin; the empty first argument is the
+		// window title so the URL is not mistaken for it.
+		cmd = exec.CommandContext(ctx, "cmd", "/c", "start", "", url)
+	default: // linux and the BSDs
+		cmd = exec.CommandContext(ctx, "xdg-open", url)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap the launcher in the background so it neither blocks the preview
+	// server nor lingers as a zombie.
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
 
 func isCI() bool {

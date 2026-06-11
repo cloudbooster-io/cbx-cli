@@ -27,6 +27,19 @@ func TestSemverGreaterThan(t *testing.T) {
 		{"", "v1.0.0", false},
 		{"v1.2.3", "v1.2.3", false},
 		{"v1.10.0", "v1.9.0", true},
+		// Pre-release handling (deliberately simplified — see the
+		// semverGreaterThan doc comment): the numeric core is compared
+		// first, and on a tie a release beats a pre-release of the same
+		// core. Two pre-releases of the same core are not ordered.
+		{"v1.2.1", "v1.2.1-rc.1", true},
+		{"v1.2.0-rc.1", "v1.2.0", false},
+		{"v1.2.0-rc.1", "v1.1.0", true},
+		{"v1.3.0", "v1.2.99-rc.1", true},
+		{"v1.2.0-rc.2", "v1.2.0-rc.1", false},
+		{"v1.2.0-rc.1", "v1.2.0-rc.2", false},
+		// Build metadata is ignored for precedence (semver §10).
+		{"v1.2.1+build.5", "v1.2.1", false},
+		{"v1.2.1", "v1.2.1+build.5", false},
 	}
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("%s_vs_%s", tc.a, tc.b), func(t *testing.T) {

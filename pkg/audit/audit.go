@@ -12,6 +12,7 @@ package audit
 import (
 	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 )
 
 // --- core finding / report types ---
@@ -108,6 +109,12 @@ var ErrSourceModeUnsupported = audit.ErrSourceModeUnsupported
 // ExitCodeError carries the audit's intended process exit code. Wrap
 // or unwrap with errors.As to extract Code.
 type ExitCodeError = audit.ExitCodeError
+
+// ParseError is the structured three-line error (what / cause / hint)
+// every state and source parser returns on failure. Match with
+// errors.As to read the fields programmatically instead of parsing the
+// rendered "error: …\ncause: …\nhint: …" string.
+type ParseError = parsers.ParseError
 
 // --- entry points ---
 

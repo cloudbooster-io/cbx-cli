@@ -377,6 +377,18 @@ type release struct {
 // Semver
 // ---------------------------------------------------------------------------
 
+// semverGreaterThan reports whether version a is strictly newer than b.
+//
+// Pre-release / build-metadata handling is deliberately simplified: anything
+// from the first '-' or '+' on is stripped before the numeric comparison, and
+// when the numeric cores are equal a release counts as newer than a
+// pre-release of the same core (so v1.2.1 > v1.2.1-rc.1, while
+// v1.2.0-rc.1 > v1.2.0 is false). Full semver pre-release ordering
+// (rc.1 vs rc.2, alpha vs beta, …) is NOT implemented — two pre-releases of
+// the same core compare as not-newer. That is fine here because the GitHub
+// /releases/latest endpoint this package compares against never returns
+// pre-releases; the only pre-release tag ever seen is a locally built
+// CurrentVersion.
 func semverGreaterThan(a, b string) bool {
 	// "dev" or empty never counts as newer than a release.
 	if b == "dev" || b == "" || b == "unknown" {
@@ -384,8 +396,10 @@ func semverGreaterThan(a, b string) bool {
 	}
 	a = strings.TrimPrefix(a, "v")
 	b = strings.TrimPrefix(b, "v")
-	aParts := strings.Split(a, ".")
-	bParts := strings.Split(b, ".")
+	aCore, aPre := splitSemverCore(a)
+	bCore, bPre := splitSemverCore(b)
+	aParts := strings.Split(aCore, ".")
+	bParts := strings.Split(bCore, ".")
 	maxLen := len(aParts)
 	if len(bParts) > maxLen {
 		maxLen = len(bParts)
@@ -402,7 +416,21 @@ func semverGreaterThan(a, b string) bool {
 			return ai > bi
 		}
 	}
-	return false
+	// Equal numeric cores: a release is newer than a pre-release of the same
+	// core. Two pre-releases are not ordered (see the simplification above).
+	return !aPre && bPre
+}
+
+// splitSemverCore strips the pre-release / build-metadata suffix from a
+// semver string ("1.2.0-rc.1" → "1.2.0", "1.2.1+sha" → "1.2.1"), returning
+// the numeric core and whether the suffix marked a pre-release ('-' rather
+// than build metadata's '+'). Without this, strings.Split would hand
+// strconv.Atoi a segment like "0-rc" whose error was silently swallowed as 0.
+func splitSemverCore(v string) (core string, pre bool) {
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		return v[:i], v[i] == '-'
+	}
+	return v, false
 }
 
 // ---------------------------------------------------------------------------

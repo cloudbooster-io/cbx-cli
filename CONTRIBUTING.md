@@ -32,7 +32,10 @@ For security-sensitive reports, do **not** open a public issue — see
 
 5. Open a Pull Request against `main`. Reference any related GitHub
    issue (e.g. `#123`) in the title and description.
-6. The CI pipeline (lint + test) must pass before review.
+6. The CI pipeline must pass before review. It runs vet + build,
+   `golangci-lint`, a generated-code drift check, unit tests, and the e2e
+   suite. (Releases are cut by a separate tag-triggered GoReleaser job;
+   contributors never need to touch it.)
 
 ## Development setup
 

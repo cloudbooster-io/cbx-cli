@@ -10,10 +10,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version, Commit, and Date identify the cbx build. The defaults below are
+// what a plain `go build` produces; release binaries get the real values
+// injected at link time via -ldflags -X (see the Makefile's LDFLAGS and
+// .goreleaser.yml), which is why they are vars rather than consts.
 var (
-	Version      = "dev"
-	Commit       = "unknown"
-	Date         = "unknown"
+	// Version is the cbx semantic version (e.g. "v1.2.3"), "dev" for
+	// local builds.
+	Version = "dev"
+	// Commit is the git commit the binary was built from.
+	Commit = "unknown"
+	// Date is the build timestamp.
+	Date = "unknown"
+)
+
+var (
 	jsonFlag     bool
 	quietFlag    bool
 	noColorFlag  bool
@@ -23,6 +34,11 @@ var (
 // executedCommand tracks which subcommand was run (used by background update check).
 var executedCommand string
 
+// NewRootCmd builds the root cobra command with every cbx subcommand,
+// persistent flag, and the telemetry/output PersistentPreRunE wiring
+// attached. The cbx binary reaches it through Execute; it is exported so
+// downstream consumers embedding the CLI can mount the command tree (or
+// individual subcommands) inside their own cobra root.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "cbx",

@@ -57,6 +57,9 @@ codegen-check: codegen
 	@echo "Checking for generated code drift..."
 	git diff --exit-code core/api/v1/client.gen.go
 
+# Primitive-map drift (internal/audit/primitives_aws.go) is checked manually
+# via codegen-primitives-check — CI cannot gate it because runners lack the
+# platform-app sibling checkout that PRIMITIVES_SRC points at.
 codegen-primitives:
 	go run ./tools/genprimitives -src $(PRIMITIVES_SRC) -out internal/audit/primitives_aws.go
 

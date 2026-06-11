@@ -19,7 +19,7 @@ go test ./internal/audit -run TestParsePulumiState
 go test -v -tags=e2e_staging ./e2e -run TestStaging_Login
 ```
 
-CI runs `validate` (vet + build), `codegen-check`, `go test ./...`, a mermaid fixture render, an `e2e` job, and an `e2e-staging` job that gates merges (see `.gitlab-ci.yml`). Go version pinned to 1.25 (module declares 1.25.0).
+CI runs `validate` (vet + build), `lint` (golangci-lint), `codegen-check`, `test` (unit tests; `./e2e` is excluded — it gets its own job), a mermaid fixture render, an `e2e` job, and an `e2e-staging` job that gates merges, plus a tag-only `release` job (see `.gitlab-ci.yml`). Module declares go 1.25.0 with `toolchain go1.26.4`; CI images use Go 1.26.
 
 ## Open-core context (load-bearing)
 
@@ -76,7 +76,7 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 - **Contributions go through GitHub pull requests against `main`** — see `CONTRIBUTING.md`. Reference any related GitHub issue in commits/PRs.
 - **Topic branches off `main`**, kept short-lived; one logical change per commit.
 - E2E tests against staging are gated behind the `e2e_staging` build tag and need `CB_API_URL` (maintainer-only).
-- **Release distribution** is GoReleaser → Homebrew **cask** (`cloudbooster-io/homebrew-tap`; macOS-only — GoReleaser deprecated `brews`/formulas) + `nfpms` `.deb`/`.rpm` for Linux + Scoop bucket (Windows) + GitHub Releases, with Cosign signing and Syft SBOM. The archive `name_template` (`cbx-cli_<TitleOs>_<Arch>`, amd64→x86_64) is load-bearing — it must match `internal/update/update.go:directAssetURL`; validate with `goreleaser check` + a `--snapshot` build. `make test-smoke-brew` / `scripts/smoke-brew.sh` verify the cask install path post-release (macOS runner only).
+- **Release distribution** is GoReleaser → Homebrew **cask** (`cloudbooster-io/homebrew-tap`; macOS-only — GoReleaser deprecated `brews`/formulas) + `nfpms` `.deb`/`.rpm` for Linux + Scoop bucket (Windows) + GitHub Releases, with Cosign signing and Syft SBOM. Releases are cut by the tag-triggered `release` CI job in `.gitlab-ci.yml` (goreleaser image, keyless Cosign via a GitLab `id_tokens` OIDC token; needs maintainer-configured `GITHUB_TOKEN` + optional `SENTRY_DSN` variables — see the job's comment block). The archive `name_template` (`cbx-cli_<TitleOs>_<Arch>`, amd64→x86_64) is load-bearing — it must match `internal/update/update.go:directAssetURL`; validate with `goreleaser check` + a `--snapshot` build. `make test-smoke-brew` / `scripts/smoke-brew.sh` verify the cask install path post-release (macOS runner only).
 
 ## Docs site is partly aspirational
 

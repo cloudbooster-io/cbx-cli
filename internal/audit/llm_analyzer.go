@@ -133,7 +133,13 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 
 	// Resolve the provider credential here at the audit composition root and
 	// inject it; core/plan.NewLLMCaller no longer reads the keychain itself.
-	llmToken, _ := llm.GetToken(opts.LLMProvider)
+	// A keyring failure (including no stored token) is a constructor error —
+	// matching the unconfigured-provider posture above — rather than a blank
+	// token that would surface later as an opaque provider auth failure.
+	llmToken, err := llm.GetToken(opts.LLMProvider)
+	if err != nil {
+		return nil, fmt.Errorf("llm analyzer: reading %q token from keyring: %w; run 'cbx llm api login %s' to store one", opts.LLMProvider, err, opts.LLMProvider)
+	}
 
 	// core/plan carries its own LLMProvider type (the subset of
 	// config.LLMProvider it actually reads) so the shared package stays
@@ -186,6 +192,10 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 
 	var bundle *GroundingBundle
 	if l.cbKnowledge {
+		// fetchErr is reserved for grounding-premise failures (auth-class
+		// 401/403, total backend wipeout) — those abort the analysis.
+		// Transient per-lookup misses ride back in bundle.Misses and
+		// degrade to an LLM-CB-KNOWLEDGE-PARTIAL warning below instead.
 		var fetchErr error
 		bundle, fetchErr = l.fetchBundle(ctx, resources)
 		if fetchErr != nil {
@@ -219,6 +229,7 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 		// buildGroundedPrompt drops the tail past the prompt budget).
 		_, omitted := capPromptResources(resources)
 		findings = l.appendTruncationFinding(findings, len(resources), omitted)
+		findings = l.appendKnowledgePartialFinding(findings, bundle)
 	}
 	return findings, nil
 }
@@ -227,7 +238,10 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 // primitive id, every detected workload, and the bulk composition once.
 // Returns nil bundle on no inputs (the prompt renders that explicitly).
 // The CB backend's reachability is already verified by the streamer
-// constructor's preflight; per-request errors here propagate up.
+// constructor's preflight; only grounding-premise failures (auth-class
+// 401/403, total backend wipeout) propagate up as errors — transient
+// per-lookup failures land in bundle.Misses (see BuildGrounding's error
+// policy) and are surfaced by appendKnowledgePartialFinding.
 func (l *llmAnalyzer) fetchBundle(ctx context.Context, resources []DiscoveredResource) (*GroundingBundle, error) {
 	workloads := ClassifyWorkloads(resources)
 	if uniqueSortedPrimitiveIDs(resources) == nil && len(workloads) == 0 {
@@ -310,6 +324,7 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 			_, omitted := capPromptResources(resources)
 			findings = l.appendTruncationFinding(findings, len(resources), omitted)
 		}
+		findings = l.appendKnowledgePartialFinding(findings, bundle)
 	}
 	return findings, nil
 }
@@ -471,6 +486,43 @@ func (l *llmAnalyzer) appendTruncationFinding(findings []Finding, total, omitted
 		Resource:    l.providerForRuleID,
 		Service:     "LLM",
 		Remediation: "Narrow the audit (fewer regions or resource types) so the inventory fits the prompt budget, or run the non-LLM analyzers which have no such cap.",
+	})
+}
+
+// appendKnowledgePartialFinding surfaces transiently-failed CB knowledge
+// lookups (BuildGrounding's bundle.Misses) as ONE warning-severity
+// LLM-CB-KNOWLEDGE-PARTIAL finding listing every primitive / workload /
+// composition whose curated knowledge was unavailable, plus a stderr
+// warning matching the LLM-CB-UNGROUNDED posture. Warning (exit 2), not
+// info: findings touching the listed keys were produced WITHOUT CB's
+// curated grounding — the whole value of `cbx audit aws` — and
+// exit-code-gated CI must be able to see that degradation. 404s
+// (knowledge.ErrNotAuthored) never land here: CB having no authored
+// entry is the expected, fully-grounded state. Coexists with
+// LLM-CB-TRUNCATED — both append to the same slice off independent
+// conditions. No-op when the bundle is nil or complete.
+func (l *llmAnalyzer) appendKnowledgePartialFinding(findings []Finding, bundle *GroundingBundle) []Finding {
+	if bundle == nil || len(bundle.Misses) == 0 {
+		return findings
+	}
+	keys := make([]string, 0, len(bundle.Misses))
+	var details strings.Builder
+	for _, m := range bundle.Misses {
+		keys = append(keys, m.Kind+" "+m.Key)
+		fmt.Fprintf(&details, "\n  - %s %s: %s", m.Kind, m.Key, m.Err)
+	}
+	fmt.Fprintf(os.Stderr,
+		"WARN: CB knowledge unavailable for %d lookup(s): %s — findings for the affected resources are NOT grounded in CB's curated knowledge.\n",
+		len(bundle.Misses), strings.Join(keys, "; "),
+	)
+	return append(findings, Finding{
+		RuleID:      "LLM-CB-KNOWLEDGE-PARTIAL",
+		Title:       fmt.Sprintf("CB knowledge unavailable for %d lookup(s); audit ran with reduced grounding", len(bundle.Misses)),
+		Description: fmt.Sprintf("The following CB knowledge lookups failed transiently (after retry) and were skipped. The analysis proceeded with the knowledge that WAS fetched, but findings touching these primitives/workloads are not grounded in CloudBooster's curated knowledge:%s", details.String()),
+		Severity:    SeverityWarning,
+		Resource:    l.providerForRuleID,
+		Service:     "LLM",
+		Remediation: "Re-run the audit once the CloudBooster knowledge API is reachable to restore full grounding; until then treat findings on the listed resources like a non-grounded `--llm claude-code` run.",
 	})
 }
 

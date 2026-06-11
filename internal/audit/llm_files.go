@@ -1,6 +1,9 @@
 package audit
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -68,6 +71,9 @@ func collectSourceFiles(dir, iacType string, maxFiles, maxBytesPerFile int) ([]S
 
 	files := make([]SourceFile, 0, len(paths))
 	for _, p := range paths {
+		// Unreadable files (open or read failure) are skipped rather than
+		// failing the whole collection — one bad file shouldn't void the
+		// audit's LLM context.
 		f, err := readCapped(p, maxBytesPerFile)
 		if err != nil {
 			continue
@@ -110,7 +116,9 @@ func iacFileMatcher(iacType string) func(name string) bool {
 }
 
 // readCapped reads up to maxBytes from path, returning a SourceFile with
-// Truncated set when the on-disk size exceeded the cap.
+// Truncated set when the on-disk size exceeded the cap. A read that fails
+// mid-file returns the error rather than silently handing back a partial
+// buffer — the caller skips the file the same way it skips open failures.
 func readCapped(path string, maxBytes int) (SourceFile, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -126,7 +134,12 @@ func readCapped(path string, maxBytes int) (SourceFile, error) {
 
 	limit := int64(maxBytes)
 	buf := make([]byte, limit)
-	n, _ := f.Read(buf)
+	// io.ReadFull loops over short reads; EOF / ErrUnexpectedEOF just mean
+	// the file is smaller than the cap.
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return SourceFile{}, fmt.Errorf("reading %s: %w", path, err)
+	}
 	truncated := size > limit
 
 	return SourceFile{

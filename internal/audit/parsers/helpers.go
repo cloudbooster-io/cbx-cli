@@ -26,9 +26,26 @@ func stringMap(m map[string]interface{}, key string) map[string]string {
 	return out
 }
 
-// ThreeLineError returns an error formatted as exactly three lines.
-func ThreeLineError(line1, line2, line3 string) error {
-	return fmt.Errorf("error: %s\ncause: %s\nhint: %s", line1, line2, line3)
+// ParseError is the structured form of the three-line errors the state /
+// source parsers emit. It is re-exported through pkg/audit so library
+// consumers can errors.As a parse failure and read the fields instead of
+// string-matching the rendered message.
+type ParseError struct {
+	What  string // line 1: what failed
+	Cause string // line 2: why it failed
+	Hint  string // line 3: how to fix it
+}
+
+// Error renders the exact three-line format ThreeLineError has always
+// produced — CLI output and tests depend on the string staying
+// byte-identical.
+func (e *ParseError) Error() string {
+	return fmt.Sprintf("error: %s\ncause: %s\nhint: %s", e.What, e.Cause, e.Hint)
+}
+
+// ThreeLineError returns a *ParseError formatted as exactly three lines.
+func ThreeLineError(line1, line2, line3 string) *ParseError {
+	return &ParseError{What: line1, Cause: line2, Hint: line3}
 }
 
 func regionFromARN(arn string) string {
