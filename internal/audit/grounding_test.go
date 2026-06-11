@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // fakeKnowledgeHandler answers the three CB knowledge endpoints with
@@ -181,8 +182,8 @@ func TestBuildGroundedPrompt_StableAcrossResourceShuffle(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
 	rng.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
 
-	p1 := buildGroundedPrompt(IaCTypeTerraform, nil, resources, bundle, nil)
-	p2 := buildGroundedPrompt(IaCTypeTerraform, nil, shuffled, bundle, nil)
+	p1 := buildGroundedPrompt(IaCTypeTerraform, nil, resources, bundle, nil, rulesbundle.Embedded())
+	p2 := buildGroundedPrompt(IaCTypeTerraform, nil, shuffled, bundle, nil, rulesbundle.Embedded())
 	if p1 != p2 {
 		t.Errorf("prompt differs across shuffled resources:\n  a=%s\n  b=%s", p1, p2)
 	}
@@ -207,7 +208,7 @@ func TestBuildGroundedPrompt_RendersAccountPosture(t *testing.T) {
 		PasswordPolicyPresent: &hasPolicy,
 		Errors:                []string{"iam:ListVirtualMFADevices: AccessDenied"},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture, rulesbundle.Embedded())
 	for _, want := range []string{
 		"ACCOUNT POSTURE",
 		"eu-central-1: false",
@@ -230,7 +231,7 @@ func TestBuildGroundedPrompt_RendersAccountPosture(t *testing.T) {
 // gaps were MISSED on the 03-serverless-api fixture for exactly that
 // reason.
 func TestBuildGroundedPrompt_IncludesLambdaApigwHygieneRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"cb_describer_dlq_configured",
 		"cb_describer_reserved_concurrency_set",
@@ -250,7 +251,7 @@ func TestBuildGroundedPrompt_IncludesLambdaApigwHygieneRules(t *testing.T) {
 // prompt edit could silently revert the HIGH back to WARNING and every other
 // test would still pass.
 func TestBuildGroundedPrompt_SeverityCalibration(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// the 5-bucket rubric marker and its wire-value mapping
 		"SEVERITY SCALE",
@@ -283,7 +284,7 @@ func TestBuildGroundedPrompt_SeverityCalibration(t *testing.T) {
 // loosened it to fire on absent/unset would silently regress the "a bare
 // container with the field unset is NOT a finding" contract.
 func TestBuildGroundedPrompt_IncludesNextRoundRuleGaps(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// CloudTrail no CloudWatch Logs → WARNING (06)
 		"`AWS::CloudTrail::Trail` has no `CloudWatchLogsLogGroupArn`",
@@ -317,7 +318,7 @@ func TestBuildGroundedPrompt_IncludesNextRoundRuleGaps(t *testing.T) {
 //   - the ALB positive-field / explicit-false-only + skip-when-absent guard,
 //     so the bullet can never read a probe error as "logging disabled".
 func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// #3 RDS no deletion protection → WARNING, instance-scoped, prod-intent (07)
 		"`cb_describer_deletion_protection: false`",
@@ -370,7 +371,7 @@ func TestBuildGroundedPrompt_IncludesBulletBatch(t *testing.T) {
 //     variant 10). Bare "Emit a HIGH finding" is non-unique (IMDSv1,
 //     backup-retention, … all use it) and would not discriminate.
 func TestBuildGroundedPrompt_IncludesEKSNoIRSABullet(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// unique title + explicit HIGH severity (guards the per-rule override)
 		"EKS cluster with no pod-level IAM mechanism → HIGH",
@@ -397,7 +398,7 @@ func TestBuildGroundedPrompt_IncludesEKSNoIRSABullet(t *testing.T) {
 // "encrypted at rest, not unencrypted" framing is pinned so the AWS-managed-key
 // item is never mis-escalated into a storage-unencrypted HIGH.
 func TestBuildGroundedPrompt_IncludesBackupVaultBullets(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// #1 no Vault Lock → warning (field + severity)
 		"`cb_describer_vault_locked: false`) → `warning`",
@@ -429,7 +430,7 @@ func TestBuildGroundedPrompt_IncludesBackupVaultBullets(t *testing.T) {
 // true only for PowerUserAccess, so a full-admin group can't double-fire as
 // this MEDIUM) and the present-field skip-when-absent guard.
 func TestBuildGroundedPrompt_IncludesIAMPowerUserGroupBullet(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// field + severity identity
 		"`cb_describer_power_user_managed_policy_attached: true`",
@@ -472,7 +473,7 @@ func TestBuildGroundedPrompt_IncludesIAMPowerUserGroupBullet(t *testing.T) {
 // finding" recurs across other bullets and would not discriminate a dropped
 // override.
 func TestBuildGroundedPrompt_IncludesS3KMSExposureBullets(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// #1 S3 BPA disabled — unique title + explicit HIGH severity
 		"S3 Block Public Access disabled → HIGH",
@@ -667,7 +668,7 @@ func TestBuildGroundedPrompt_RendersObservabilityPosture(t *testing.T) {
 			"eu-central-1": {Present: false, RecordsGlobalTypes: false},
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture, rulesbundle.Embedded())
 	for _, want := range []string{
 		"GuardDuty detector",
 		"us-east-1: disabled",
@@ -711,7 +712,7 @@ func TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent(t *testing.T) {
 			"eu-central-1": "absent",
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, disabledOnly)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, disabledOnly, rulesbundle.Embedded())
 	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: true") {
 		t.Errorf("a disabled detector must keep present-anywhere=true (a detector exists; only the per-region HIGH should fire, not the account-wide absent warning)")
 	}
@@ -725,7 +726,7 @@ func TestBuildGroundedPrompt_GuardDutyDisabledIsNotAbsent(t *testing.T) {
 			"eu-central-1": "absent",
 		},
 	}
-	prompt = buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, absentEverywhere)
+	prompt = buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, absentEverywhere, rulesbundle.Embedded())
 	if !strings.Contains(prompt, "GuardDuty detector present in at least one audited region: false") {
 		t.Errorf("a genuinely no-detector-anywhere account must render present-anywhere=false so the absent-everywhere WARNING still fires")
 	}
@@ -750,7 +751,7 @@ func TestBuildGroundedPrompt_RendersVPCFlowLogsEnrichment(t *testing.T) {
 			Inputs: map[string]any{"cb_describer_flow_logs_enabled": false},
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, nil, nil, rulesbundle.Embedded())
 	table := prompt[strings.Index(prompt, "==== DISCOVERED RESOURCES ===="):]
 	if !strings.Contains(table, `"cb_describer_flow_logs_enabled": false`) {
 		t.Errorf("resource table missing rendered cb_describer_flow_logs_enabled=false")
@@ -773,9 +774,9 @@ func TestBuildGroundedPrompt_ObservabilityPostureDeterministic(t *testing.T) {
 			"ap-south-1":   {Present: false}, "us-west-2": {Present: true, RecordsGlobalTypes: true},
 		},
 	}
-	first := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture)
+	first := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture, rulesbundle.Embedded())
 	for i := 0; i < 20; i++ {
-		if got := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture); got != first {
+		if got := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, posture, rulesbundle.Embedded()); got != first {
 			t.Fatalf("observability posture render not deterministic across builds")
 		}
 	}
@@ -802,7 +803,7 @@ func TestBuildGroundedPrompt_ObservabilityPostureDeterministic(t *testing.T) {
 //     the brief mandated — a future edit that promotes it past `info` or drops
 //     the hedge reintroduces the FP risk the field was left unconsumed over.
 func TestBuildGroundedPrompt_IncludesECSLambdaSecretsBullets(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// ECS.4 privileged container → HIGH (unique title + explicit per-rule severity)
 		"Privileged container → HIGH",
@@ -853,7 +854,7 @@ func TestBuildGroundedPrompt_IncludesECSLambdaSecretsBullets(t *testing.T) {
 //     patching" phrase (bare "instance-scoped" recurs on the del-prot / single-AZ
 //     bullets and would not discriminate).
 func TestBuildGroundedPrompt_IncludesRound2BucketARules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		// #1 CloudTrail log-file-validation → WARNING (unique title + raw field)
 		"CloudTrail trail without log-file validation → WARNING (audit integrity)",

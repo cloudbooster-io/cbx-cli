@@ -3,6 +3,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestBuildGroundedPrompt_DynamoDBSSEAWSOwnedInput is the end-to-end wiring check
@@ -31,7 +33,7 @@ func TestBuildGroundedPrompt_DynamoDBSSEAWSOwnedInput(t *testing.T) {
 		},
 	}
 
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil, rulesbundle.Embedded())
 
 	if !strings.Contains(prompt, `"cb_describer_dynamodb_sse_aws_owned": true`) {
 		t.Errorf("grounded prompt dropped the DynamoDB AWS-owned-key signal — the intent-scoped non-CMK rule reads cb_describer_dynamodb_sse_aws_owned; a writeResourceTable/serialiseInputs regression would silently neuter it")

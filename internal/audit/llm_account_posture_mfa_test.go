@@ -3,6 +3,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestWriteAccountPosture_RendersConsoleUsersWithoutMFA asserts the
@@ -73,7 +75,7 @@ func TestWriteAccountPosture_OmitsConsoleMFAWhenProbeDidNotRun(t *testing.T) {
 // so a rebase against the other account-posture rule branches can't
 // silently drop the console-users-without-MFA guidance from rule #1.
 func TestBuildGroundedPrompt_HasConsoleMFARule(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"IAM console users without MFA",
 		"iam:GetCredentialReport",

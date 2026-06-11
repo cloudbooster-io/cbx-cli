@@ -1,0 +1,1055 @@
+{
+  "manifest": {
+    "schema_version": 1,
+    "pack": "cb-aws-audit",
+    "pack_version": 1,
+    "channel": "stable",
+    "created_at": "2026-06-11T00:00:00Z",
+    "content_sha256": "00218e44e3cd921582fc6c88912613a5bef4cbb76b5636483d3e3c94086fecf5",
+    "wire_contract": {
+      "severities": [
+        "critical",
+        "high",
+        "warning",
+        "info"
+      ],
+      "response_schema": 1
+    }
+  },
+  "rules": [
+    {
+      "id": "CB-AWS-SG-OPEN-ADMIN-PORTS",
+      "title": "Security group admin/database port open to the internet",
+      "group": "baseline-bullets",
+      "order": 10,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::SecurityGroup"
+        ]
+      },
+      "prompt_text": "       • Security groups with 0.0.0.0/0 ingress on admin/database ports (22, 3389, 3306, 5432, 6379, 1433, 27017, 9200).\n",
+      "tags": [
+        "ec2",
+        "network-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-EBS-SNAPSHOT-PUBLIC",
+      "title": "EBS snapshot publicly shared",
+      "group": "baseline-bullets",
+      "order": 20,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::Snapshot"
+        ]
+      },
+      "prompt_text": "       • EBS snapshots with `CreateVolumePermission` shared publicly (group=all) — anyone can copy the volume.\n",
+      "tags": [
+        "ebs",
+        "data-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-IAM-USER-ADMIN-KEYS-NO-MFA",
+      "title": "IAM user with active keys, no MFA, admin policy",
+      "group": "baseline-bullets",
+      "order": 30,
+      "selectors": {
+        "cfn_types": [
+          "AWS::IAM::User"
+        ]
+      },
+      "prompt_text": "       • IAM users with active access keys AND no MFA AND admin-equivalent policy attached.\n",
+      "tags": [
+        "iam",
+        "account-takeover"
+      ]
+    },
+    {
+      "id": "CB-AWS-IAM-ROLE-XACCT-NO-EXTERNALID",
+      "title": "IAM role cross-account trust without ExternalId",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 40,
+      "selectors": {
+        "cfn_types": [
+          "AWS::IAM::Role"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_assume_role_policy_raw"
+      ],
+      "prompt_text": "       • IAM roles with cross-account trust and no ExternalId → HIGH: when an `AWS::IAM::Role`'s decoded trust policy (`cb_describer_assume_role_policy_raw`) Allows an `sts:AssumeRole`-class action to a `Principal.AWS` in a DIFFERENT AWS account — an account id, an `:root` ARN, or a role/user ARN whose 12-digit account ≠ THIS audited account — or to `Principal.AWS: \"*\"`, with NO `sts:ExternalId` condition, the role is open to the confused-deputy attack (a third party who learns the role ARN can assume it without proving a shared secret). Emit a HIGH finding (recommend adding an `sts:ExternalId` condition, or scoping the trust to specific principals). NOT this finding, do NOT flag: same-account trust, AWS service principals (`Principal.Service`, e.g. `lambda.amazonaws.com`), and any statement that already carries an `sts:ExternalId` condition. Skip when `cb_describer_assume_role_policy_raw` is absent (the role wasn't enriched — never infer from a missing key).\n",
+      "tags": [
+        "iam",
+        "confused-deputy",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-IAM-GROUP-POWERUSER",
+      "title": "IAM group with blanket PowerUserAccess",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 50,
+      "selectors": {
+        "cfn_types": [
+          "AWS::IAM::Group"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_power_user_managed_policy_attached"
+      ],
+      "prompt_text": "       • IAM Group granting broad standing privilege via PowerUserAccess → MEDIUM: an `AWS::IAM::Group` with `cb_describer_power_user_managed_policy_attached: true` carries the AWS-managed `PowerUserAccess` policy, so EVERY member inherits persistent full access to nearly all AWS services (everything except IAM / Organizations / Account user-and-permission management) as a standing baseline — far broader than least-privilege, with a large blast radius if any member's credentials are compromised. Emit a MEDIUM finding (wire value `warning`; recommend replacing the blanket PowerUserAccess attachment with task-scoped policies granting only the services the group's members actually need). SCOPE — this is the broad-but-NOT-full-admin case: `cb_describer_power_user_managed_policy_attached` is a POSITIVE field set true ONLY for PowerUserAccess, never for AdministratorAccess, so a full-admin group does NOT trip this bullet (its account-takeover risk is the separate full-admin / wildcard-IAM CRITICAL case) — do NOT also emit this MEDIUM for an admin group, and do NOT inflate this PowerUserAccess finding above MEDIUM. Skip when `cb_describer_power_user_managed_policy_attached` is absent (the group's attached policies weren't enumerated — never infer the gap from a missing key).\n",
+      "tags": [
+        "iam",
+        "least-privilege",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-S3-PUBLIC-BUCKET-POLICY",
+      "title": "S3 bucket policy allows wildcard principal",
+      "group": "baseline-bullets",
+      "order": 60,
+      "selectors": {
+        "cfn_types": [
+          "AWS::S3::Bucket"
+        ]
+      },
+      "prompt_text": "       • S3 bucket policies allowing `Principal: \"*\"` without a strong condition (or any `aws:PrincipalAccount` restriction).\n",
+      "tags": [
+        "s3",
+        "data-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-S3-HYGIENE",
+      "title": "S3 bucket data-protection & hygiene posture",
+      "severity": "info",
+      "group": "baseline-bullets",
+      "order": 70,
+      "selectors": {
+        "cfn_types": [
+          "AWS::S3::Bucket"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_versioning_enabled",
+        "cb_describer_sse_is_kms",
+        "cb_describer_mfa_delete_enabled",
+        "cb_describer_lifecycle_present",
+        "cb_describer_access_logging_enabled",
+        "cb_describer_access_logging_target_bucket",
+        "cb_describer_object_lock_enabled",
+        "cb_describer_bucket_policy_present",
+        "cb_describer_bucket_policy_document"
+      ],
+      "prompt_text": "       • S3 bucket data-protection & hygiene posture — emit each item at `info` severity, INTENT-SCOPED. These are HARDENING recommendations, not \"the bucket is exposed/unencrypted\". CRITICAL FP GUARD: only flag a given item when the bucket's NAME or TAGS signal data, backup, archive, log, analytics/data-lake, or compliance/regulated intent — a generic or `*-private` bucket with no such intent signal and Public Access Block on must produce ZERO hygiene findings. Never flag an item the bucket already satisfies. These intent-scoped overrides apply EVEN WHEN the CB knowledge bundle frames a weaker setting as acceptable for general workloads. Specifically:\n",
+      "sub_items": [
+        "         – Versioning disabled (`cb_describer_versioning_enabled: false`): flag for data/stateful/backup buckets. Suppress for ephemeral, cache, build-artifact, or static-site CloudFront-origin buckets whose contents are re-publishable from source.\n",
+        "         – Default encryption is SSE-S3, not a KMS CMK (`cb_describer_sse_is_kms: false` AND encryption IS present): flag ONLY for sensitive/compliance/data-classification or analytics/data-lake buckets, as \"upgrade to SSE-KMS (CMK) for audit-logged, customer-managed key usage\". SSE-S3 (AES256) IS encryption-at-rest — never describe the bucket as unencrypted. The \"SSE-S3 is acceptable\" carve-out — CB knowledge endorses SSE-S3 for standard workloads — applies ONLY to OUT-of-scope generic / public / static-site-origin buckets with no data-intent signal; do NOT invoke it to suppress this item on an in-scope data/compliance bucket.\n",
+        "         – MFA-Delete absent (`cb_describer_mfa_delete_enabled: false`) AND versioning enabled (`cb_describer_versioning_enabled: true`): flag ONLY for versioned backup/compliance buckets. MFA-Delete is root-only to toggle and noisy on general buckets — never blanket.\n",
+        "         – No lifecycle policy (`cb_describer_lifecycle_present: false`): flag for buckets that accumulate data/ingest/log objects (cost + retention hygiene). Suppress short-lived or static-website-origin buckets.\n",
+        "         – No server-access logging (`cb_describer_access_logging_enabled: false`): flag for audit/data/compliance buckets. SUPPRESS when the bucket is itself an access-log destination (another bucket's `cb_describer_access_logging_target_bucket` points at it) — a log target logging to itself is recursion, not a gap.\n",
+        "         – Object Lock absent (`cb_describer_object_lock_enabled: false`): flag ONLY for backup, WORM, archive, or compliance/immutability-intent buckets — never blanket.\n",
+        "         – No SSL-only / TLS-enforcing bucket policy (`cb_describer_bucket_policy_present: false`, OR `cb_describer_bucket_policy_document` present but containing no `Deny` statement on `s3:*` with a `aws:SecureTransport: false` condition): the bucket accepts plaintext HTTP requests, so objects and pre-signed URLs can be read/written in cleartext over the network. Flag ONLY for data/sensitive/compliance/log/backup-intent buckets (NAME or TAGS signal). SUPPRESS generic / static-website-origin / already-public buckets (an intentionally public static site has no confidentiality to protect via transport). Recommend a bucket policy `Deny`-ing all S3 actions when `aws:SecureTransport` is `false`. SKIP when `cb_describer_bucket_policy_present` is absent (the policy was not read — never infer from a missing key).\n"
+      ],
+      "tags": [
+        "s3",
+        "hygiene",
+        "intent-scoped",
+        "fp-guard:intent"
+      ]
+    },
+    {
+      "id": "CB-AWS-BACKUP-VAULT-HYGIENE",
+      "title": "AWS Backup vault hygiene",
+      "group": "baseline-bullets",
+      "order": 80,
+      "selectors": {
+        "cfn_types": [
+          "AWS::Backup::BackupVault"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_vault_locked",
+        "cb_describer_vault_uses_aws_managed_key",
+        "cb_describer_vault_access_policy_present"
+      ],
+      "prompt_text": "       • AWS Backup vault hygiene — emit each item as an INTENT-SCOPED HARDENING recommendation on an `AWS::Backup::BackupVault`, never as \"the vault is broken/unencrypted\". A Backup vault is inherently backup/recovery-intent, so no name/tag gate is needed — but PRESENT-FIELD discipline is mandatory: fire ONLY on the explicit `cb_describer_*` field value below, and SKIP when the field is ABSENT (the probe was denied or not read — NEVER infer the gap from a missing key). Specifically:\n",
+      "sub_items": [
+        "         – No Vault Lock (`cb_describer_vault_locked: false`) → `warning`: the vault has no Vault Lock, so its recovery points are deletable by anyone holding vault-Delete permission — there is no immutability / ransomware floor protecting the backups. Recommend enabling Vault Lock so recovery points become immutable for their retention period. SKIP when `cb_describer_vault_locked` is absent.\n",
+        "         – AWS-managed key, not a customer CMK (`cb_describer_vault_uses_aws_managed_key: true`) → `info`: the vault encrypts recovery points with the default `aws/backup` AWS-managed key rather than a customer-managed KMS CMK, so key policy, rotation, and grants are NOT operator-controlled — recommend a customer CMK for audit-logged, customer-controlled key usage. This is the Backup analog of the S3 SSE-S3→SSE-KMS upgrade item: the vault IS encrypted at rest — NEVER describe it as unencrypted. SKIP when the field is absent.\n",
+        "         – No vault access policy (`cb_describer_vault_access_policy_present: false`) → `info`: the vault has no resource-based access policy denying manual recovery-point deletion, so protection against accidental or malicious deletion relies solely on IAM. Recommend a vault policy with an explicit `Deny` on `backup:DeleteRecoveryPoint`. SKIP when the field is absent.\n"
+      ],
+      "cross_refs": [
+        "CB-AWS-S3-HYGIENE"
+      ],
+      "tags": [
+        "backup",
+        "hygiene",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ELB-HTTP-ONLY-NO-WAF",
+      "title": "Load balancer HTTP-only listener / missing WAF",
+      "group": "baseline-bullets",
+      "order": 90,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        ]
+      },
+      "prompt_text": "       • Load balancers with HTTP-only listeners on port 80 and no HTTPS sibling; missing WAF association on internet-facing ALBs.\n",
+      "tags": [
+        "elb",
+        "transport"
+      ]
+    },
+    {
+      "id": "CB-AWS-CLOUDFRONT-POSTURE",
+      "title": "CloudFront distribution security posture",
+      "group": "baseline-bullets",
+      "order": 100,
+      "selectors": {
+        "cfn_types": [
+          "AWS::CloudFront::Distribution"
+        ]
+      },
+      "prompt_text": "       • CloudFront distributions (`AWS::CloudFront::Distribution`) — evaluate the raw `DistributionConfig`; emit ONE finding per distinct gap below, never merged into one remediation:\n",
+      "sub_items": [
+        "         – Default viewer certificate / weak minimum TLS → `warning`: when `ViewerCertificate.CloudFrontDefaultCertificate` is `true` (the distribution serves only the default `*.cloudfront.net` certificate, which pins `MinimumProtocolVersion` to `TLSv1`), OR `ViewerCertificate.MinimumProtocolVersion` is any pre-2021 tier (`SSLv3`, `TLSv1`, `TLSv1_2016`, `TLSv1.1_2016`, `TLSv1.2_2018`, `TLSv1.2_2019`) rather than `TLSv1.2_2021`+, viewers can still negotiate a deprecated TLS version — emit a `warning` recommending a custom ACM certificate with `MinimumProtocolVersion=TLSv1.2_2021`. Suppress when `CloudFrontDefaultCertificate` is false/absent AND `MinimumProtocolVersion` is `TLSv1.2_2021` or a `TLSv1.3` tier.\n",
+        "         – No WAF web ACL → `info`: when `WebACLId` is empty or absent, no AWS WAF Web ACL is associated with the internet-facing distribution — emit an `info` hardening finding (a WAF on a static-content CDN is defense-in-depth, not an active exposure, so do NOT rate it higher than `info`).\n",
+        "         – Access logging disabled → `warning`: when `DistributionConfig.Logging` is absent, or `Logging.Bucket` is empty/absent, or `Logging.Enabled` is `false`, standard access logging is off and there is no request-level audit trail for the CDN — emit a `warning`. This reads the raw CFN property (not a `cb_describer_*` probe), so an absent `Logging`/`Bucket` genuinely means unconfigured — DO flag it.\n",
+        "         – Origin uses the S3 GLOBAL endpoint → `warning`: when any `Origins[*].DomainName` is the S3 global-endpoint form `<bucket>.s3.amazonaws.com` (NO region segment) rather than the regional form `<bucket>.s3.<region>.amazonaws.com`, requests to a bucket outside us-east-1 incur 307 redirects that add latency and can leak request data — emit a `warning` recommending the regional S3 origin endpoint (OAC-fronted). Treat the regional `<bucket>.s3.<region>.amazonaws.com` form and non-S3 custom origins (`Origins[*].CustomOriginConfig`) as compliant.\n"
+      ],
+      "tags": [
+        "cloudfront",
+        "transport",
+        "logging"
+      ]
+    },
+    {
+      "id": "CB-AWS-DB-PUBLICLY-ACCESSIBLE",
+      "title": "Database/cache cluster publicly accessible",
+      "group": "baseline-bullets",
+      "order": 110,
+      "selectors": {},
+      "prompt_text": "       • Databases / cache clusters with `PubliclyAccessible: true`.\n",
+      "tags": [
+        "rds",
+        "network-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-RDS-LOW-BACKUP-RETENTION",
+      "title": "RDS insufficient automated-backup retention",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 120,
+      "selectors": {
+        "cfn_types": [
+          "AWS::RDS::DBInstance"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_backup_retention_days",
+        "cb_describer_is_read_replica",
+        "cb_describer_is_cluster_member"
+      ],
+      "prompt_text": "       • RDS DB instances with insufficient automated-backup retention: when an `AWS::RDS::DBInstance` has `cb_describer_backup_retention_days <= 1` (0 = automated backups disabled — no point-in-time recovery at all; 1 = a single day, below any realistic recovery objective), emit a HIGH finding (data-durability / disaster-recovery gap; recommend a retention window that meets the workload's RPO, typically ≥7 days). CARVE-OUTS — flag ONLY a standalone primary: SUPPRESS when `cb_describer_is_read_replica` is `true` (read replicas legitimately run retention 0 — backups are taken on the source instance) and SUPPRESS when `cb_describer_is_cluster_member` is `true` (Aurora and non-Aurora Multi-AZ DB cluster members inherit cluster-level retention governed on the cluster, so the instance-level value is not authoritative). Treat an ABSENT `cb_describer_is_read_replica`, `cb_describer_is_cluster_member`, OR `cb_describer_backup_retention_days` as UNKNOWN and do NOT flag (the role probe failed or the field wasn't read — never infer the gap from a missing key).\n",
+      "tags": [
+        "rds",
+        "durability",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-STORAGE-UNENCRYPTED-AT-REST",
+      "title": "Storage unencrypted at rest (RDS/EBS)",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 130,
+      "selectors": {
+        "cfn_types": [
+          "AWS::RDS::DBInstance",
+          "AWS::RDS::DBCluster",
+          "AWS::EC2::Volume"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_storage_encrypted",
+        "cb_describer_is_attached"
+      ],
+      "prompt_text": "       • Storage unencrypted at rest → HIGH: an `AWS::RDS::DBInstance` / `AWS::RDS::DBCluster` with `cb_describer_storage_encrypted: false`, or an `AWS::EC2::Volume` with `Encrypted: false` AND `cb_describer_is_attached: true` (a volume actively backing a running instance), keeps its data unencrypted on disk — emit a HIGH finding (RDS: enable KMS storage encryption at create / restore from an encrypted snapshot; EBS: re-create the volume from an encrypted snapshot). This means the storage is UNENCRYPTED — it is DISTINCT from, and must NEVER be conflated with, the S3 SSE-S3-vs-CMK upgrade rec above (an SSE-S3 bucket IS encrypted at rest). Skip when the encryption field is absent (not read — never infer the gap from a missing key) or `true`; an UNATTACHED unencrypted volume is the cost/hygiene orphan item above, NOT this HIGH finding.\n",
+      "cross_refs": [
+        "CB-AWS-S3-HYGIENE",
+        "CB-AWS-ORPHANED-COST-RESOURCES"
+      ],
+      "tags": [
+        "rds",
+        "ebs",
+        "encryption",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-SECRETS-NO-ROTATION",
+      "title": "Secret without rotation",
+      "group": "baseline-bullets",
+      "order": 140,
+      "selectors": {
+        "cfn_types": [
+          "AWS::SecretsManager::Secret"
+        ]
+      },
+      "prompt_text": "       • Secrets without rotation (`RotationEnabled: false` or unset).\n",
+      "tags": [
+        "secretsmanager",
+        "hygiene"
+      ]
+    },
+    {
+      "id": "CB-AWS-DDB-NO-PITR",
+      "title": "DynamoDB table without PITR",
+      "group": "baseline-bullets",
+      "order": 150,
+      "selectors": {
+        "cfn_types": [
+          "AWS::DynamoDB::Table"
+        ]
+      },
+      "prompt_text": "       • DynamoDB tables without point-in-time recovery (no continuous backups / PITR disabled).\n",
+      "tags": [
+        "dynamodb",
+        "durability"
+      ]
+    },
+    {
+      "id": "CB-AWS-DDB-AWS-OWNED-KEY",
+      "title": "DynamoDB AWS-owned-key (non-CMK) encryption",
+      "group": "baseline-bullets",
+      "order": 160,
+      "selectors": {
+        "cfn_types": [
+          "AWS::DynamoDB::Table"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_dynamodb_sse_aws_owned"
+      ],
+      "prompt_text": "       • DynamoDB AWS-owned-key (non-CMK) encryption — INTENT-SCOPED hardening rec, NOT an \"unencrypted\" finding: when an `AWS::DynamoDB::Table` has `cb_describer_dynamodb_sse_aws_owned: true` (the table uses the default AWS-owned key rather than a customer-managed KMS CMK, so key usage is NOT logged in CloudTrail), recommend upgrading to a customer-managed CMK for audit-logged, customer-controlled key usage — but ONLY when the table's NAME or TAGS signal sensitive / PII / regulated / compliance / financial data intent. DynamoDB is ALWAYS encrypted at rest — never describe an AWS-owned-key table as unencrypted; this mirrors the S3 SSE-S3→CMK upgrade item and must NEVER be conflated with the RDS/EBS \"unencrypted at rest\" HIGH. A generic application table with no data-intent signal must produce ZERO finding here. Skip when the field is absent or false (the table already uses a KMS CMK — never infer the gap from a missing key).\n",
+      "cross_refs": [
+        "CB-AWS-S3-HYGIENE",
+        "CB-AWS-STORAGE-UNENCRYPTED-AT-REST"
+      ],
+      "tags": [
+        "dynamodb",
+        "encryption",
+        "intent-scoped",
+        "fp-guard:intent"
+      ]
+    },
+    {
+      "id": "CB-AWS-ATHENA-WORKGROUP-POSTURE",
+      "title": "Athena workgroup enforcement/encryption posture",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 170,
+      "selectors": {
+        "cfn_types": [
+          "AWS::Athena::WorkGroup"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_is_default_workgroup"
+      ],
+      "prompt_text": "       • Athena workgroups (`AWS::Athena::WorkGroup`): emit a WARNING hardening finding when `WorkGroupConfiguration.EnforceWorkGroupConfiguration` is false or absent (client-side query settings can override the workgroup's result location and encryption), and a SEPARATE WARNING when `WorkGroupConfiguration.ResultConfiguration.EncryptionConfiguration` is absent (query results are written to S3 unencrypted). These are orthogonal — never merge them into one finding. EXCLUDE the AWS-managed default workgroup (`cb_describer_is_default_workgroup == true`) from BOTH findings: it ships unenforced and unencrypted by default in every account, so that state is AWS's baseline, not a user misconfiguration — flag ONLY user-created workgroups.\n",
+      "tags": [
+        "athena",
+        "encryption"
+      ]
+    },
+    {
+      "id": "CB-AWS-ORPHANED-COST-RESOURCES",
+      "title": "Unattached / orphaned cost resources",
+      "group": "baseline-bullets",
+      "order": 180,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::Volume",
+          "AWS::EC2::EIP",
+          "AWS::KMS::Key"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_is_attached",
+        "cb_describer_is_unused",
+        "cb_describer_key_manager"
+      ],
+      "prompt_text": "       • Unattached / orphaned resources accruing cost: EBS volumes (`State: available`), EIPs (`cb_describer_is_attached: false`), KMS keys with `cb_describer_is_unused: true` (no other resource references the key — pure cost waste). Exclude AWS-managed keys (`cb_describer_key_manager == \"AWS\"`) from unused-key findings.\n",
+      "tags": [
+        "cost",
+        "hygiene"
+      ]
+    },
+    {
+      "id": "CB-AWS-S3-BPA-DISABLED",
+      "title": "S3 Block Public Access disabled",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 190,
+      "selectors": {
+        "cfn_types": [
+          "AWS::S3::Bucket"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_public_access_block"
+      ],
+      "refs": [
+        {
+          "framework": "CIS",
+          "id": "2.1.4"
+        },
+        {
+          "framework": "FSBP",
+          "id": "S3.1"
+        },
+        {
+          "framework": "FSBP",
+          "id": "S3.8"
+        }
+      ],
+      "prompt_text": "       • S3 Block Public Access disabled → HIGH (data exposure): when an `AWS::S3::Bucket` has `cb_describer_public_access_block` present as an object in which ANY of the four flags `block_public_acls`, `block_public_policy`, `ignore_public_acls`, `restrict_public_buckets` is `false`, the bucket's guardrail against public ACLs and public bucket policies is weakened — a single public ACL or `Principal: \"*\"` policy can then expose its objects to the internet (CIS 2.1.4 / FSBP S3.1, S3.8). Emit a HIGH finding (recommend enabling all four Block Public Access settings on the bucket). This is a real data-exposure control — it is NOT one of the `info` SSE / versioning / lifecycle hygiene items above, so do NOT fold it into their positive-data-intent gate and do NOT downgrade it to `info`. INTENT-SCOPE — the ONE legitimate reason to disable BPA is a deliberately public bucket: SUPPRESS when the bucket is a public static-site / CloudFront-origin / public-website bucket (its NAME or TAGS, an attached public-read `s3:GetObject` policy, or a website-hosting configuration signal that public serving is intended) — disabling BPA is correct there; otherwise FIRE for data / private / internal / backup / log buckets and any bucket with no public-serving intent. CRITICAL FP GUARD — present-field discipline: fire ONLY when `cb_describer_public_access_block` is present as an object carrying an explicit `false` flag; SKIP when it is `null` or ABSENT — a `null`/absent value means the bucket has no bucket-level Block-Public-Access config of its own, so it may be covered by account-level Block Public Access (or the probe was denied), which is UNKNOWN, never the gap — never infer a finding from `null`/absent.\n",
+      "cross_refs": [
+        "CB-AWS-S3-HYGIENE"
+      ],
+      "tags": [
+        "s3",
+        "data-exposure",
+        "intent-scoped",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-KMS-PUBLIC-KEY-POLICY",
+      "title": "Public KMS key policy",
+      "severity": "critical",
+      "group": "baseline-bullets",
+      "order": 200,
+      "selectors": {
+        "cfn_types": [
+          "AWS::KMS::Key"
+        ]
+      },
+      "refs": [
+        {
+          "framework": "FSBP",
+          "id": "KMS.5"
+        },
+        {
+          "framework": "CIS",
+          "id": "2.21"
+        }
+      ],
+      "prompt_text": "       • Public KMS key policy → CRITICAL (key compromise / cross-account decrypt): when an `AWS::KMS::Key`'s raw `KeyPolicy` (the key's resource policy, returned inline in the resource state) has a statement with `Effect: Allow` and a wildcard principal — `Principal: \"*\"`, `{\"AWS\": \"*\"}`, or `{\"AWS\": [\"*\"]}` — WITHOUT a condition that scopes that wildcard back to your account or organization (`aws:PrincipalAccount`, `aws:PrincipalOrgID`, `aws:PrincipalOrgPaths`, `aws:PrincipalArn`, or `kms:CallerAccount`), the key is usable by any principal in any AWS account (e.g. `kms:Decrypt`, `kms:Encrypt`), so every ciphertext and every resource the key protects is exposed cross-account / publicly (FSBP KMS.5 / CIS 2.21). Emit a CRITICAL finding (recommend scoping the key policy `Principal` to specific accounts / roles, or adding an `aws:PrincipalOrgID` condition). This mirrors the S3 public-bucket-policy rule and the Glue Data Catalog wildcard-principal rule above. COMPLIANT / DO-NOT-FLAG: the ubiquitous DEFAULT key policy grants `Principal: {\"AWS\": \"arn:aws:iam::<thisAccount>:root\"}`, which is an account-root ARN, NOT a wildcard — do NOT flag it; likewise a wildcard statement that DOES carry one of the scoping conditions above, and a `KeyPolicy` that is absent or unreadable in the resource state (UNKNOWN — never infer the gap from a missing key), are all compliant.\n",
+      "cross_refs": [
+        "CB-AWS-S3-PUBLIC-BUCKET-POLICY",
+        "CB-AWS-GLUE-CATALOG-WILDCARD"
+      ],
+      "tags": [
+        "kms",
+        "data-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-KMS-CMK-ROTATION-DISABLED",
+      "title": "KMS customer CMK rotation disabled",
+      "severity": "info",
+      "group": "baseline-bullets",
+      "order": 210,
+      "selectors": {
+        "cfn_types": [
+          "AWS::KMS::Key"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_key_rotation_enabled",
+        "cb_describer_key_manager",
+        "cb_describer_key_spec",
+        "cb_describer_key_usage"
+      ],
+      "refs": [
+        {
+          "framework": "CIS",
+          "id": "3.6"
+        },
+        {
+          "framework": "FSBP",
+          "id": "KMS.4"
+        }
+      ],
+      "prompt_text": "       • KMS customer-managed CMK with rotation disabled → `info` (key hygiene): when an `AWS::KMS::Key` has `cb_describer_key_rotation_enabled: false` AND `cb_describer_key_manager: \"CUSTOMER\"`, the customer-managed CMK is not on automatic annual key rotation, so the same key material protects data indefinitely (CIS 3.6 / FSBP KMS.4-class). Emit an `info` hardening finding (recommend enabling automatic key rotation). SUPPRESS AWS-managed / AWS-owned keys (`cb_describer_key_manager: \"AWS\"`): AWS rotates those on its own schedule, outside operator control, so their rotation state is never a finding (the same AWS-managed exclusion the unused-key item above applies). Automatic rotation applies only to symmetric encryption CMKs, so confine this to `cb_describer_key_spec: SYMMETRIC_DEFAULT` / `cb_describer_key_usage: ENCRYPT_DECRYPT` keys. PRESENT-FIELD discipline: fire ONLY on an explicit `cb_describer_key_rotation_enabled: false`; SKIP when the field is ABSENT (`kms:GetKeyRotationStatus` was denied or not applicable to the key type — never infer the gap from a missing key).\n",
+      "cross_refs": [
+        "CB-AWS-ORPHANED-COST-RESOURCES"
+      ],
+      "tags": [
+        "kms",
+        "hygiene",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-LAMBDA-NO-DLQ-NO-RESERVED-CONCURRENCY",
+      "title": "Lambda missing DLQ / reserved concurrency",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 220,
+      "selectors": {
+        "cfn_types": [
+          "AWS::Lambda::Function"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_dlq_configured",
+        "cb_describer_reserved_concurrency_set"
+      ],
+      "prompt_text": "       • Lambda functions missing operational-resilience config: `cb_describer_dlq_configured: false` means no dead-letter target — failed async invocations are silently dropped (emit WARNING, no DLQ configured). `cb_describer_reserved_concurrency_set: false` means no reserved concurrency — a runaway or abusive caller can consume the account-wide concurrency budget and starve every other function (emit WARNING, framed as availability / DoS-amplifier hygiene, NOT critical).\n",
+      "tags": [
+        "lambda",
+        "resilience"
+      ]
+    },
+    {
+      "id": "CB-AWS-LAMBDA-ENV-SECRET-SHAPED",
+      "title": "Lambda secret-shaped plaintext env vars",
+      "severity": "info",
+      "group": "baseline-bullets",
+      "order": 230,
+      "selectors": {
+        "cfn_types": [
+          "AWS::Lambda::Function"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_env_has_plaintext_secrets"
+      ],
+      "prompt_text": "       • Lambda functions with secret-shaped plaintext env vars → `info`, FP-AWARE HEURISTIC: `cb_describer_env_has_plaintext_secrets: true` means at least one `Environment.Variables` KEY matches a secret-NAME pattern (`*SECRET*`, `*PASSWORD*`, `*TOKEN*`, `API_KEY`, `*CREDENTIAL*`, `PRIVATE_KEY`) while NOT looking like a reference (the describer already excludes `_arn` / `_id` / `_uri` / `_url`-suffixed keys). This is a key-SHAPE heuristic over variable NAMES, not an inspection of their values, so emit only an `info` finding framed as REVIEW: review whether these env vars hold plaintext secrets rather than Secrets-Manager / SSM references — if so, switch to a runtime lookup or an encrypted reference. NEVER assert a variable IS a leaked secret, and keep the severity `info` (the heuristic's false-positive rate is exactly why it is not rated higher). SKIP when `cb_describer_env_has_plaintext_secrets` is absent or `false` (no secret-shaped key, or the function wasn't enriched — never infer the gap from a missing key).\n",
+      "tags": [
+        "lambda",
+        "secrets",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-APIGW-NO-ACCESS-LOGS",
+      "title": "API Gateway access logging disabled",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 240,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ApiGatewayV2::Api",
+          "AWS::ApiGateway::RestApi"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_access_logging_enabled",
+        "cb_describer_stages_without_access_log"
+      ],
+      "prompt_text": "       • API Gateway with access logging disabled: `cb_describer_access_logging_enabled: false` on an `AWS::ApiGatewayV2::Api` (or `AWS::ApiGateway::RestApi`) means one or more stages have no access-log destination, so there is no request-level audit trail (emit WARNING). `cb_describer_stages_without_access_log` names the affected stages when present. Skip this when the field is absent (stages weren't enumerated — do NOT infer disabled from a missing key).\n",
+      "tags": [
+        "apigateway",
+        "logging",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ECS-NO-CONTAINER-INSIGHTS",
+      "title": "ECS cluster Container Insights disabled",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 250,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ECS::Cluster"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_container_insights_enabled"
+      ],
+      "prompt_text": "       • ECS clusters with CloudWatch Container Insights disabled: when an `AWS::ECS::Cluster` has `cb_describer_container_insights_enabled: false` (the cluster's `ClusterSettings` explicitly sets `containerInsights` to `disabled`), emit a WARNING — the cluster has no aggregated CPU / memory / task-level metrics, slowing incident triage and capacity planning (recommend enabling Container Insights). Skip when the field is absent (no explicit cluster-level setting — an account-level default may still enable it; do NOT infer disabled from a missing key).\n",
+      "tags": [
+        "ecs",
+        "observability",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ECR-MUTABLE-TAGS",
+      "title": "ECR repository with MUTABLE image tags",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 260,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ECR::Repository"
+        ]
+      },
+      "prompt_text": "       • ECR repositories with MUTABLE image tags: when an `AWS::ECR::Repository` has `ImageTagMutability` == `MUTABLE`, emit a HIGH finding — a published tag (e.g. a release / deployed version) can be overwritten with different image content, undermining supply-chain integrity, image provenance, and reproducible deploys (recommend `ImageTagMutability=IMMUTABLE`). This is a distinct finding from scan-on-push and lifecycle-policy gaps on the same repository — keep them separate. Skip when `IMMUTABLE` or when the field is absent (the repo wasn't enriched — do NOT infer the gap from a missing key).\n",
+      "tags": [
+        "ecr",
+        "supply-chain"
+      ]
+    },
+    {
+      "id": "CB-AWS-CLOUDTRAIL-NO-CWL",
+      "title": "CloudTrail trail not streaming to CloudWatch Logs",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 270,
+      "selectors": {
+        "cfn_types": [
+          "AWS::CloudTrail::Trail"
+        ]
+      },
+      "prompt_text": "       • CloudTrail trails not streaming to CloudWatch Logs → WARNING: when an `AWS::CloudTrail::Trail` has no `CloudWatchLogsLogGroupArn` (the property is empty or absent), the trail delivers events to S3 only — there is no near-real-time CloudWatch Logs stream, so metric-filter alarms and SIEM hand-off cannot alert on activity as it happens (the S3 trail still supports after-the-fact forensics, which is why this is WARNING, not a blind-audit HIGH). Emit a WARNING scoped to the trail's URN, recommending the trail be wired to a CloudWatch Logs log group. This reads the raw CFN property — CloudControl returns `CloudWatchLogsLogGroupArn` only when the integration is configured (mirroring the CloudFront `Logging` case above), so an absent value genuinely means unconfigured: DO flag it. DISTINCT from the account-level CloudTrail region-coverage finding below — a covered region can still lack CW-Logs alerting.\n",
+      "cross_refs": [
+        "CB-AWS-CLOUDFRONT-POSTURE",
+        "CB-AWS-ACCOUNT-POSTURE-GAPS"
+      ],
+      "tags": [
+        "cloudtrail",
+        "logging"
+      ]
+    },
+    {
+      "id": "CB-AWS-CLOUDTRAIL-NO-LOG-VALIDATION",
+      "title": "CloudTrail trail without log-file validation",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 280,
+      "selectors": {
+        "cfn_types": [
+          "AWS::CloudTrail::Trail"
+        ]
+      },
+      "prompt_text": "       • CloudTrail trail without log-file validation → WARNING (audit integrity): an `AWS::CloudTrail::Trail` whose raw CFN property `EnableLogFileValidation` is explicitly `false` produces no signed SHA-256 digest files, so after-the-fact tampering with (or deletion of) delivered log files cannot be cryptographically detected — the audit trail is no longer tamper-evident. Emit a WARNING (recommend `EnableLogFileValidation: true` and periodic `aws cloudtrail validate-logs`). `EnableLogFileValidation` arrives as a raw CloudControl CFN property (there is no `cb_describer_*` probe for trails); fire ONLY on an explicit `false`, and SKIP when the property is absent (CloudControl did not return it — never infer the gap from a missing key).\n",
+      "tags": [
+        "cloudtrail",
+        "audit-integrity",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ECS-WRITABLE-ROOT-FS",
+      "title": "ECS container with writable root filesystem",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 290,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ECS::TaskDefinition"
+        ]
+      },
+      "prompt_text": "       • ECS task definitions with a writable container root filesystem → WARNING, INTENT-SCOPED: when an `AWS::ECS::TaskDefinition` has a container in `ContainerDefinitions[*]` whose `ReadonlyRootFilesystem` is explicitly `false`, that container's root volume is writable at runtime — an attacker who achieves code execution inside it can drop a webshell, persist, or modify binaries in place. Emit a WARNING recommending `readonlyRootFilesystem: true` with explicit writable mounts only for the paths that need them. CRITICAL FP GUARD — a writable root is default-common and legitimate for many workloads, so: (a) fire ONLY on an EXPLICIT `false` — when `ReadonlyRootFilesystem` is ABSENT/unset, treat it as UNKNOWN and do NOT flag (a bare container with the field unset is NOT a finding; never infer the gap from a missing key); and (b) flag ONLY the primary application / long-running workload container(s) — those marked `Essential: true` or clearly the main service image — and SKIP sidecar, init, and build/CI containers (logging or telemetry agents, envoy/otel/xray sidecars, one-shot init/migration jobs) where a writable root is routine. Scope the finding to the task definition's URN.\n",
+      "tags": [
+        "ecs",
+        "container",
+        "intent-scoped",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ECS-CONTAINER-POSTURE",
+      "title": "ECS task-definition container posture",
+      "group": "baseline-bullets",
+      "order": 300,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ECS::TaskDefinition"
+        ]
+      },
+      "prompt_text": "       • ECS task-definition container posture (`AWS::ECS::TaskDefinition`) — read the synthesised `ContainerDefinitions[*]` array (the native ECS task-definition lister surfaces these raw CFN container fields directly; there is no `cb_describer_*` probe for them). PRESENT-FIELD discipline is mandatory: evaluate ONLY containers actually present in `ContainerDefinitions[*]`, and when `ContainerDefinitions` is absent entirely (the task definition wasn't read) emit NOTHING for these items — never infer a gap from a missing key. Specifically:\n",
+      "sub_items": [
+        "         – Privileged container → HIGH: a container in `ContainerDefinitions[*]` whose `Privileged` is explicitly `true` runs with host-root Linux capabilities — code execution inside it can escape the container and compromise the underlying host / EC2 node and every other task scheduled on it. Emit a HIGH finding (recommend `privileged: false`, granting only the specific Linux capabilities the workload actually needs). Fire on ANY such container INCLUDING sidecars (a privileged sidecar is just as host-dangerous as a privileged application container). The lister emits `Privileged` only when the SDK returned a non-nil value, so SKIP when `Privileged` is ABSENT/unset (the AWS default is non-privileged — never infer it from a missing key) and SKIP when it is explicitly `false`.\n",
+        "         – Secret-shaped plaintext `Environment` vars → `warning`, FP-AWARE HEURISTIC: when a container carries an entry in its plaintext `Environment[*]` list (each entry is `{Name, Value}`) whose `Name` looks like a secret — contains or ends with `SECRET`, `PASSWORD`, `PASSWD`, `TOKEN`, `API_KEY`, `CREDENTIAL`, or `PRIVATE_KEY` — with an inline literal `Value`, that secret is baked into the task definition in cleartext (readable by anyone holding `ecs:DescribeTaskDefinition`) instead of being injected through the container's `Secrets[*]` block (which references SSM Parameter Store / Secrets Manager via `ValueFrom`). Emit a `warning` framed as REVIEW — these env keys look like secrets stored in plaintext; prefer the `Secrets` / SSM injection path — and NEVER assert the value IS a leaked secret: this is a key-NAME heuristic, not a value inspection. SUPPRESS when the `Value` is clearly a reference rather than a literal secret (an `arn:`-prefixed value, or a key suffixed `_ARN` / `_URL` / `_URI` / `_ID`, the canonical indirection shape) and when the same logical secret is already supplied via the container's `Secrets[*]` block.\n",
+        "         – No container log driver → `warning`, REVIEW nudge: when a container present in `ContainerDefinitions[*]` has no `LogConfiguration.LogDriver`, that container's stdout/stderr may be shipped to no centralized log sink (CloudWatch Logs, `awslogs`, `awsfirelens`, …) — leaving no runtime audit trail for it. The native ECS task-definition lister emits `LogConfiguration` only when a log driver is set, so on natively-listed task definitions an absent value means none is configured; frame this as a `warning` REVIEW nudge to CONFIRM the log driver — not a hard assertion — because a discovery path that simply does not return the nested `LogConfiguration` on read would look identical. Recommend an `awslogs` (or `awsfirelens`) log driver, focused on the primary / long-running application container(s); a one-shot init / build container that legitimately omits logging is low value and may be skipped.\n"
+      ],
+      "tags": [
+        "ecs",
+        "container",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-DDB-NO-DELETION-PROTECTION",
+      "title": "DynamoDB table without deletion protection",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 310,
+      "selectors": {
+        "cfn_types": [
+          "AWS::DynamoDB::Table"
+        ]
+      },
+      "prompt_text": "       • DynamoDB tables without deletion protection → WARNING, scoped to durable/stateful tables: when an `AWS::DynamoDB::Table` has `DeletionProtectionEnabled: false`, a single `DeleteTable` call — a mis-clicked console action, a Terraform/CloudFormation destroy, or a compromised credential — irreversibly drops the table and every item in it. Emit a WARNING recommending `DeletionProtectionEnabled: true` for tables holding durable application state. `DescribeTable` always returns this field, so an explicit `false` is a reliable signal; do NOT flag when the field is absent (not read — never infer the gap from a missing key). FP-scope: this is a production-data-durability control — a table whose NAME or TAGS signal scratch, cache, ephemeral, or temp intent need not carry it, so prefer to flag tables that look like durable application data. ORTHOGONAL to the PITR and AWS-owned-key (CMK) items above — emit it as its own finding, never merged.\n",
+      "cross_refs": [
+        "CB-AWS-DDB-NO-PITR",
+        "CB-AWS-DDB-AWS-OWNED-KEY"
+      ],
+      "tags": [
+        "dynamodb",
+        "durability",
+        "intent-scoped",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-ACCOUNT-POSTURE-GAPS",
+      "title": "Account-level posture gaps (CloudTrail coverage, EBS default encryption, password policy)",
+      "group": "baseline-bullets",
+      "order": 320,
+      "selectors": {},
+      "prompt_text": "       • Account-level gaps from the ACCOUNT POSTURE block: any region in `CloudTrail coverage` reporting `false` (no trail covers it — emit an account-level finding `account:<accountId>` for each), default EBS encryption disabled for a region, no IAM password policy.\n",
+      "tags": [
+        "account-posture"
+      ]
+    },
+    {
+      "id": "CB-AWS-GUARDDUTY-POSTURE",
+      "title": "GuardDuty detector posture",
+      "group": "baseline-bullets",
+      "order": 330,
+      "selectors": {},
+      "prompt_text": "       • GuardDuty (ACCOUNT POSTURE `GuardDuty detector` block): for EACH region whose line reads `disabled`, emit a HIGH account-level finding `account:<accountId>` titled `GuardDuty disabled in <region>` — a detector exists but is suspended, so threat detection is off (a real regression). Separately, when the derived `GuardDuty detector present in at least one audited region` line is `false` (NO detector exists in ANY audited region — every region reads `absent`), emit ONE WARNING `account:<accountId>` finding that the account has no GuardDuty threat detection. A `disabled` detector means a detector IS present, so it does NOT trip this account-wide warning — the per-region HIGH above already covers it. Do NOT flag a single region reading `absent` when another region reads `enabled` or `disabled`.\n",
+      "tags": [
+        "account-posture",
+        "guardduty",
+        "threat-detection"
+      ]
+    },
+    {
+      "id": "CB-AWS-CONFIG-GLOBAL-COVERAGE",
+      "title": "AWS Config global resource coverage",
+      "group": "baseline-bullets",
+      "order": 340,
+      "selectors": {},
+      "prompt_text": "       • AWS Config global coverage (ACCOUNT POSTURE `AWS Config recorder` block): when `AWS Config recorder present in at least one audited region` is `true` but `global resource types recorded in at least one audited region` is `false`, emit ONE HIGH account-level finding `account:<accountId>` titled `AWS Config not recording global (IAM) resource types` — a recorder IS configured but blind to IAM/global changes, so those changes go unmonitored (a real coverage regression on a service the account already runs, mirroring the GuardDuty `disabled`-detector HIGH above). Separately, when `present in at least one audited region` is `false` (no recorder exists in ANY audited region), emit ONE WARNING `account:<accountId>` finding that AWS Config is not enabled. Do NOT flag a per-region `records_global_types=false` when another region records them — global types only need recording once.\n",
+      "cross_refs": [
+        "CB-AWS-GUARDDUTY-POSTURE"
+      ],
+      "tags": [
+        "account-posture",
+        "config"
+      ]
+    },
+    {
+      "id": "CB-AWS-GLUE-CATALOG-WILDCARD",
+      "title": "Glue Data Catalog wildcard-principal policy",
+      "severity": "critical",
+      "group": "baseline-bullets",
+      "order": 350,
+      "selectors": {},
+      "prompt_text": "       • Glue Data Catalog exposure from the ACCOUNT POSTURE block: any region whose `Glue Data Catalog resource policy` reports `grants_wildcard_principal=true` grants `Principal: \"*\"` (or `{\"AWS\":\"*\"}`) over the entire Data Catalog with no scoping condition — emit a CRITICAL account-level finding `account:<accountId>` per affected region (every database, table, and partition is exposed cross-account / publicly).\n",
+      "tags": [
+        "account-posture",
+        "glue",
+        "data-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-ROOT-CREDENTIALS",
+      "title": "Root account credential posture",
+      "group": "baseline-bullets",
+      "order": 360,
+      "selectors": {},
+      "refs": [
+        {
+          "framework": "FSBP",
+          "id": "IAM.4"
+        },
+        {
+          "framework": "FSBP",
+          "id": "IAM.9"
+        }
+      ],
+      "prompt_text": "       • Root account credentials from the ACCOUNT POSTURE block (exact iam:GetAccountSummary counters, account-wide singletons): when `Root account access keys present` reads `true`, the AWS account root user holds standing long-lived access key(s) — a direct account-takeover vector that bypasses every per-identity IAM guardrail — so emit a CRITICAL account-level finding `account:<accountId>` (recommend deleting all root access keys; the root user must never hold programmatic credentials; AWS FSBP IAM.4). SEPARATELY, when `Root account MFA enabled` reads `false`, the root user has no MFA device, so a single leaked root password is full account compromise — emit a HIGH account-level finding `account:<accountId>` (recommend enabling a hardware or virtual MFA device on the root user; AWS FSBP IAM.9). These are exact integer reads, so DO flag on the explicit value; but when EITHER line is ABSENT from the ACCOUNT POSTURE block (the iam:GetAccountSummary probe failed — see the posture probe errors), treat it as UNKNOWN and do NOT flag (never infer the gap from a missing counter).\n",
+      "tags": [
+        "account-posture",
+        "iam",
+        "account-takeover",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-IAM-CONSOLE-NO-MFA",
+      "title": "IAM console users without MFA",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 370,
+      "selectors": {},
+      "refs": [
+        {
+          "framework": "CIS",
+          "id": "1.10"
+        },
+        {
+          "framework": "FSBP",
+          "id": "IAM.5"
+        }
+      ],
+      "prompt_text": "       • IAM console users without MFA (ACCOUNT POSTURE `IAM console users WITHOUT MFA` block, from iam:GetCredentialReport): for EACH user name listed, emit a WARNING account-level finding `account:<accountId>` titled `IAM console user <user> has no MFA` — the user can sign in to the AWS console with a password alone, so a single phished or leaked password is a full session takeover for that identity (CIS AWS Foundations 1.10 / AWS FSBP IAM.5: MFA must be enabled for every IAM user that has a console password). The block lists ONLY non-compliant users (password_enabled=true AND mfa_active=false) and already EXCLUDES the root user (covered by the `Root account MFA enabled` rule) and programmatic-only / service users (no console password). The derived `(... evaluated N; without MFA 0)` line with NO user list is positive confirmation that every console user has MFA — do NOT flag. When the `IAM console users WITHOUT MFA` block is ABSENT entirely (the iam:GetCredentialReport probe failed — see the posture probe errors), treat console-MFA coverage as UNKNOWN and do NOT flag (never infer the gap from missing data).\n",
+      "cross_refs": [
+        "CB-AWS-ROOT-CREDENTIALS"
+      ],
+      "tags": [
+        "account-posture",
+        "iam",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-EC2-EFFECTIVELY-EXPOSED",
+      "title": "EC2 instance effectively exposed (public subnet + public IP + open SG)",
+      "severity": "critical",
+      "group": "baseline-bullets",
+      "order": 380,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::Instance"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_subnet_is_public",
+        "cb_describer_public_ip_present"
+      ],
+      "prompt_text": "       • EC2 instances effectively exposed: check `cb_describer_subnet_is_public` (pre-computed — subnet has MapPublicIpOnLaunch=true OR its route table has a 0.0.0.0/0 → IGW route) combined with `cb_describer_public_ip_present`. When both true AND any attached SG has wide-open admin ingress, emit a CRITICAL compound finding referencing the instance, subnet, and SG.\n",
+      "tags": [
+        "ec2",
+        "network-exposure"
+      ]
+    },
+    {
+      "id": "CB-AWS-EC2-IMDSV1",
+      "title": "EC2 instance allows IMDSv1",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 390,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::Instance"
+        ]
+      },
+      "prompt_text": "       • EC2 instances allowing IMDSv1 → HIGH: when an `AWS::EC2::Instance`'s `MetadataOptions.HttpTokens` is set to anything other than `required` (e.g. `optional`), the Instance Metadata Service still answers unauthenticated IMDSv1 requests, so an SSRF flaw or a compromised in-instance process can read the instance role's temporary credentials with no token. Emit a HIGH finding (recommend `HttpTokens=required` — IMDSv2-only — and `HttpPutResponseHopLimit=1`). Skip when `MetadataOptions` is absent (not read — do NOT infer the gap from a missing key) or when `HttpTokens == required`.\n",
+      "tags": [
+        "ec2",
+        "credentials",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-VPC-NO-FLOW-LOGS",
+      "title": "VPC without flow logs",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 400,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::VPC"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_flow_logs_enabled"
+      ],
+      "prompt_text": "       • VPC flow logs absent: any `AWS::EC2::VPC` whose `cb_describer_flow_logs_enabled` is `false` has no ACTIVE VPC-level flow log — emit a WARNING finding scoped to that VPC's URN (`resource: <vpc-urn>`) recommending a flow log for network-traffic visibility / incident forensics. Treat an absent or unset `cb_describer_flow_logs_enabled` as UNKNOWN and do NOT flag it (the region wasn't probed).\n",
+      "tags": [
+        "vpc",
+        "logging",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-RDS-NO-DELETION-PROTECTION",
+      "title": "RDS instance without deletion protection",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 410,
+      "selectors": {
+        "cfn_types": [
+          "AWS::RDS::DBInstance"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_deletion_protection",
+        "cb_describer_is_cluster_member",
+        "cb_describer_is_read_replica"
+      ],
+      "prompt_text": "       • RDS DB instances without deletion protection → WARNING: an `AWS::RDS::DBInstance` with `cb_describer_deletion_protection: false` can be deleted by a single API / console call with no guard — accidental or malicious deletion destroys the database and its automated backups. Emit a WARNING (recommend enabling deletion protection). INTENT-SCOPE (the AWS default is `false`, so this is default-common — do NOT blanket-fire): flag ONLY when the database's NAME or TAGS signal production / stateful / primary / critical intent — SUPPRESS for names/tags signalling dev, test, staging, sandbox, ephemeral, or CI intent (those are deliberately left deletable for automated teardown). CARVE-OUTS — flag ONLY a standalone primary `AWS::RDS::DBInstance` (this rule is instance-scoped; an `AWS::RDS::DBCluster` carries neither carve-out signal and is out of scope): SUPPRESS when `cb_describer_is_cluster_member` is `true` (deletion protection on an Aurora / Multi-AZ DB-cluster member is governed at the cluster, not the instance — not authoritative) and SUPPRESS when `cb_describer_is_read_replica` is `true`. Treat an ABSENT `cb_describer_deletion_protection`, `cb_describer_is_cluster_member`, OR `cb_describer_is_read_replica` as UNKNOWN and do NOT flag (the field wasn't read or the role probe failed — never infer the gap from a missing key).\n",
+      "tags": [
+        "rds",
+        "durability",
+        "intent-scoped",
+        "fp-guard:intent"
+      ]
+    },
+    {
+      "id": "CB-AWS-RDS-SINGLE-AZ",
+      "title": "RDS instance single-AZ",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 420,
+      "selectors": {
+        "cfn_types": [
+          "AWS::RDS::DBInstance"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_multi_az",
+        "cb_describer_is_cluster_member",
+        "cb_describer_is_read_replica"
+      ],
+      "prompt_text": "       • RDS single-AZ (no high-availability) → WARNING: an `AWS::RDS::DBInstance` with `cb_describer_multi_az: false` runs in one Availability Zone — an AZ outage takes it fully offline with no automatic failover. Emit a WARNING (recommend Multi-AZ). INTENT-SCOPE (single-AZ is the AWS default and a legitimate cost choice — HIGH FP-risk if blanket-fired): flag ONLY when the database's NAME or TAGS signal production / stateful / primary / critical intent — SUPPRESS for dev / test / staging / sandbox / ephemeral / CI-intent databases (single-AZ is the correct, cheaper choice there). CARVE-OUTS — flag ONLY a standalone primary `AWS::RDS::DBInstance` (instance-scoped, same reason as deletion protection above): SUPPRESS when `cb_describer_is_cluster_member` is `true` (Aurora and Multi-AZ DB clusters provide HA at the cluster level across AZs — the instance-level `MultiAZ` flag is not the HA signal for a cluster member) and SUPPRESS when `cb_describer_is_read_replica` is `true` (a replica's own AZ posture is not the primary's availability story). Treat an ABSENT `cb_describer_multi_az`, `cb_describer_is_cluster_member`, OR `cb_describer_is_read_replica` as UNKNOWN and do NOT flag.\n",
+      "cross_refs": [
+        "CB-AWS-RDS-NO-DELETION-PROTECTION"
+      ],
+      "tags": [
+        "rds",
+        "availability",
+        "intent-scoped",
+        "fp-guard:intent"
+      ]
+    },
+    {
+      "id": "CB-AWS-RDS-NO-AUTO-MINOR-UPGRADE",
+      "title": "RDS auto minor-version upgrade disabled",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 430,
+      "selectors": {
+        "cfn_types": [
+          "AWS::RDS::DBInstance"
+        ]
+      },
+      "prompt_text": "       • RDS DB instance with automatic minor-version upgrades disabled → WARNING (patch hygiene): an `AWS::RDS::DBInstance` whose raw CFN property `AutoMinorVersionUpgrade` is explicitly `false` will NOT auto-apply AWS's minor engine patches in its maintenance window, so security and bug fixes accumulate unpatched until a manual upgrade. Emit a WARNING (recommend `AutoMinorVersionUpgrade: true`, or a documented manual-patch SLA). Fire on an explicit `false`; SKIP when `AutoMinorVersionUpgrade` is absent (the instance was discovered on a path that did not carry it — never infer the gap from a missing key). This is instance-scoped: an `AWS::RDS::DBCluster` carries cluster-level patching and is out of scope.\n",
+      "tags": [
+        "rds",
+        "patching",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-EC2-NO-INSTANCE-PROFILE",
+      "title": "EC2 instance without IAM instance profile",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 440,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EC2::Instance"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_instance_profile_arn",
+        "cb_describer_state"
+      ],
+      "refs": [
+        {
+          "framework": "FSBP",
+          "id": "SSM.1"
+        }
+      ],
+      "prompt_text": "       • EC2 instances with no IAM instance profile → WARNING: an `AWS::EC2::Instance` whose `cb_describer_instance_profile_arn` is the empty string `\"\"` has no IAM identity attached, so AWS Systems Manager (Session Manager / Patch Manager / Fleet Manager) cannot manage it — operators fall back to SSH / key-pair access, a larger attack surface with no centralised, audited access path. Emit a WARNING (recommend attaching an instance profile granting `AmazonSSMManagedInstanceCore`). This detects the NO-instance-profile state, NOT a profile that exists but lacks SSM permissions (the describer surfaces only the profile ARN, not the role's policies). Flag only running / stopped instances — SKIP when `cb_describer_state` is `terminated` or `shutting-down`. Unlike the RDS deletion-protection / single-AZ bullets above, this finding is DELIBERATELY NOT intent-scoped: those gate on prod-intent because the SEVERITY of single-AZ / no-deletion-protection is genuinely environment-dependent (single-AZ is the correct, cheaper choice in dev/test), whereas \"not SSM-managed\" is a uniform low-severity hygiene gap — an equal, real exposure on ANY instance regardless of environment (mirroring AWS FSBP control SSM.1). Fire on every profile-less running / stopped instance; do NOT add a prod-intent gate here (no dev / test / sandbox suppression). Treat an ABSENT `cb_describer_instance_profile_arn` key as UNKNOWN and do NOT flag (in practice the EC2 describer always sets it to `\"\"` or an ARN — never infer the gap from a missing key).\n",
+      "cross_refs": [
+        "CB-AWS-RDS-NO-DELETION-PROTECTION",
+        "CB-AWS-RDS-SINGLE-AZ"
+      ],
+      "tags": [
+        "ec2",
+        "ssm",
+        "hygiene"
+      ]
+    },
+    {
+      "id": "CB-AWS-ALB-NO-ACCESS-LOGS",
+      "title": "ALB access logging disabled",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 450,
+      "selectors": {
+        "cfn_types": [
+          "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_alb_access_logs_enabled"
+      ],
+      "prompt_text": "       • ALB with access logging disabled → WARNING: an `AWS::ElasticLoadBalancingV2::LoadBalancer` with `cb_describer_alb_access_logs_enabled: false` writes no S3 access logs — there is no request-level audit trail of traffic through the load balancer. Emit a WARNING (recommend enabling access logs to an S3 bucket). `cb_describer_alb_access_logs_enabled` is a POSITIVE field (`true` iff enabled, `false` iff explicitly disabled), so fire ONLY on an explicit `false`. Skip when the field is absent (the LB's attributes weren't read — do NOT infer disabled from a missing key).\n",
+      "tags": [
+        "elb",
+        "logging",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-EKS-NO-POD-IAM",
+      "title": "EKS cluster with no pod-level IAM mechanism",
+      "severity": "high",
+      "group": "baseline-bullets",
+      "order": 460,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EKS::Cluster"
+        ]
+      },
+      "requires_fields": [
+        "cb_describer_eks_irsa_oidc_provider_present",
+        "cb_describer_eks_pod_identity_present"
+      ],
+      "prompt_text": "       • EKS cluster with no pod-level IAM mechanism → HIGH: an `AWS::EKS::Cluster` where BOTH `cb_describer_eks_irsa_oidc_provider_present: false` AND `cb_describer_eks_pod_identity_present: false` has neither an IAM OIDC identity provider (IRSA) NOR an EKS Pod Identity association — pods have NO way to assume scoped IAM roles via Kubernetes service accounts and fall back to the shared, broad node instance-role credentials reachable by ANY pod on the node (a real privilege-scoping / lateral-movement gap). Emit a HIGH finding (recommend adopting IRSA — create the IAM OIDC provider — or EKS Pod Identity). SUPPRESS when EITHER field is `true` (the cluster already has a scoped-role mechanism). Skip when EITHER field is ABSENT (the issuer / IAM providers / Pod-Identity associations couldn't be read — do NOT infer the gap from a missing key).\n",
+      "tags": [
+        "eks",
+        "iam",
+        "fp-guard:present-field"
+      ]
+    },
+    {
+      "id": "CB-AWS-EKS-SECRETS-NO-KMS",
+      "title": "EKS secrets without KMS envelope encryption",
+      "severity": "warning",
+      "group": "baseline-bullets",
+      "order": 470,
+      "selectors": {
+        "cfn_types": [
+          "AWS::EKS::Cluster"
+        ]
+      },
+      "prompt_text": "       • EKS cluster without envelope encryption for Kubernetes Secrets → WARNING: an `AWS::EKS::Cluster` with no KMS envelope-encryption provider for the `secrets` resource stores Secrets only base64-encoded in etcd (base64 is NOT encryption), so anyone who reaches etcd, a node, or the API with secret-read access sees them in cleartext. Detect via EITHER discovery shape: `EncryptionConfigPresent: false` (the native EKS lister's synthesised boolean) OR a CloudControl-discovered cluster whose raw CFN `EncryptionConfig` array is absent or empty. Emit a WARNING (recommend an `encryptionConfig` block with a KMS CMK provider covering `resources: [\"secrets\"]`). SUPPRESS when `EncryptionConfigPresent` is `true` OR `EncryptionConfig` is a non-empty array (envelope encryption is configured). SKIP when NEITHER field is present (the cluster's encryption config was not read — never infer the gap from a missing key).\n",
+      "tags": [
+        "eks",
+        "encryption",
+        "fp-guard:present-field"
+      ]
+    }
+  ],
+  "meta_blocks": [
+    {
+      "id": "baseline-rules-intro",
+      "prompt_text": "  1. Flag well-known AWS misconfigurations from the resource state DIRECTLY, even when the CB knowledge bundle doesn't explicitly enumerate the pattern. Baseline examples (non-exhaustive):\n"
+    },
+    {
+      "id": "baseline-rules-outro",
+      "prompt_text": "     This list is NOT exhaustive — use AWS-baseline judgement.\n\n"
+    },
+    {
+      "id": "no-merge-orthogonal",
+      "prompt_text": "  2. **DO NOT MERGE ORTHOGONAL ISSUES.** If a single resource has multiple distinct security issues, emit ONE FINDING PER ISSUE — never roll them into one finding with a long remediation. Specifically:\n       • Security groups: emit ONE CRITICAL finding per (SG, exposed admin port) pair listed in `cb_describer_ingress_exposed_admin_ports`. A SG with ports [22, 3389] open to 0.0.0.0/0 produces TWO findings, not one. Title each as `SSH (port 22) open to the internet on <SG-id>`, `RDP (port 3389) open to the internet on <SG-id>`, etc. Compound \"instance exposed via SG\" findings are ADDITIONAL — they don't replace the per-port SG findings.\n       • EBS snapshots: a snapshot that is both unencrypted AND publicly shared (`cb_describer_publicly_shared: true`) produces TWO findings — an unencryption finding (WARNING) and a SEPARATE publicly-shared-snapshot finding (CRITICAL). The public-share finding is the most dangerous attribute and MUST stand alone; never bury it in a remediation paragraph.\n       • API Gateway with no authorizer + backing Lambda with admin-equivalent role: emit a CRITICAL compound finding referencing both resources. The Lambda's role privilege is pre-computed — check `cb_describer_role_is_admin_equivalent` (true means AdministratorAccess / PowerUserAccess / IAMFullAccess attached) and `cb_describer_role_has_wildcard_inline_policy` (true means an inline `Action:* Resource:*` Allow). Either flag being true on a Lambda fronted by an unauthenticated route is CRITICAL.\n       • RDS / databases with `PubliclyAccessible: true`: severity is pre-computed via `cb_describer_effectively_public`. When that field is `true` (the DBSubnetGroup contains at least one internet-routable subnet) emit CRITICAL (\"database is reachable from the internet\"). When `false` (all subnets are private) emit HIGH (\"publicly-accessible flag is set — one route-table change exposes the database\") with the explicit caveat that current routing keeps it private. Never escalate to CRITICAL on the flag alone.\n\n"
+    }
+  ],
+  "severity_rubric": {
+    "prompt_text": "SEVERITY SCALE — rate every finding on CloudBooster's operator-facing 5-bucket scale (CRITICAL > HIGH > MEDIUM > LOW > INFO), then emit the mapped wire value. The emitted `severity` MUST be one of the four strings `critical|high|warning|info`; `MEDIUM` maps to `warning` and `LOW`/`INFO` both map to `info`. Anchor to the WORST plausible outcome of the SPECIFIC condition, not the service's reputation:\n  • CRITICAL → `critical`: account-takeover or direct data exposure — full-admin / wildcard IAM grant, a public data store reachable from the internet, plaintext secret material, an unauthenticated public entrypoint to an admin-privileged backend.\n  • HIGH → `high`: a serious security / compliance gap that is not yet an active breach — at-rest encryption disabled, a configured audit/threat-detection service left blind (CloudTrail without KMS, ECS Exec unlogged, AWS Config not recording IAM/global types, a suspended GuardDuty detector), ECR MUTABLE image tags, an EC2 instance still accepting IMDSv1, an IAM role trusting another account with no ExternalId, a database flagged publicly-accessible but currently kept private by routing.\n  • MEDIUM → `warning`: operational-resilience / hygiene gaps with a bounded blast radius — missing DLQ or reserved concurrency, no VPC flow logs, Container Insights off, no lifecycle / rotation / PITR, single-AZ, no access logging.\n  • LOW / INFO → `info`: informational or best-practice nudges with no direct exposure (e.g. intent-scoped S3 hygiene recommendations).\nDo NOT inflate a hygiene gap to `high`, and do NOT deflate an account-takeover gap to `warning`. When a per-rule instruction elsewhere in this prompt names an explicit severity for a specific condition, that instruction WINS over this general rubric.\n\n"
+  }
+}

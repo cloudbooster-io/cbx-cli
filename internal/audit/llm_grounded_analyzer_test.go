@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // fakeGroundedStreamer is a test double that satisfies both llmStreamer and
@@ -172,7 +174,7 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 			{Workload: "static-site", Missing: true},
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"CB KNOWLEDGE BUNDLE",
 		"aws_lookup_primitive",
@@ -194,7 +196,7 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 // validate that the findings actually fire or that the FP control bucket
 // stays clean — that is LLM behavior, validated by the deferred live e2e run.
 func TestBuildGroundedPrompt_S3HygieneBaselineRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"cb_describer_versioning_enabled",
 		"cb_describer_sse_is_kms",
@@ -217,7 +219,7 @@ func TestBuildGroundedPrompt_S3HygieneBaselineRules(t *testing.T) {
 // describer hooks) is present in the prompt text. Whether the finding fires is
 // LLM behavior, validated by the deferred live run.
 func TestBuildGroundedPrompt_RDSBackupRetentionBaselineRule(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"cb_describer_backup_retention_days <= 1",
 		"cb_describer_is_read_replica",
@@ -251,7 +253,7 @@ func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
 			"cb_describer_backup_retention_days": float64(0),
 		},
 	}}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		`"cb_describer_is_read_replica": false`,
 		`"cb_describer_is_cluster_member": false`,
@@ -269,7 +271,7 @@ func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
 // floor's text gates expect — and the cb_describer_* keys / raw fields the
 // bullets reference — survive in the grounded prompt.
 func TestBuildGroundedPrompt_MentionsStructural42Rules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"cb_describer_storage_encrypted",
 		"unencrypted at rest",
@@ -292,7 +294,7 @@ func TestBuildGroundedPrompt_MentionsStructural42Rules(t *testing.T) {
 // emission — a dropped phrase silently weakens the rule. Whether the findings
 // fire is LLM behavior, validated by the deferred live run.
 func TestBuildGroundedPrompt_CloudFrontSecurityRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil)
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"AWS::CloudFront::Distribution`) — evaluate the raw `DistributionConfig`",
 		"ViewerCertificate.CloudFrontDefaultCertificate",

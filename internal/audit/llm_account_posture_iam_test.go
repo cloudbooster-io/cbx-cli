@@ -3,6 +3,8 @@ package audit
 import (
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestWriteAccountPosture_RendersRootCredentialCounters asserts the
@@ -91,7 +93,7 @@ func TestWriteAccountPosture_OmitsRootCredentialsWhenCounterAbsent(t *testing.T)
 // also pins the CRITICAL/HIGH severity split a rebase against the parallel
 // IAM rule-family branches could otherwise drop.
 func TestBuildGroundedPrompt_HasRootCredentialRule(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil)
+	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil, rulesbundle.Embedded())
 	for _, want := range []string{
 		"Root account access keys present",
 		"Root account MFA enabled",
