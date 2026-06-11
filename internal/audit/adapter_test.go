@@ -184,7 +184,7 @@ func TestWriteResourcesToTempDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeResourcesToTempDir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestWriteTerraformStateFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeTerraformStateFile: %v", err)
 	}
-	defer os.RemoveAll(filepath.Dir(path))
+	defer func() { _ = os.RemoveAll(filepath.Dir(path)) }()
 
 	data, err := os.ReadFile(path)
 	if err != nil {

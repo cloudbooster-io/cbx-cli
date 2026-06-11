@@ -27,9 +27,9 @@ func (a *prowlerAdapter) ScanSource(_ context.Context, _ string) ([]Finding, err
 	return nil, ErrSourceModeUnsupported
 }
 
-func (a *prowlerAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
+func (a *prowlerAdapter) Scan(ctx context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["prowler"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
@@ -37,12 +37,14 @@ func (a *prowlerAdapter) Scan(_ context.Context, resources []Resource) ([]Findin
 	if err != nil {
 		return nil, fmt.Errorf("creating prowler output dir: %w", err)
 	}
-	defer os.RemoveAll(outDir)
+	defer func() { _ = os.RemoveAll(outDir) }()
 
-	// Prowler writes JSON output to a file in the output directory.
-	_, err = runScanner(meta.Name, []string{"--output-mode", "json", "--output-directory", outDir, "--status", "FAIL"}, meta.AllowAWS)
-	if err != nil {
-		// Prowler may exit non-zero even on successful scan; try to read output anyway.
+	// Prowler writes JSON output to a file in the output directory. It may
+	// exit non-zero even on a successful scan, so a run error alone is not
+	// fatal — the missing JSON file below is. Context cancellation is the
+	// exception: the subprocess was killed, so no output can be expected.
+	if _, err := runScanner(ctx, meta.Name, []string{"--output-mode", "json", "--output-directory", outDir, "--status", "FAIL"}, meta.AllowAWS); err != nil && ctx.Err() != nil {
+		return nil, fmt.Errorf("running prowler: %w", err)
 	}
 
 	// Find the JSON output file prowler created.

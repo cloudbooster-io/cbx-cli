@@ -23,13 +23,13 @@ func (a *tfsecAdapter) SupportsSource() bool { return true }
 // ScanSource invokes tfsec against the user's IaC directory directly,
 // skipping the synthetic-temp-dir step that state mode needs. Output schema
 // is identical, so parseTfsecOutput is reused verbatim.
-func (a *tfsecAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+func (a *tfsecAdapter) ScanSource(ctx context.Context, dir string) ([]Finding, error) {
 	meta := scannerRegistry["tfsec"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
-	out, err := runScanner(meta.Name, []string{dir, "--format", "json", "--no-colour", "--soft-fail"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{dir, "--format", "json", "--no-colour", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running tfsec: %w\noutput: %s", err, string(out))
 	}
@@ -37,9 +37,9 @@ func (a *tfsecAdapter) ScanSource(_ context.Context, dir string) ([]Finding, err
 	return parseTfsecOutput(out)
 }
 
-func (a *tfsecAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
+func (a *tfsecAdapter) Scan(ctx context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["tfsec"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
@@ -47,9 +47,9 @@ func (a *tfsecAdapter) Scan(_ context.Context, resources []Resource) ([]Finding,
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
-	out, err := runScanner(meta.Name, []string{dir, "--format", "json", "--no-colour", "--soft-fail"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{dir, "--format", "json", "--no-colour", "--soft-fail"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running tfsec: %w\noutput: %s", err, string(out))
 	}

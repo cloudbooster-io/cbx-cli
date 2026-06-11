@@ -22,13 +22,13 @@ func (a *trivyAdapter) SupportsSource() bool { return true }
 
 // ScanSource invokes `trivy config` against the user's IaC directory
 // directly. parseTrivyOutput is reused unchanged.
-func (a *trivyAdapter) ScanSource(_ context.Context, dir string) ([]Finding, error) {
+func (a *trivyAdapter) ScanSource(ctx context.Context, dir string) ([]Finding, error) {
 	meta := scannerRegistry["trivy"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
-	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running trivy: %w\noutput: %s", err, string(out))
 	}
@@ -36,9 +36,9 @@ func (a *trivyAdapter) ScanSource(_ context.Context, dir string) ([]Finding, err
 	return parseTrivyOutput(out)
 }
 
-func (a *trivyAdapter) Scan(_ context.Context, resources []Resource) ([]Finding, error) {
+func (a *trivyAdapter) Scan(ctx context.Context, resources []Resource) ([]Finding, error) {
 	meta := scannerRegistry["trivy"]
-	if err := checkVersion(meta); err != nil {
+	if err := checkVersion(ctx, meta); err != nil {
 		return nil, err
 	}
 
@@ -46,9 +46,9 @@ func (a *trivyAdapter) Scan(_ context.Context, resources []Resource) ([]Finding,
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
-	out, err := runScanner(meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
+	out, err := runScanner(ctx, meta.Name, []string{"config", dir, "--format", "json", "--severity", "LOW,MEDIUM,HIGH,CRITICAL", "--exit-code", "0"}, meta.AllowAWS)
 	if err != nil {
 		return nil, fmt.Errorf("running trivy: %w\noutput: %s", err, string(out))
 	}

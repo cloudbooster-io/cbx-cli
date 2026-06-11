@@ -2,6 +2,7 @@ package audit
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -86,12 +87,14 @@ func scrubEnv(allowAWS bool) []string {
 }
 
 // runScanner executes a scanner binary with the given arguments and returns
-// its stdout. Stderr is intentionally segregated: scanners (notably tfsec)
-// write deprecation banners and progress chatter to stderr that would
-// otherwise corrupt the JSON parsers downstream. On error stderr is folded
-// into the returned error message so the user still sees it.
-func runScanner(name string, args []string, allowAWS bool) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+// its stdout. The context bounds the subprocess lifetime: cancellation or a
+// deadline kills the binary, so a hung scanner cannot wedge the CLI. Stderr
+// is intentionally segregated: scanners (notably tfsec) write deprecation
+// banners and progress chatter to stderr that would otherwise corrupt the
+// JSON parsers downstream. On error stderr is folded into the returned
+// error message so the user still sees it.
+func runScanner(ctx context.Context, name string, args []string, allowAWS bool) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = scrubEnv(allowAWS)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -121,15 +124,15 @@ var versionRe = regexp.MustCompile(`v?(\d+\.\d+(?:\.\d+)?)`)
 // checkVersion verifies the scanner binary version is within the
 // supported range. If the binary is not found it returns a
 // missing-binary error.
-func checkVersion(meta scannerMeta) error {
-	out, err := runScanner(meta.Name, []string{"--version"}, meta.AllowAWS)
+func checkVersion(ctx context.Context, meta scannerMeta) error {
+	out, err := runScanner(ctx, meta.Name, []string{"--version"}, meta.AllowAWS)
 	if err != nil {
-		// Distinguish "not found" from other exec errors.
-		if lookErr := exec.Command(meta.Name, "--version").Run(); lookErr != nil {
-			if !strings.Contains(lookErr.Error(), "exit status") {
-				return missingBinaryError(meta)
-			}
+		// Distinguish "not found" from other exec errors without
+		// re-executing the binary.
+		if _, lookErr := exec.LookPath(meta.Name); lookErr != nil {
+			return missingBinaryError(meta)
 		}
+		return fmt.Errorf("checking %s version: %w", meta.Name, err)
 	}
 
 	versionStr := strings.TrimSpace(string(out))
