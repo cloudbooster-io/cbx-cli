@@ -17,7 +17,7 @@ import (
 // returns a deduplicated slice of findings. Errors from individual
 // scanners are collected and returned as a joined error; scanners that
 // fail do not block findings from successful scanners.
-// Deprecated: use RunProviders from the orchestrator instead.
+// Deprecated: use RunProvidersWithProgress from the orchestrator instead.
 func RunScanners(scanners []Scanner, resources []Resource) ([]Finding, error) {
 	seen := make(map[string]struct{})
 	var findings []Finding
@@ -46,6 +46,10 @@ func RunScanners(scanners []Scanner, resources []Resource) ([]Finding, error) {
 // invokes the runner with MockScanners: true (plan §7.10 — no external
 // CLI dependencies in AWS mode); the provider filters to CFN-shaped
 // resource types internally so it stays a no-op for non-AWS modes.
+//
+// This set is also what an empty Options.Scanners resolves to — external
+// scanners are opt-in by name (see selectProviders), upholding the
+// zero-value-Options safety guarantee documented on Options.
 func MockScanners() []FindingProvider {
 	return []FindingProvider{
 		&staticScanner{},
@@ -55,7 +59,9 @@ func MockScanners() []FindingProvider {
 
 // AllScanners returns every available scanner including external-tool
 // adapters. Callers should be prepared for individual adapters to fail
-// when their underlying binary is not installed.
+// when their underlying binary is not installed. Never selected
+// implicitly: Options resolution maps an empty Scanners list to
+// MockScanners, so the external adapters run only when named explicitly.
 func AllScanners() []Scanner {
 	return []Scanner{
 		&staticScanner{},

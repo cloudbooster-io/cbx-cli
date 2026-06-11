@@ -121,6 +121,12 @@ var Run = audit.Run
 // instead — see the inline doc on internal/audit.Collect.
 var Collect = audit.Collect
 
+// CollectContext is Collect with a caller-supplied parent context so
+// embedders can cancel an in-flight audit. A pre-cancelled ctx returns
+// ctx.Err() before any scanner is dispatched; Options.Timeout still
+// applies, layered onto ctx via context.WithTimeout.
+var CollectContext = audit.CollectContext
+
 // CollectFromResources runs the audit pipeline against a pre-
 // discovered []DiscoveredResource, bypassing input-mode dispatch. The
 // `cbx audit aws` subcommand owns its own discovery and uses this

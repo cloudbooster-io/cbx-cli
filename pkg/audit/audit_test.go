@@ -7,6 +7,8 @@ package audit_test
 // import.
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	internalaudit "github.com/cloudbooster-io/cbx-cli/internal/audit"
@@ -76,6 +78,19 @@ func TestFacade_IaCConstantsMatch(t *testing.T) {
 		if p.facade != p.internal {
 			t.Errorf("iactype constant drift: %q vs %q", p.facade, p.internal)
 		}
+	}
+}
+
+func TestFacade_CollectContextHonorsCancellation(t *testing.T) {
+	// The facade var must resolve to the cancellable entry point: a
+	// pre-cancelled ctx returns ctx.Err() before any scanner (or even the
+	// state file) is touched, so no fixture is needed.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := pkgaudit.CollectContext(ctx, pkgaudit.Options{StateFile: "does-not-exist.json"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled from a pre-cancelled ctx, got %v", err)
 	}
 }
 
