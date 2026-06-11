@@ -135,9 +135,19 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	// inject it; core/plan.NewLLMCaller no longer reads the keychain itself.
 	llmToken, _ := llm.GetToken(opts.LLMProvider)
 
+	// core/plan carries its own LLMProvider type (the subset of
+	// config.LLMProvider it actually reads) so the shared package stays
+	// decoupled from internal/config — convert explicitly here at the
+	// composition root.
+	planProv := plan.LLMProvider{
+		Name:    provCfg.Name,
+		BaseURL: provCfg.BaseURL,
+		Model:   provCfg.Model,
+	}
+
 	return &llmAnalyzer{
 		provider:          opts.LLMProvider,
-		streamer:          plan.NewLLMCaller(provCfg, llmToken),
+		streamer:          plan.NewLLMCaller(planProv, llmToken),
 		maxFiles:          opts.LLMMaxFiles,
 		maxBytesPerFile:   opts.LLMMaxBytesPerFile,
 		iacType:           iacType,
@@ -205,6 +215,10 @@ func (l *llmAnalyzer) ScanResources(ctx context.Context, resources []DiscoveredR
 
 	if l.cbKnowledge {
 		findings = l.postProcessGrounded(findings)
+		// Surface resource-table truncation (capPromptResources inside
+		// buildGroundedPrompt drops the tail past the prompt budget).
+		_, omitted := capPromptResources(resources)
+		findings = l.appendTruncationFinding(findings, len(resources), omitted)
 	}
 	return findings, nil
 }
@@ -292,6 +306,10 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 
 	if l.cbKnowledge {
 		findings = l.postProcessGrounded(findings)
+		if len(resources) > 0 {
+			_, omitted := capPromptResources(resources)
+			findings = l.appendTruncationFinding(findings, len(resources), omitted)
+		}
 	}
 	return findings, nil
 }
@@ -414,19 +432,46 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// errorFinding wraps a stream/parse failure as an info-level finding so a
-// partial run still lands somewhere visible. Mirrors the scanner-error
+// errorFinding wraps a stream/parse failure as a warning-level finding so
+// a partial run still lands somewhere visible. Mirrors the scanner-error
 // posture in runner.go::collectFindings (partial findings + joined error).
+// Warning (exit 2) rather than info: this is a TOTAL analysis failure —
+// the LLM produced zero usable findings — and exit-code-gated CI must be
+// able to tell it apart from a clean run with minor findings.
 func (l *llmAnalyzer) errorFinding(detail string) Finding {
 	return Finding{
 		RuleID:      "LLM-ERROR",
 		Title:       "LLM analyzer failed to produce findings",
 		Description: detail,
-		Severity:    SeverityInfo,
+		Severity:    SeverityWarning,
 		Resource:    l.providerForRuleID,
 		Service:     "LLM",
 		Remediation: "Re-run with --llm omitted to fall back to other analyzers, or check provider credentials with 'cbx llm list'.",
 	}
+}
+
+// appendTruncationFinding surfaces a capped resource table (see
+// capPromptResources) to the user: an info-level LLM-CB-TRUNCATED
+// finding listing how many resources the prompt omitted, plus a stderr
+// warning matching the LLM-CB-UNGROUNDED posture. No-op when nothing
+// was omitted.
+func (l *llmAnalyzer) appendTruncationFinding(findings []Finding, total, omitted int) []Finding {
+	if omitted <= 0 {
+		return findings
+	}
+	fmt.Fprintf(os.Stderr,
+		"WARN: %d/%d discovered resources omitted from the LLM prompt (budget: %d resources / %d bytes of inputs); findings cover the included resources only.\n",
+		omitted, total, defaultLLMMaxPromptResources, defaultLLMMaxResourceTableBytes,
+	)
+	return append(findings, Finding{
+		RuleID:      "LLM-CB-TRUNCATED",
+		Title:       fmt.Sprintf("%d discovered resources omitted from the LLM prompt", omitted),
+		Description: fmt.Sprintf("The grounded prompt's resource table is capped at %d resources / %d bytes of serialised inputs; %d of %d discovered resources were omitted (deterministically, from the tail of the sorted resource list). LLM findings cover only the included resources.", defaultLLMMaxPromptResources, defaultLLMMaxResourceTableBytes, omitted, total),
+		Severity:    SeverityInfo,
+		Resource:    l.providerForRuleID,
+		Service:     "LLM",
+		Remediation: "Narrow the audit (fewer regions or resource types) so the inventory fits the prompt budget, or run the non-LLM analyzers which have no such cap.",
+	})
 }
 
 // buildPrompt routes to the grounded or ungrounded prompt builder. Method
@@ -700,19 +745,36 @@ func writeChunks(sb *strings.Builder, chunks []knowledge.Chunk) {
 	}
 }
 
-// writeResourceTable lists discovered resources in stable order so two
-// audits over the same account produce the same prompt. Resources are
-// sorted by (URN, Region, Type). For each resource it emits a header
-// line plus the full Inputs map serialised as deterministic JSON
-// (sorted keys) — that includes raw CFN Properties from CloudControl,
-// per-service describer enrichment (cb_describer_* keys), and tag
-// extraction. The LLM gets to see ingress rules, bucket policies,
-// rotation configs, PITR settings, etc. directly rather than via a
-// curated subset.
-func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
-	if len(resources) == 0 {
-		return
-	}
+// Caps for the grounded prompt's resource table — the live-AWS analog
+// of the source-mode caps in llm_files.go (defaultLLMMaxFiles /
+// defaultLLMMaxBytesPerFile). Without them writeResourceTable inlines
+// every discovered resource's full Inputs unbounded, and a large
+// account silently blows the model's context with no signal to the
+// user. When either cap trips, the sorted tail is dropped and the
+// truncation is surfaced as an LLM-CB-TRUNCATED finding plus a stderr
+// warning (see truncationFinding).
+const (
+	defaultLLMMaxPromptResources    = 500
+	defaultLLMMaxResourceTableBytes = 1 << 20 // 1 MiB of serialised Inputs
+)
+
+// promptResourceEntry pairs a resource with its pre-serialised Inputs
+// payload so the byte budget is enforced on exactly the bytes that end
+// up in the prompt.
+type promptResourceEntry struct {
+	resource DiscoveredResource
+	payload  string
+}
+
+// capPromptResources sorts resources into the prompt's stable order
+// (URN, Region, Type), serialises each Inputs map, and applies the
+// resource-count and byte caps above. It returns the kept prefix (in
+// prompt order, payloads attached) and the number of resources omitted.
+// Truncation is deterministic: the sort is stable and the caps cut a
+// strict prefix, so two runs over the same account drop the same tail.
+// At least one resource is always kept so a single oversized resource
+// can't blank the whole table.
+func capPromptResources(resources []DiscoveredResource) ([]promptResourceEntry, int) {
 	sorted := append([]DiscoveredResource(nil), resources...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		if sorted[i].URN != sorted[j].URN {
@@ -723,8 +785,46 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 		}
 		return sorted[i].Type < sorted[j].Type
 	})
+
+	kept := make([]promptResourceEntry, 0, len(sorted))
+	totalBytes := 0
+	for i, r := range sorted {
+		if len(kept) >= defaultLLMMaxPromptResources {
+			return kept, len(sorted) - i
+		}
+		payload := serialiseInputs(r.Inputs)
+		if len(kept) > 0 && totalBytes+len(payload) > defaultLLMMaxResourceTableBytes {
+			return kept, len(sorted) - i
+		}
+		totalBytes += len(payload)
+		kept = append(kept, promptResourceEntry{resource: r, payload: payload})
+	}
+	return kept, 0
+}
+
+// writeResourceTable lists discovered resources in stable order so two
+// audits over the same account produce the same prompt. Resources are
+// sorted by (URN, Region, Type). For each resource it emits a header
+// line plus the full Inputs map serialised as deterministic JSON
+// (sorted keys) — that includes raw CFN Properties from CloudControl,
+// per-service describer enrichment (cb_describer_* keys), and tag
+// extraction. The LLM gets to see ingress rules, bucket policies,
+// rotation configs, PITR settings, etc. directly rather than via a
+// curated subset.
+//
+// The table is budgeted via capPromptResources: past the count/byte
+// caps the sorted tail is dropped and an explicit TRUNCATED marker is
+// written so the model knows the inventory is partial. The analyzer
+// surfaces the same omission to the user as an LLM-CB-TRUNCATED
+// finding.
+func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
+	if len(resources) == 0 {
+		return
+	}
+	kept, omitted := capPromptResources(resources)
 	sb.WriteString("==== DISCOVERED RESOURCES ====\n")
-	for _, r := range sorted {
+	for _, e := range kept {
+		r := e.resource
 		sb.WriteString("---- ")
 		sb.WriteString(r.Type)
 		if r.URN != "" {
@@ -742,10 +842,14 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 			sb.WriteString(pid)
 		}
 		sb.WriteString(" ----\n")
-		if payload := serialiseInputs(r.Inputs); payload != "" {
-			sb.WriteString(payload)
+		if e.payload != "" {
+			sb.WriteString(e.payload)
 			sb.WriteString("\n")
 		}
+	}
+	if omitted > 0 {
+		fmt.Fprintf(sb, "---- TRUNCATED: %d additional resources omitted to fit the prompt budget (%d resources / %d bytes) — this inventory is PARTIAL ----\n",
+			omitted, defaultLLMMaxPromptResources, defaultLLMMaxResourceTableBytes)
 	}
 	sb.WriteString("==== END DISCOVERED RESOURCES ====\n\n")
 }

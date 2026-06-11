@@ -167,8 +167,9 @@ func toAnySlice(ss []string) []any {
 // (latestTaskDefArns) and DescribeTaskDefinition each — one task definition per
 // family, the granularity the posture findings actually care about.
 //
-// There is no TaskDefinition describer; the synthesised CFN-shape
-// ContainerDefinitions are read directly by the grounded LLM.
+// The synthesised CFN-shape ContainerDefinitions are read directly by the
+// grounded LLM; ecsTaskDefinitionDescriber re-applies the same env-value
+// redaction idempotently over both this and the CloudControl origin.
 func listECSTaskDefinitionsNative(ctx context.Context, c awsCfg, region string) ([]rawResource, error) {
 	client := ecs.NewFromConfig(c.withRegion(region).cfg)
 
@@ -312,9 +313,9 @@ func containerDefinitionsToCFN(defs []ecstypes.ContainerDefinition) []any {
 			for _, kv := range cd.Environment {
 				e := map[string]any{}
 				putStr(e, "Name", kv.Name)
-				// There is no TaskDefinition describer, so these Properties are
-				// read directly by the grounded LLM — a secret-shaped Name's
-				// VALUE must be masked HERE or it ships verbatim into the
+				// These Properties are read directly by the grounded LLM — a
+				// secret-shaped Name's VALUE must be masked or it ships
+				// verbatim into the
 				// `claude -p` prompt. Same key heuristic as the Lambda
 				// describer (keyLooksLikeSecret); arn:-prefixed values pass
 				// through because they are the indirection shape the grounded

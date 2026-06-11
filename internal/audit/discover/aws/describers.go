@@ -46,6 +46,7 @@ var allDescribers = []Describer{
 	&backupPlanDescriber{},
 	&athenaWorkGroupDescriber{},
 	&ecsClusterDescriber{},
+	&ecsTaskDefinitionDescriber{},
 	&albAccessLogsDescriber{},
 	&eksClusterDescriber{},
 }

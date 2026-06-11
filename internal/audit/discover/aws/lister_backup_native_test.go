@@ -84,8 +84,9 @@ func TestLatestTaskDefArns(t *testing.T) {
 }
 
 // The privileged-container + plaintext-env posture must survive the synthesised
-// CFN shape (no TaskDefinition describer, so the LLM reads the raw fields), and
-// an empty primary must trigger the fallback through the real runJob path.
+// CFN shape (the LLM reads these raw fields; the TaskDefinition describer only
+// re-applies env redaction), and an empty primary must trigger the fallback
+// through the real runJob path.
 func TestRunJob_TaskDefinitionFallbackFires(t *testing.T) {
 	td := ecstypes.TaskDefinition{
 		TaskDefinitionArn: strp("arn:aws:ecs:eu-central-1:111122223333:task-definition/web:7"),

@@ -94,11 +94,12 @@ func New(baseURL string) *Client {
 // (e.g. "aws:s3/bucket@v1"). Returns ErrNotAuthored on 404 — caller
 // should record a placeholder, not fail the audit.
 func (c *Client) LookupPrimitive(ctx context.Context, typeID string) (*Response, error) {
-	// Path-escape the type_id: it contains ':' and '/' which are valid
-	// in path segments but rejected by some intermediaries. The :path
-	// FastAPI converter accepts slashes, so we use url.PathEscape (not
-	// url.QueryEscape) to keep ':' un-encoded since FastAPI's path regex
-	// accepts it.
+	// The type_id is appended VERBATIM, not url.PathEscape'd, even though
+	// it contains ':' and '/'. The backend route is a FastAPI :path
+	// converter that matches the remaining path literally — it expects
+	// the raw "aws:s3/bucket@v1" segments, and escaping '/' to %2F is
+	// decoded inconsistently across proxies/routers, so escaping would
+	// break the lookup rather than harden it.
 	endpoint := c.baseURL + "/v1/knowledge/aws/primitives/" + typeID
 	return c.getJSON(ctx, endpoint, nil)
 }
@@ -140,25 +141,67 @@ func (c *Client) postJSON(ctx context.Context, endpoint string, body []byte) (*R
 	return c.do(req)
 }
 
+// Retry policy for transient failures: 2 attempts total with a short
+// fixed backoff. Only transport errors and 5xx responses retry — every
+// 4xx (including the 404 → ErrNotAuthored mapping) is deterministic and
+// returns immediately. retryBackoff is a var so tests can shrink it.
+const retryAttempts = 2
+
+var retryBackoff = 500 * time.Millisecond
+
+// do executes req with the bounded retry above. The request context is
+// honored across the backoff sleep, and POST bodies are rewound via
+// GetBody before a retry (set automatically by NewRequestWithContext
+// for bytes.Reader bodies).
 func (c *Client) do(req *http.Request) (*Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < retryAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-req.Context().Done():
+				return nil, fmt.Errorf("knowledge: %s %s: %w", req.Method, req.URL, req.Context().Err())
+			case <-time.After(retryBackoff):
+			}
+			if req.GetBody != nil {
+				body, err := req.GetBody()
+				if err != nil {
+					return nil, fmt.Errorf("knowledge: rewind request body for retry: %w", err)
+				}
+				req.Body = body
+			}
+		}
+		out, err, retryable := c.doOnce(req)
+		if err == nil || !retryable {
+			return out, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// doOnce performs a single HTTP round trip. retryable marks failures
+// worth a second attempt: transport errors, body-read errors, and 5xx
+// statuses. 4xx responses, oversized bodies, and decode failures are
+// deterministic — never retried.
+func (c *Client) doOnce(req *http.Request) (out *Response, err error, retryable bool) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("knowledge: %s %s: %w", req.Method, req.URL, err)
+		return nil, fmt.Errorf("knowledge: %s %s: %w", req.Method, req.URL, err), true
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrNotAuthored
+		return nil, ErrNotAuthored, false
 	}
 	// Read at most one byte past the cap so an oversized body is a clear
 	// error rather than silently truncated (and broken) JSON.
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("knowledge: read body: %w", err)
+		return nil, fmt.Errorf("knowledge: read body: %w", err), true
 	}
 	if len(raw) > maxResponseBytes {
-		return nil, fmt.Errorf("knowledge: %s %s: response exceeds %d MiB", req.Method, req.URL, maxResponseBytes>>20)
+		return nil, fmt.Errorf("knowledge: %s %s: response exceeds %d MiB", req.Method, req.URL, maxResponseBytes>>20), false
 	}
 	if resp.StatusCode >= 400 {
 		// Surface the backend's message verbatim when it's short JSON —
@@ -167,16 +210,16 @@ func (c *Client) do(req *http.Request) (*Response, error) {
 		if len(msg) > 240 {
 			msg = msg[:240] + "…"
 		}
-		return nil, fmt.Errorf("knowledge: %s %s returned %d: %s", req.Method, req.URL, resp.StatusCode, msg)
+		return nil, fmt.Errorf("knowledge: %s %s returned %d: %s", req.Method, req.URL, resp.StatusCode, msg), resp.StatusCode >= 500
 	}
 
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("knowledge: decode envelope: %w", err)
+		return nil, fmt.Errorf("knowledge: decode envelope: %w", err), false
 	}
-	var out Response
-	if err := json.Unmarshal(env.Data, &out); err != nil {
-		return nil, fmt.Errorf("knowledge: decode data: %w", err)
+	var data Response
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		return nil, fmt.Errorf("knowledge: decode data: %w", err), false
 	}
-	return &out, nil
+	return &data, nil, false
 }
