@@ -1,8 +1,7 @@
 package audit
 
-// Offline-guarantee tests (invariant 2 of docs/REVIEW_2026-06-11.md):
-// state-file audits through the pkg/audit library path must perform ZERO
-// network calls — both with a zero-value scanner selection (which resolves
+// Offline-guarantee tests: state-file audits through the pkg/audit
+// library path must perform ZERO network calls — both with a zero-value scanner selection (which resolves
 // to the built-in mock set) and with an explicit MockScanners: true.
 //
 // These replace the legacy-tagged e2e audit_zero_outbound_http test (the
