@@ -27,6 +27,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // WireSeverities is the canonical wire vocabulary the audit engine's
@@ -183,6 +185,9 @@ func (p *RulePack) Validate() error {
 	}
 	if m.PackVersion < 1 {
 		return fmt.Errorf("rulesbundle: invalid pack_version %d", m.PackVersion)
+	}
+	if m.MinEngineVersion != "" && !semver.IsValid(ensureV(m.MinEngineVersion)) {
+		return fmt.Errorf("rulesbundle: invalid min_engine_version %q (want semver)", m.MinEngineVersion)
 	}
 
 	// Wire contract: exact match against the engine vocabulary, in
