@@ -172,7 +172,11 @@ func lambdaFunctionToRaw(fn lambdatypes.FunctionConfiguration, reservedConcurren
 	}
 	// SubnetIds / Variables are passed through as the SDK slice/map; marshalRaw's
 	// JSON round-trip normalises them to []any / map[string]any before the
-	// describer (lambdaSubnetIDs / lambdaEnvVars) reads them.
+	// describer (lambdaSubnetIDs / lambdaEnvVars) reads them. Variables may carry
+	// live secret VALUES here — that's fine: every synthesised raw flows through
+	// lambdaFunctionDescriber.Enrich (runJob enriches fallback raws identically to
+	// CloudControl-listed ones), whose redactSecretEnvValues masks secret-shaped
+	// values before the Inputs reach the grounded prompt.
 	if fn.VpcConfig != nil && len(fn.VpcConfig.SubnetIds) > 0 {
 		props["VpcConfig"] = map[string]any{"SubnetIds": fn.VpcConfig.SubnetIds}
 	}

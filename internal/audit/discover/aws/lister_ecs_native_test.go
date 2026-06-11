@@ -74,3 +74,71 @@ func TestTaskDefinitionToRaw_RoundTrip(t *testing.T) {
 		t.Errorf("sidecar ReadonlyRootFilesystem: present, want absent (unset *bool must not serialise)")
 	}
 }
+
+// TestTaskDefinitionToRaw_RedactsSecretEnvValues pins the env-value redaction:
+// there is no TaskDefinition describer, so the synthesised ContainerDefinitions
+// are exactly what the grounded prompt inlines — a secret-shaped Name's literal
+// Value must come out masked, while the Name itself survives (the grounded
+// plaintext-env rule is a key-NAME heuristic and still needs it). Non-secret
+// values, reference-shaped keys (_ARN-suffixed) and arn:-prefixed values (the
+// indirection shape the rule's suppress path keys off) pass through untouched.
+func TestTaskDefinitionToRaw_RedactsSecretEnvValues(t *testing.T) {
+	td := ecstypes.TaskDefinition{
+		TaskDefinitionArn: strp("arn:aws:ecs:eu-central-1:111122223333:task-definition/cbx-leaky-task:3"),
+		Family:            strp("cbx-leaky-task"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{
+			{
+				Name:  strp("app"),
+				Image: strp("public.ecr.aws/nginx/nginx:stable-perl"),
+				Environment: []ecstypes.KeyValuePair{
+					{Name: strp("DB_PASSWORD"), Value: strp("hunter2")},                                             // secret-shaped name, literal value → masked
+					{Name: strp("DB_SECRET_ARN"), Value: strp("arn:aws:secretsmanager:eu-central-1:123:secret:db")}, // reference-shaped name → untouched
+					{Name: strp("API_TOKEN"), Value: strp("arn:aws:ssm:eu-central-1:123:parameter/token")},          // secret name, ARN value → indirection, untouched
+					{Name: strp("LOG_LEVEL"), Value: strp("debug")},                                                 // plain config → untouched
+				},
+			},
+		},
+	}
+
+	raw, ok := taskDefinitionToRaw(td, "eu-central-1")
+	if !ok {
+		t.Fatal("taskDefinitionToRaw !ok")
+	}
+	dr, err := raw.mapToDiscovered()
+	if err != nil {
+		t.Fatalf("mapToDiscovered: %v", err)
+	}
+
+	defs, ok := dr.Inputs["ContainerDefinitions"].([]any)
+	if !ok || len(defs) != 1 {
+		t.Fatalf("ContainerDefinitions: got %T len=%d, want []any len 1", dr.Inputs["ContainerDefinitions"], len(defs))
+	}
+	app, _ := defs[0].(map[string]any)
+	env, ok := app["Environment"].([]any)
+	if !ok || len(env) != 4 {
+		t.Fatalf("Environment: got %T len=%d, want []any len 4", app["Environment"], len(env))
+	}
+
+	want := map[string]string{
+		"DB_PASSWORD":   "[REDACTED by cbx]",
+		"DB_SECRET_ARN": "arn:aws:secretsmanager:eu-central-1:123:secret:db",
+		"API_TOKEN":     "arn:aws:ssm:eu-central-1:123:parameter/token",
+		"LOG_LEVEL":     "debug",
+	}
+	for _, entry := range env {
+		e, _ := entry.(map[string]any)
+		name, _ := e["Name"].(string)
+		expected, known := want[name]
+		if !known {
+			t.Errorf("unexpected env entry %q", name)
+			continue
+		}
+		if got := e["Value"]; got != expected {
+			t.Errorf("%s Value = %v, want %q", name, got, expected)
+		}
+		delete(want, name)
+	}
+	for name := range want {
+		t.Errorf("env entry %q missing from synthesised ContainerDefinitions", name)
+	}
+}
