@@ -47,8 +47,9 @@ func TestModelOnSubmitEmptyResponseSkipped(t *testing.T) {
 	if !called {
 		t.Fatal("expected OnSubmit to be called")
 	}
-	if strings.Contains(model.viewportContent, "test") {
-		// The user message should still be appended, but no assistant response.
-		// This is expected because handleSubmit always appends the user message.
+	// The user message should still be appended, but no assistant response —
+	// handleSubmit always appends the user message.
+	if !strings.Contains(model.viewportContent, "test") {
+		t.Fatal("expected the user message to be appended to the viewport")
 	}
 }

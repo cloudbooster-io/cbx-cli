@@ -13,13 +13,6 @@ import (
 	"time"
 )
 
-// defaultLLMMaxCostUSD is the default --llm-max-cost cap (USD per audit).
-// Sourced from `2026-05-11-phase-f-uptime-cost.md` §3: $2.00 covered the
-// previous MCP-tool-loop audit with room for noise. The deterministic
-// grounding path is dramatically cheaper (one prompt, no tool turns),
-// so the cap mostly serves as a guardrail against future model drift.
-const defaultLLMMaxCostUSD = 2.00
-
 // cbAPIURLEnv lets users override the CB knowledge backend URL used by
 // the grounding enumerator. Empty falls back to defaultCBAPIURL. The
 // audit always grounds against a live backend; an unreachable URL
@@ -114,7 +107,7 @@ func preflightCBBackend(apiURL string) error {
 			apiURL, err, cbAPIURLEnv,
 		)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf(
 			"CB knowledge backend at %s returned HTTP %d on /health; set %s to a reachable backend",

@@ -122,7 +122,7 @@ func readCapped(path string, maxBytes int) (SourceFile, error) {
 	if err != nil {
 		return SourceFile{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	limit := int64(maxBytes)
 	buf := make([]byte, limit)

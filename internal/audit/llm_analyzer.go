@@ -91,8 +91,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			// emitted). The CLI default is 2.00 (set in audit_aws.go).
 			// Library callers wiring Options directly take the field as
 			// the literal cap; if they want the historical "use the
-			// default" behavior they can pass defaultLLMMaxCostUSD
-			// explicitly.
+			// default" behavior they can pass 2.00 explicitly.
 			return &llmAnalyzer{
 				provider:          opts.LLMProvider,
 				streamer:          streamer,
@@ -481,7 +480,7 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 // output for identical inputs across runs. That means:
 //   - bundle slices are pre-sorted by BuildGrounding,
 //   - resources are sorted by URN/Type before iteration here,
-//   - describer-enrichment keys are sorted by formatDescriberEnrichment,
+//   - resource Inputs are serialized with sorted keys (writeResourceTable),
 //   - no map iteration leaks into the output.
 //
 // Knowledge gaps (CB has no entry for a primitive / workload) are
@@ -794,33 +793,6 @@ func deterministicValue(v any) any {
 	}
 }
 
-// formatDescriberEnrichment serializes only the cb_describer_* keys
-// from a resource's Inputs as a compact one-liner for the prompt. We
-// deliberately omit raw CFN Properties — those are large per resource
-// and the describer-emitted keys already capture the load-bearing
-// signals (IMDSv2, encryption posture, last-used dates, etc.). Empty
-// when no describer ran or none of its keys landed on this resource.
-func formatDescriberEnrichment(inputs map[string]any) string {
-	if len(inputs) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(inputs))
-	for k := range inputs {
-		if strings.HasPrefix(k, "cb_describer_") {
-			keys = append(keys, k)
-		}
-	}
-	if len(keys) == 0 {
-		return ""
-	}
-	sort.Strings(keys)
-	pairs := make([]string, 0, len(keys))
-	for _, k := range keys {
-		pairs = append(pairs, fmt.Sprintf("%s=%v", k, inputs[k]))
-	}
-	return strings.Join(pairs, ", ")
-}
-
 // primitiveIDFor resolves a DiscoveredResource to the CB primitive id
 // the grounded analyzer should query. Returns "" when nothing maps
 // (the analyzer won't emit a tool-call hint for that resource; the
@@ -999,7 +971,7 @@ func parseLLMConnections(raw string) []LLMConnection {
 		if c.From == "" || c.To == "" || c.From == c.To {
 			continue
 		}
-		out = append(out, LLMConnection{From: c.From, To: c.To, Label: c.Label})
+		out = append(out, LLMConnection(c))
 	}
 	return out
 }

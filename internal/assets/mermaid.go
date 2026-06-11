@@ -33,7 +33,7 @@ func MermaidJS() (string, error) {
 			mermaidErr = fmt.Errorf("opening embedded mermaid gzip: %w", err)
 			return
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		data, err := io.ReadAll(r)
 		if err != nil {
 			mermaidErr = fmt.Errorf("reading embedded mermaid bytes: %w", err)

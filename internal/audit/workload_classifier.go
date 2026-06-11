@@ -2,7 +2,6 @@ package audit
 
 import (
 	"sort"
-	"strings"
 )
 
 // CB-authored workload slugs. Only these slugs hit pattern-tagged chunks
@@ -216,12 +215,4 @@ func ClassifyWorkloads(resources []DiscoveredResource) []string {
 	}
 	sort.Strings(slugs)
 	return slugs
-}
-
-// formatWorkloads is a tiny helper for prompt rendering / log lines.
-func formatWorkloads(slugs []string) string {
-	if len(slugs) == 0 {
-		return "(none — falling back to per-primitive grounding only)"
-	}
-	return strings.Join(slugs, ", ")
 }

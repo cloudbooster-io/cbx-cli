@@ -59,7 +59,7 @@ func BuildArchitectureSVG(resources []DiscoveredResource, components []group.Com
 	resourceChips := chipsByResource(findings, keyMap, byURN, idToURN)
 	_ = resourceChips // chips are attached to the registry below
 
-	edges, vpcRoot, lateral := classifyResources(resources, idToURN)
+	edges, vpcRoot, lateral := classifyResources(resources)
 
 	const (
 		canvasWidth = 1480
@@ -140,15 +140,13 @@ func BuildArchitectureSVG(resources []DiscoveredResource, components []group.Com
 	renderLLMConnections(&body, llmConns, byURN, pr)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" preserveAspectRatio="xMidYMin meet" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" role="img" aria-label="CloudBooster AWS architecture diagram">`,
-		canvasWidth, canvasH,
-	))
+	fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" preserveAspectRatio="xMidYMin meet" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" role="img" aria-label="CloudBooster AWS architecture diagram">`,
+		canvasWidth, canvasH)
 	sb.WriteString(svgDefs())
 	// Cream paper background + faint horizontal grid stripes — the
 	// Blueprint engineering-schematic aesthetic.
-	sb.WriteString(fmt.Sprintf(`<rect x="0" y="0" width="%d" height="%d" fill="#FAF7F0"/>`, canvasWidth, canvasH))
-	sb.WriteString(fmt.Sprintf(`<rect x="0" y="0" width="%d" height="%d" fill="url(#bp-grid)"/>`, canvasWidth, canvasH))
+	fmt.Fprintf(&sb, `<rect x="0" y="0" width="%d" height="%d" fill="#FAF7F0"/>`, canvasWidth, canvasH)
+	fmt.Fprintf(&sb, `<rect x="0" y="0" width="%d" height="%d" fill="url(#bp-grid)"/>`, canvasWidth, canvasH)
 	sb.WriteString(body.String())
 	sb.WriteString(svgWatermark(canvasWidth, canvasH, len(llmConns) > 0))
 	sb.WriteString(`</svg>`)
@@ -218,12 +216,6 @@ func (p *positionRegistry) chipsFor(urn string) []string {
 	return p.chips[urn]
 }
 
-// register records a square icon footprint. Kept for callers that still
-// place legacy square icons; the renderer prefers registerBox.
-func (p *positionRegistry) register(urn string, x, y, size int) {
-	p.registerBox(urn, x, y, size, size)
-}
-
 // registerBox records the full bounding rectangle of a 200×56-style
 // resource box so the arrow router can pick the right edge to connect.
 func (p *positionRegistry) registerBox(urn string, x, y, w, h int) {
@@ -231,17 +223,6 @@ func (p *positionRegistry) registerBox(urn string, x, y, w, h int) {
 		return
 	}
 	p.rects[urn] = boxRect{X: x, Y: y, W: w, H: h}
-}
-
-func (p *positionRegistry) center(urn string) (point, bool) {
-	if p == nil {
-		return point{}, false
-	}
-	r, ok := p.rects[urn]
-	if !ok {
-		return point{}, false
-	}
-	return r.center(), true
 }
 
 func (p *positionRegistry) rect(urn string) (boxRect, bool) {
@@ -658,40 +639,11 @@ func isNoiseEdgeURN(urn string) bool {
 	return false
 }
 
-// drawOrthogonalArrow emits a single orthogonal arrow from `from` to
-// `to`. When `isLLM` is true, an orange semi-solid style is used
-// (data-flow); otherwise solid black (structural). The label is the
-// step number, drawn in a paper-knockout pill at the midpoint of the
-// longest segment.
-func drawOrthogonalArrow(sb *strings.Builder, from, to boxRect, step int, isLLM bool) {
-	stroke, dash, markerEnd := "#1C1917", "", "url(#bp-arrow)"
-	if isLLM {
-		stroke, dash, markerEnd = "#C2410C", "5 4", "url(#bp-arrow-red)"
-	}
-	pts := routeOrthogonal(from, to)
-	if len(pts) < 2 {
-		return
-	}
-	d := orthoPath(pts, 10)
-	fmt.Fprintf(sb,
-		`<path d="%s" fill="none" stroke="%s" stroke-width="1.6" stroke-dasharray="%s" stroke-linecap="round" stroke-linejoin="round" marker-end="%s"/>`,
-		d, stroke, dash, markerEnd,
-	)
-	if step > 0 {
-		lx, ly := labelMidpoint(pts)
-		fmt.Fprintf(sb,
-			`<rect x="%d" y="%d" width="20" height="18" fill="#FAF7F0" stroke="%s" stroke-width="1"/>`+
-				`<text x="%d" y="%d" text-anchor="middle" font-size="11" font-weight="800" fill="%s" font-family="'JetBrains Mono', ui-monospace, monospace">%d</text>`,
-			lx-10, ly-9, stroke,
-			lx, ly+4, stroke, step,
-		)
-	}
-}
-
-// drawOrthogonalArrowAvoid is the box-avoiding variant of
-// drawOrthogonalArrow. Picks the polyline via routeOrthogonalAvoid
-// instead of the straight midpoint router, then draws with the same
-// style + label.
+// drawOrthogonalArrowAvoid draws a single orthogonal arrow from `from`
+// to `to`, picking a box-avoiding polyline via routeOrthogonalAvoid.
+// When `isLLM` is true, an orange semi-solid style is used (data-flow);
+// otherwise solid black (structural). The label is the step number,
+// drawn in a paper-knockout pill at the midpoint of the longest segment.
 func drawOrthogonalArrowAvoid(sb *strings.Builder, from, to boxRect, step int, isLLM bool, obstacles map[string]boxRect, fromURN, toURN string) {
 	stroke, dash, markerEnd := "#1C1917", "", "url(#bp-arrow)"
 	if isLLM {
@@ -1056,8 +1008,10 @@ type lateralBucket struct {
 }
 
 // classifyResources partitions the discovery set into the three
-// rendering lanes plus the in-VPC structure.
-func classifyResources(resources []DiscoveredResource, idToURN map[string]string) (edges []DiscoveredResource, root topoRoot, lateral []lateralBucket) {
+// rendering lanes plus the in-VPC structure. It builds its own
+// ID → URN index rather than taking the caller's: synthesized subnet
+// entries are appended below, and the index must include them.
+func classifyResources(resources []DiscoveredResource) (edges []DiscoveredResource, root topoRoot, lateral []lateralBucket) {
 	// Defensive: synthesize AWS::EC2::Subnet entries for any subnet
 	// id we see referenced (DBSubnetGroup.SubnetIds, ALB.Subnets,
 	// Lambda.VpcConfig.SubnetIds, SubnetRouteTableAssociation.SubnetId
@@ -1065,8 +1019,7 @@ func classifyResources(resources []DiscoveredResource, idToURN map[string]string
 	// this the AZ/Subnet hierarchy collapses when a permission gate
 	// or transient discovery hiccup loses the EC2::Subnet list.
 	resources = synthesizeMissingSubnets(resources)
-	// Rebuild idToURN since synthesized resources were appended.
-	idToURN = map[string]string{}
+	idToURN := map[string]string{}
 	for _, r := range resources {
 		if r.ID != "" {
 			idToURN[r.ID] = r.URN
@@ -1632,10 +1585,9 @@ func renderHeader(sb *strings.Builder, ctx AWSAuditContext, w, y, h int) {
 	// lives in the HTML chrome around the SVG.
 	pad := 28
 	accent := "#C2410C"
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="10" font-weight="700" fill="#78716C" letter-spacing="0.18em" font-family="'JetBrains Mono', ui-monospace, monospace">SHEET A1 · INFRASTRUCTURE TOPOLOGY</text>`,
-		pad, y+22,
-	))
+		pad, y+22)
 	if ctx.AccountID != "" || len(ctx.Regions) > 0 {
 		rightX := w - pad
 		title := ""
@@ -1648,16 +1600,14 @@ func renderHeader(sb *strings.Builder, ctx AWSAuditContext, w, y, h int) {
 			}
 			title += strings.Join(ctx.Regions, " · ")
 		}
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" text-anchor="end" font-size="14" font-weight="700" fill="#1C1917" letter-spacing="-0.02em">CBX AUDIT · %s</text>`,
-			rightX, y+24, svgEscape(title),
-		))
+			rightX, y+24, svgEscape(title))
 	}
 	// Accent underline below the header row.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s" stroke-width="1.5"/>`,
-		pad, y+h-12, w-pad, y+h-12, accent,
-	))
+		pad, y+h-12, w-pad, y+h-12, accent)
 }
 
 // -----------------------------------------------------------------------------
@@ -1675,7 +1625,6 @@ const (
 	boxW         = 200
 	boxH         = 56
 	boxIconSize  = 40
-	iconSize     = boxIconSize // kept for callers that reference the legacy name
 	iconLabelGap = 4
 	iconCellW    = 220 // box + 20px horizontal gutter
 	iconCellH    = 68  // box + 12px vertical gutter
@@ -1716,24 +1665,21 @@ func renderAWSCloud(sb *strings.Builder, ctx AWSAuditContext, root topoRoot, x, 
 	// Blueprint REGION frame — solid 1.5px black border, sharp corners.
 	// Header band carries the REGION + account label, no separate
 	// account container (Blueprint flattens that level).
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="%d" fill="none" stroke="#1C1917" stroke-width="1.5"/>`,
-		x, y, w, awsOuterH,
-	))
+		x, y, w, awsOuterH)
 	regionLbl := "REGION"
-	if ctx.Regions != nil && len(ctx.Regions) > 0 {
+	if len(ctx.Regions) > 0 {
 		regionLbl = "REGION · " + strings.Join(ctx.Regions, " · ")
 	}
 	sb.WriteString(iconForCFNType("__group__/aws_cloud", x+10, y+6, 20, "aws"))
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="10" font-weight="700" fill="#1C1917" letter-spacing="0.15em">%s</text>`,
-		x+36, y+20, svgEscape(regionLbl),
-	))
+		x+36, y+20, svgEscape(regionLbl))
 	if ctx.AccountID != "" {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" font-size="10" fill="#78716C">(AWS account · %s)</text>`,
-			x+260, y+20, svgEscape(ctx.AccountID),
-		))
+			x+260, y+20, svgEscape(ctx.AccountID))
 	}
 
 	// VPC frames, stacked
@@ -1764,10 +1710,9 @@ func renderOrphanRowHeight(orphans []DiscoveredResource, w int) int {
 // renderOrphanRow renders orphan / VPC-less networked resources in a
 // compact icon row directly inside the account frame.
 func renderOrphanRow(sb *strings.Builder, orphans []DiscoveredResource, x, y, w int, pr *positionRegistry) {
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="10" font-weight="700" fill="#64748B" letter-spacing="0.16em">UNATTRIBUTED NETWORK</text>`,
-		x+4, y+14,
-	))
+		x+4, y+14)
 	cols := w / iconCellW
 	if cols < 1 {
 		cols = 1
@@ -1788,10 +1733,9 @@ func renderOrphanRow(sb *strings.Builder, orphans []DiscoveredResource, x, y, w 
 func renderVPC(sb *strings.Builder, v *topoVPC, x, y, w, h int, pr *positionRegistry) {
 	const vpcBorder = "#C2410C" // Blueprint accent orange — dashed
 	// Dashed orange VPC frame, sharp corners.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="%d" fill="none" stroke="%s" stroke-width="1.3" stroke-dasharray="5 3"/>`,
-		x, y, w, h, vpcBorder,
-	))
+		x, y, w, h, vpcBorder)
 	name := v.res.ID
 	if name == "" {
 		name = "VPC"
@@ -1817,20 +1761,17 @@ func renderVPC(sb *strings.Builder, v *topoVPC, x, y, w, h int, pr *positionRegi
 	}
 	stripPad := 16
 	stripW := 24 /*icon*/ + headerWidth + idWidth + stripPad
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="16" fill="#FAF7F0"/>`,
-		x+8, y-9, stripW,
-	))
+		x+8, y-9, stripW)
 	sb.WriteString(iconForCFNType("__group__/vpc", x+12, y-9, 14, "VPC"))
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="10" font-weight="700" fill="%s" letter-spacing="0.1em">%s</text>`,
-		x+32, y+1, vpcBorder, svgEscape(header),
-	))
+		x+32, y+1, vpcBorder, svgEscape(header))
 	if idText != "" {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" font-size="9" fill="#78716C">%s</text>`,
-			x+32+headerWidth+8, y+1, idText,
-		))
+			x+32+headerWidth+8, y+1, idText)
 	}
 
 	// Render AZ columns side-by-side. Each AZ column carries its
@@ -1932,18 +1873,16 @@ func azColumnHeight(az *topoAZ, w int) int {
 func renderAZColumn(sb *strings.Builder, az *topoAZ, x, y, w, h int, pr *positionRegistry) {
 	// AZ container — thin neutral-gray solid frame; the AZ reads as a
 	// logical grouping inside the VPC, not a hard boundary.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="%d" fill="none" stroke="#A8A29E" stroke-width="0.8"/>`,
-		x, y, w, h,
-	))
+		x, y, w, h)
 	name := az.name
 	if name == "" {
 		name = "(zone unknown)"
 	}
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="9.5" font-weight="700" fill="#57534E" letter-spacing="0.08em">AZ · %s</text>`,
-		x+azPad+2, y+16, svgEscape(name),
-	))
+		x+azPad+2, y+16, svgEscape(name))
 
 	innerX := x + azPad
 	innerY := y + azHeaderH
@@ -1954,10 +1893,9 @@ func renderAZColumn(sb *strings.Builder, az *topoAZ, x, y, w, h int, pr *positio
 		innerY += sh + 8
 	}
 	if len(az.resources) > 0 {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" font-size="9.5" font-weight="700" fill="#475569" letter-spacing="0.14em">AZ-SCOPED</text>`,
-			innerX, innerY+12,
-		))
+			innerX, innerY+12)
 		rowY := innerY + 20
 		cols := innerW / iconCellW
 		if cols < 1 {
@@ -1989,30 +1927,26 @@ func renderSubnet(sb *strings.Builder, s *topoSubnet, x, y, w, h int, pr *positi
 		kind = "PUBLIC"
 		subnetIcon = "__group__/subnet_public"
 	}
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="%d" fill="none" stroke="%s" stroke-width="1"/>`,
-		x, y, w, h, border,
-	))
+		x, y, w, h, border)
 	// Header strip — 22px tall, 7% tint of the border colour.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<rect x="%d" y="%d" width="%d" height="22" fill="%s" fill-opacity="0.07"/>`,
-		x, y, w, border,
-	))
+		x, y, w, border)
 	sb.WriteString(iconForCFNType(subnetIcon, x+5, y+4, 14, "SN"))
 	cidr, _ := s.res.Inputs["CidrBlock"].(string)
 	header := kind
 	if cidr != "" {
 		header = kind + " · " + cidr
 	}
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="9.5" font-weight="700" fill="%s" letter-spacing="0.06em">%s</text>`,
-		x+24, y+15, border, svgEscape(header),
-	))
+		x+24, y+15, border, svgEscape(header))
 	if s.res.ID != "" {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" text-anchor="end" font-size="8.5" fill="#78716C">%s</text>`,
-			x+w-8, y+15, svgEscape(svgTruncate(s.res.ID, 18)),
-		))
+			x+w-8, y+15, svgEscape(svgTruncate(s.res.ID, 18)))
 	}
 
 	// Resources placed inside the subnet body. Empty subnets get a
@@ -2022,10 +1956,9 @@ func renderSubnet(sb *strings.Builder, s *topoSubnet, x, y, w, h int, pr *positi
 	innerY := y + subnetHeaderH + 8
 	innerW := w - 24
 	if len(s.resources) == 0 {
-		sb.WriteString(fmt.Sprintf(
+		fmt.Fprintf(sb,
 			`<text x="%d" y="%d" text-anchor="middle" font-size="12" font-style="italic" fill="#A8A29E">(no managed compute)</text>`,
-			x+w/2, y+h/2+4,
-		))
+			x+w/2, y+h/2+4)
 		return
 	}
 	cols := innerW / iconCellW
@@ -2063,10 +1996,9 @@ func subnetHeight(s *topoSubnet, innerW int) int {
 func renderEdgeLane(sb *strings.Builder, edges []DiscoveredResource, x, y, w int, pr *positionRegistry) int {
 	// No encapsulating frame — Blueprint just stacks the boxes
 	// directly under a small "EDGE · CDN" label.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="9.5" font-weight="700" fill="#57534E" letter-spacing="0.14em">EDGE · CDN</text>`,
-		x, y+2,
-	))
+		x, y+2)
 	cy := y + 14
 	// Users entry point at the top — a 200×56 box stylistically
 	// matching the rest, but with a custom silhouette icon.
@@ -2110,59 +2042,9 @@ func renderUsersBox(sb *strings.Builder, x, y int) {
 	)
 }
 
-func edgeLaneHeight(edges []DiscoveredResource) int {
-	// Label + (Users + each edge resource) × (box + gutter)
-	return 14 + (len(edges)+1)*(boxH+16)
-}
-
-// renderUsersInline draws a "Users" entry-point icon at (x,y).
-// Returns the height consumed.
-func renderUsersInline(sb *strings.Builder, x, y int) int {
-	// Simple two-person silhouette in slate.
-	sb.WriteString(fmt.Sprintf(
-		`<g transform="translate(%d,%d)">`+
-			`<circle cx="22" cy="20" r="9" fill="#475569"/>`+
-			`<path d="M5 50 Q5 33 22 33 Q39 33 39 50 Z" fill="#475569"/>`+
-			`<circle cx="44" cy="22" r="7" fill="#94A3B8"/>`+
-			`<path d="M30 50 Q30 36 44 36 Q56 36 56 50 Z" fill="#94A3B8"/>`+
-			`</g>`,
-		x, y,
-	))
-	// "Users" label below
-	sb.WriteString(fmt.Sprintf(
-		`<text x="%d" y="%d" text-anchor="middle" font-size="10.5" font-weight="600" fill="#0F172A">Users</text>`,
-		x+iconSize/2, y+iconSize+14,
-	))
-	return iconCellH + 6
-}
-
-// renderUsersBlock is the standalone variant when no edge services
-// were discovered — it draws just the users icon centered in a
-// minimal lane.
-func renderUsersBlock(sb *strings.Builder, x, y, w int) int {
-	innerX := x + 12
-	innerW := w - 24
-	sb.WriteString(fmt.Sprintf(
-		`<rect x="%d" y="%d" width="%d" height="80" rx="10" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1" stroke-dasharray="4 3"/>`,
-		x, y, w,
-	))
-	renderUsersInline(sb, innerX+(innerW-iconSize)/2, y+16)
-	return 110
-}
-
 // -----------------------------------------------------------------------------
 // Lateral lane (right-side services)
 // -----------------------------------------------------------------------------
-
-// Lateral-lane cell geometry: keep icons full-size to match the
-// in-VPC ones, then accept ~2 icons per row at the lane width. Each
-// service bucket becomes a small "component" card with a dashed
-// border, label, and the icons inside — visually consistent with
-// the reference's "Web UI component" / "Cost component" boxes.
-const (
-	lateralCellW = 116
-	lateralCellH = iconCellH
-)
 
 func renderLateralLane(sb *strings.Builder, buckets []lateralBucket, x, y, w int, pr *positionRegistry) int {
 	if len(buckets) == 0 {
@@ -2172,10 +2054,9 @@ func renderLateralLane(sb *strings.Builder, buckets []lateralBucket, x, y, w int
 	// of resource boxes rather than separate component cards. Identity
 	// / observability buckets (IAM, KMS, CloudWatch) are filtered out;
 	// they live in the bottom account-scoped strip.
-	sb.WriteString(fmt.Sprintf(
+	fmt.Fprintf(sb,
 		`<text x="%d" y="%d" font-size="9.5" font-weight="700" fill="#57534E" letter-spacing="0.14em">DATA · STATE</text>`,
-		x, y+2,
-	))
+		x, y+2)
 	cy := y + 14
 	for _, b := range buckets {
 		if isAccountScopedBucket(b.Title) || isHiddenBucket(b.Title) {
@@ -2216,111 +2097,6 @@ func isHiddenBucket(title string) bool {
 	return false
 }
 
-func lateralLaneHeight(buckets []lateralBucket, innerW int) int {
-	count := 0
-	for _, b := range buckets {
-		if isAccountScopedBucket(b.Title) || isHiddenBucket(b.Title) {
-			continue
-		}
-		count += len(b.Resources)
-	}
-	if count == 0 {
-		return 0
-	}
-	return 14 + count*(boxH+16)
-}
-
-// maxComponentRows caps how many rows a lateral-lane "component"
-// box renders before collapsing the rest into a "+N more" footnote.
-// Tuned so even an account with 30 IAM roles or 50 EBS volumes
-// stays inside one viewport-height worth of report.
-const maxComponentRows = 3
-
-func lateralBucketHeight(b lateralBucket, w int) int {
-	cols := w / lateralCellW
-	if cols < 1 {
-		cols = 1
-	}
-	rows := (len(b.Resources) + cols - 1) / cols
-	if rows < 1 {
-		rows = 1
-	}
-	overflow := false
-	if rows > maxComponentRows {
-		rows = maxComponentRows
-		overflow = true
-	}
-	h := componentHeaderH + rows*lateralCellH + 10
-	if overflow {
-		h += 14 // room for "+N more" footnote
-	}
-	return h
-}
-
-// renderComponentBox draws a dashed-bordered "component" card with
-// a header label + the resources placed inside as an icon grid.
-// Mirrors the "Web UI component" / "Cost component" boxes in the
-// AWS Architecture Center reference diagrams. When the resource
-// list overflows maxComponentRows, the renderer drops a "+N more"
-// footnote at the bottom of the box so big accounts don't blow the
-// vertical budget.
-func renderComponentBox(sb *strings.Builder, title string, resources []DiscoveredResource, x, y, w, h int, pr *positionRegistry) {
-	sb.WriteString(fmt.Sprintf(
-		`<rect x="%d" y="%d" width="%d" height="%d" rx="10" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1" stroke-dasharray="4 3"/>`,
-		x, y, w, h,
-	))
-	sb.WriteString(fmt.Sprintf(
-		`<text x="%d" y="%d" font-size="11" font-weight="600" fill="#475569" letter-spacing="0.04em">%s</text>`,
-		x+14, y+22, svgEscape(title+" component"),
-	))
-
-	innerX := x + 14
-	innerY := y + componentHeaderH
-	innerW := w - 28
-	cols := innerW / lateralCellW
-	if cols < 1 {
-		cols = 1
-	}
-	gridW := cols * lateralCellW
-	if gridW > innerW {
-		gridW = innerW
-	}
-	leftPad := (innerW - gridW) / 2
-
-	totalRows := (len(resources) + cols - 1) / cols
-	visibleRows := totalRows
-	overflow := 0
-	if visibleRows > maxComponentRows {
-		visibleRows = maxComponentRows
-		overflow = len(resources) - visibleRows*cols
-	}
-	visibleCount := visibleRows * cols
-	if visibleCount > len(resources) {
-		visibleCount = len(resources)
-	}
-
-	for i := 0; i < visibleCount; i++ {
-		r := resources[i]
-		col := i % cols
-		rowIdx := i / cols
-		ix := innerX + leftPad + col*lateralCellW + (lateralCellW-iconSize)/2
-		iy := innerY + rowIdx*lateralCellH
-		renderResourceIcon(sb, pr, r, ix, iy)
-	}
-	if overflow > 0 {
-		sb.WriteString(fmt.Sprintf(
-			`<text x="%d" y="%d" font-size="10" font-style="italic" fill="#64748B">+ %d more</text>`,
-			innerX, y+h-8, overflow,
-		))
-	}
-}
-
-const componentHeaderH = 32
-
-// -----------------------------------------------------------------------------
-// Connections (edge → cloud, cloud → lateral)
-// -----------------------------------------------------------------------------
-
 // -----------------------------------------------------------------------------
 // Defs / watermark / helpers
 // -----------------------------------------------------------------------------
@@ -2348,41 +2124,29 @@ func svgWatermark(w, h int, hasLLMConnections bool) string {
 	var b strings.Builder
 	b.WriteString(`<g font-family="'JetBrains Mono', ui-monospace, monospace" font-size="10">`)
 	// LINES label
-	b.WriteString(fmt.Sprintf(
-		`<text x="28" y="%d" font-weight="700" fill="#78716C" letter-spacing="0.14em">LINES</text>`,
-		h-12,
-	))
+	fmt.Fprintf(&b, `<text x="28" y="%d" font-weight="700" fill="#78716C" letter-spacing="0.14em">LINES</text>`,
+		h-12)
 	// sync (solid black)
-	b.WriteString(fmt.Sprintf(
-		`<line x1="78" y1="%d" x2="98" y2="%d" stroke="#1C1917" stroke-width="1.6"/>`+
-			`<path d="M 98 %d L 104 %d L 98 %d Z" fill="#1C1917"/>`+
-			`<text x="110" y="%d" fill="#1C1917" font-weight="600">sync</text>`,
-		h-16, h-16, h-19, h-16, h-13, h-12,
-	))
+	fmt.Fprintf(&b, `<line x1="78" y1="%d" x2="98" y2="%d" stroke="#1C1917" stroke-width="1.6"/>`+
+		`<path d="M 98 %d L 104 %d L 98 %d Z" fill="#1C1917"/>`+
+		`<text x="110" y="%d" fill="#1C1917" font-weight="600">sync</text>`,
+		h-16, h-16, h-19, h-16, h-13, h-12)
 	// async (dashed gray)
-	b.WriteString(fmt.Sprintf(
-		`<line x1="158" y1="%d" x2="178" y2="%d" stroke="#78716C" stroke-width="1.6" stroke-dasharray="4 3"/>`+
-			`<path d="M 178 %d L 184 %d L 178 %d Z" fill="#78716C"/>`+
-			`<text x="190" y="%d" fill="#78716C" font-weight="600">async</text>`,
-		h-16, h-16, h-19, h-16, h-13, h-12,
-	))
+	fmt.Fprintf(&b, `<line x1="158" y1="%d" x2="178" y2="%d" stroke="#78716C" stroke-width="1.6" stroke-dasharray="4 3"/>`+
+		`<path d="M 178 %d L 184 %d L 178 %d Z" fill="#78716C"/>`+
+		`<text x="190" y="%d" fill="#78716C" font-weight="600">async</text>`,
+		h-16, h-16, h-19, h-16, h-13, h-12)
 	// unauth / priv (dashed red)
-	b.WriteString(fmt.Sprintf(
-		`<line x1="244" y1="%d" x2="264" y2="%d" stroke="#B91C1C" stroke-width="1.6" stroke-dasharray="4 3"/>`+
-			`<path d="M 264 %d L 270 %d L 264 %d Z" fill="#B91C1C"/>`+
-			`<text x="276" y="%d" fill="#B91C1C" font-weight="600">unauth / priv</text>`,
-		h-16, h-16, h-19, h-16, h-13, h-12,
-	))
+	fmt.Fprintf(&b, `<line x1="244" y1="%d" x2="264" y2="%d" stroke="#B91C1C" stroke-width="1.6" stroke-dasharray="4 3"/>`+
+		`<path d="M 264 %d L 270 %d L 264 %d Z" fill="#B91C1C"/>`+
+		`<text x="276" y="%d" fill="#B91C1C" font-weight="600">unauth / priv</text>`,
+		h-16, h-16, h-19, h-16, h-13, h-12)
 	if !hasLLMConnections {
-		b.WriteString(fmt.Sprintf(
-			`<text x="%d" y="%d" text-anchor="middle" fill="#78716C" font-style="italic">structural arrows only · run with --cb-knowledge for data-flow inference</text>`,
-			w/2, h-12,
-		))
+		fmt.Fprintf(&b, `<text x="%d" y="%d" text-anchor="middle" fill="#78716C" font-style="italic">structural arrows only · run with --cb-knowledge for data-flow inference</text>`,
+			w/2, h-12)
 	}
-	b.WriteString(fmt.Sprintf(
-		`<text x="%d" y="%d" text-anchor="end" fill="#78716C">CBX AUDIT · cloudbooster.io</text>`,
-		w-28, h-12,
-	))
+	fmt.Fprintf(&b, `<text x="%d" y="%d" text-anchor="end" fill="#78716C">CBX AUDIT · cloudbooster.io</text>`,
+		w-28, h-12)
 	b.WriteString(`</g>`)
 	return b.String()
 }
@@ -2405,15 +2169,6 @@ func svgTruncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
-}
-
-// shortID returns a sensible short form of an AWS resource ID for use
-// under an icon (typically capped at 22 chars).
-func shortID(id string) string {
-	if id == "" {
-		return ""
-	}
-	return svgTruncate(id, 22)
 }
 
 // friendlyKind returns the AWS Architecture Center-style service

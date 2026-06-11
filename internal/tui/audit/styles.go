@@ -30,7 +30,6 @@ var (
 	listItemTitle   = lipgloss.NewStyle().Foreground(colTextLo)
 	listItemDim     = lipgloss.NewStyle().Foreground(colMuted).Italic(true)
 	listItemSelBG   = lipgloss.NewStyle().Background(colSelBG)
-	listItemBar     = lipgloss.NewStyle().Bold(true)
 	detailLabel     = lipgloss.NewStyle().Foreground(colMuted).Bold(true)
 	detailBody      = lipgloss.NewStyle().Foreground(colTextLo)
 	detailHeading   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)

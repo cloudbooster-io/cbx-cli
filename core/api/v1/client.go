@@ -52,7 +52,7 @@ func NewAPIClient(cfg *config.Config, optFns ...func(*ClientOptions)) (*APIClien
 
 	// Build the transport stack from the network outward:
 	// Auth -> Retry -> RateLimit -> caller
-	var rt http.RoundTripper = http.DefaultTransport
+	rt := http.DefaultTransport
 
 	rt = &AuthTransport{
 		Base:  rt,
