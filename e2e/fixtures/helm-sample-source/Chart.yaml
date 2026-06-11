@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cbx-audit-source-helm-demo
+description: Intentionally misconfigured Helm chart fixture. Do not deploy.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

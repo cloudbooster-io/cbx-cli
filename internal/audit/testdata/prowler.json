@@ -1,0 +1,47 @@
+[
+  {
+    "AssessmentStartTime": "2024-01-01T00:00:00Z",
+    "FindingUniqueId": "prowler-aws-s3_bucket_versioning-123456789012-us-east-1-my-bucket",
+    "Provider": "aws",
+    "CheckID": "s3_bucket_versioning",
+    "CheckTitle": "Ensure S3 bucket has versioning enabled",
+    "ServiceName": "s3",
+    "SubServiceName": "s3",
+    "Status": "FAIL",
+    "StatusExtended": "S3 bucket my-bucket does not have versioning enabled.",
+    "Severity": "medium",
+    "ResourceId": "my-bucket",
+    "ResourceArn": "arn:aws:s3:::my-bucket",
+    "Region": "us-east-1"
+  },
+  {
+    "AssessmentStartTime": "2024-01-01T00:00:00Z",
+    "FindingUniqueId": "prowler-aws-s3_bucket_default_encryption-123456789012-us-east-1-my-bucket",
+    "Provider": "aws",
+    "CheckID": "s3_bucket_default_encryption",
+    "CheckTitle": "Ensure S3 bucket has default encryption enabled",
+    "ServiceName": "s3",
+    "SubServiceName": "s3",
+    "Status": "FAIL",
+    "StatusExtended": "S3 bucket my-bucket does not have default encryption enabled.",
+    "Severity": "high",
+    "ResourceId": "my-bucket",
+    "ResourceArn": "arn:aws:s3:::my-bucket",
+    "Region": "us-east-1"
+  },
+  {
+    "AssessmentStartTime": "2024-01-01T00:00:00Z",
+    "FindingUniqueId": "prowler-aws-ec2_securitygroup_allow_ingress_from_internet_to_any_port-123456789012-us-east-1-sg-123",
+    "Provider": "aws",
+    "CheckID": "ec2_securitygroup_allow_ingress_from_internet_to_any_port",
+    "CheckTitle": "Ensure no security groups allow ingress from 0.0.0.0/0 to any port",
+    "ServiceName": "ec2",
+    "SubServiceName": "securitygroup",
+    "Status": "PASS",
+    "StatusExtended": "Security group sg-123 does not allow ingress from 0.0.0.0/0 to any port.",
+    "Severity": "high",
+    "ResourceId": "sg-123",
+    "ResourceArn": "arn:aws:ec2:us-east-1:123456789012:security-group/sg-123",
+    "Region": "us-east-1"
+  }
+]

@@ -1,0 +1,179 @@
+# GoReleaser v2 configuration for cbx-cli.
+#
+# Reference docs: https://goreleaser.com/customization/
+# Validate locally with: `goreleaser check`
+#
+# Notes that are load-bearing for this repo:
+#
+#   * The archive `name_template` MUST stay in sync with the in-binary update
+#     checker. `internal/update/update.go:directAssetURL` constructs the
+#     download URL as `cbx-cli_<Os>_<Arch>.tar.gz`, where `<Os>` is
+#     Title-cased (Darwin / Linux / Windows) and `<Arch>` maps amd64 ->
+#     x86_64 (arm64 passes through). GoReleaser v2 removed `archives.replacements`,
+#     so the amd64 -> x86_64 mapping is done inline in the template below.
+#     `{{ title .Os }}` yields the Title-cased GOOS the checker expects.
+#
+#   * ldflags inject the same vars the Makefile uses:
+#       pkg/cmd.{Version,Commit,Date} and internal/telemetry.defaultDSN.
+#     SENTRY_DSN is allowed to be empty (a source/CI build without a DSN ships
+#     no telemetry endpoint) via the `env` default below.
+version: 2
+
+project_name: cbx-cli
+
+# Provide a default for SENTRY_DSN so `{{ .Env.SENTRY_DSN }}` never errors on a
+# missing key. When the var is unset in the environment, this resolves to the
+# empty string (no telemetry endpoint baked in).
+env:
+  - SENTRY_DSN={{ if index .Env "SENTRY_DSN" }}{{ .Env.SENTRY_DSN }}{{ end }}
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: cbx
+    main: ./cmd/cbx
+    binary: cbx
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Version={{ .Version }}
+      - -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Commit={{ .Commit }}
+      - -X github.com/cloudbooster-io/cbx-cli/pkg/cmd.Date={{ .Date }}
+      - -X github.com/cloudbooster-io/cbx-cli/internal/telemetry.defaultDSN={{ .Env.SENTRY_DSN }}
+
+archives:
+  - id: cbx
+    ids:
+      - cbx
+    # Matches internal/update/update.go:directAssetURL exactly:
+    #   cbx-cli_<TitleOs>_<Arch>.tar.gz   (amd64 -> x86_64, arm64 unchanged)
+    # The archive format appends the extension, so it is NOT in the template.
+    name_template: >-
+      {{ .ProjectName }}_{{ title .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}
+    formats:
+      - tar.gz
+    # Windows ships as zip; everything else stays tar.gz (which is what the
+    # update checker downloads on unix).
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: cloudbooster-io
+    name: cbx-cli
+
+# Homebrew **cask**. GoReleaser deprecated `brews` (it generated hackyish
+# formulas for pre-built binaries) in favour of casks; in v2.16 the deprecation
+# is mandatory. Casks are macOS-only — Linux installs via the nfpms .deb/.rpm
+# below or the release tarball (see README). After the first cask release,
+# delete any stale Formula/cbx-cli.rb from the tap repo so the name resolves to
+# the cask. Cask metadata has no `license`/`test`/`install` stanzas (those are
+# formula-only); the binary symlink is declared via `binaries` and Gatekeeper
+# quarantine is handled in the post-install hook.
+homebrew_casks:
+  - name: cbx-cli
+    ids:
+      - cbx
+    binaries:
+      - cbx
+    repository:
+      owner: cloudbooster-io
+      name: homebrew-tap
+    homepage: "https://github.com/cloudbooster-io/cbx-cli"
+    description: "CloudBooster CLI — plan and audit your cloud infrastructure."
+    commit_author:
+      name: goreleaserbot
+      email: bot@cloudbooster.io
+    # The release binaries are not Apple-notarized; strip the Gatekeeper
+    # quarantine xattr on install so `cbx` runs without a "cannot be opened"
+    # prompt on the first launch.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cbx"]
+          end
+
+# Linux packages (.deb / .rpm) so Linux users get a native apt/dnf path instead
+# of Homebrew (casks don't work on Linux). Built from the same `cbx` build.
+nfpms:
+  - id: cbx
+    package_name: cbx-cli
+    ids:
+      - cbx
+    formats:
+      - deb
+      - rpm
+    # Same identity GoReleaser commits to the tap / scoop-bucket repos with.
+    maintainer: "CloudBooster <bot@cloudbooster.io>"
+    homepage: "https://github.com/cloudbooster-io/cbx-cli"
+    description: "CloudBooster CLI — plan and audit your cloud infrastructure."
+    license: "Apache-2.0"
+    bindir: /usr/bin
+
+scoops:
+  - name: cbx-cli
+    ids:
+      - cbx
+    repository:
+      owner: cloudbooster-io
+      name: scoop-bucket
+    homepage: "https://github.com/cloudbooster-io/cbx-cli"
+    description: "CloudBooster CLI — plan and audit your cloud infrastructure."
+    license: "Apache-2.0"
+    commit_author:
+      name: goreleaserbot
+      email: bot@cloudbooster.io
+
+# Best-effort keyless Cosign signing of the checksums file. Runs only where
+# cosign is present (CI); a local `goreleaser release --skip=sign` skips it.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes" # required on cosign >= 2.0.0
+    artifacts: checksum
+    output: true
+
+# Best-effort SBOM generation with Syft. Runs only where syft is present (CI).
+sboms:
+  - id: archive
+    artifacts: archive

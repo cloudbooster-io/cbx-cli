@@ -1,0 +1,26 @@
+---
+title: "ADR: Static Site"
+generated-at: 2026-01-01T00:00:00Z
+intent: "static site"
+variant: 1
+---
+
+# ADR: Static Site
+
+## Status
+Proposed
+
+## Context
+The user requested: "static site"
+
+
+## Diagram
+
+```mermaid
+flowchart LR
+    s3[S3]
+    users[Users]
+    users --> s3
+    click s3 href "#s3"
+
+```

@@ -1,0 +1,31 @@
+{
+  "check_type": "terraform",
+  "results": {
+    "failed_checks": [
+      {
+        "check_id": "CKV_AWS_19",
+        "check_name": "Ensure S3 bucket has versioning enabled",
+        "resource": "aws_s3_bucket.my_bucket",
+        "guideline": "https://docs.bridgecrew.io/docs/ensuring-s3-versioning-is-enabled",
+        "file_path": "/terraform.tfstate",
+        "file_line_range": [1, 5],
+        "severity": "MEDIUM",
+        "code_block": []
+      },
+      {
+        "check_id": "CKV_AWS_145",
+        "check_name": "Ensure S3 bucket has default encryption enabled",
+        "resource": "aws_s3_bucket.my_bucket",
+        "guideline": "https://docs.bridgecrew.io/docs/ensuring-s3-bucket-has-default-encryption-enabled",
+        "file_path": "/terraform.tfstate",
+        "file_line_range": [1, 5],
+        "severity": "HIGH",
+        "code_block": []
+      }
+    ]
+  },
+  "summary": {
+    "passed": 3,
+    "failed": 2
+  }
+}

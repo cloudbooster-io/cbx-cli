@@ -1,0 +1,223 @@
+variables:
+  GO_VERSION: "1.26"
+
+stages:
+  - validate
+  - test
+  - e2e
+  - release
+
+# ---------------------------------------------------------------------------
+# Shared Go module cache — extended by every Go job.
+# GOPATH moves under the project dir because GitLab can only cache paths
+# inside CI_PROJECT_DIR; the cache key tracks go.sum so it is reused until
+# dependencies change. Without this every job re-downloads the aws-sdk-go-v2
+# tree. -modcacherw keeps the module cache writable so the runner's
+# `git clean` and cache archiving don't trip over Go's read-only cache layout.
+# ---------------------------------------------------------------------------
+.go-cache:
+  variables:
+    GOPATH: "$CI_PROJECT_DIR/.go"
+    GOFLAGS: "-modcacherw"
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go/pkg/mod/
+
+# ---------------------------------------------------------------------------
+# Validate
+# ---------------------------------------------------------------------------
+validate:
+  stage: validate
+  extends: .go-cache
+  image: golang:${GO_VERSION}
+  script:
+    - go mod download
+    - go vet ./...
+    - go build ./cmd/cbx
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+lint:
+  stage: validate
+  extends: .go-cache
+  # Pinned to major.minor so CI matches the maintainers' local v2.11.x.
+  image: golangci/golangci-lint:v2.11
+  # Shares the e2e_compile resource_group with `test`/`e2e`/`e2e-staging`:
+  # the lint run typechecks the aws-sdk-go-v2 tree, which is the same heavy
+  # compile those jobs serialize — see the note on the `test` job.
+  resource_group: e2e_compile
+  script:
+    - golangci-lint run ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+codegen-check:
+  stage: validate
+  extends: .go-cache
+  image: golang:${GO_VERSION}
+  script:
+    - go mod download
+    - make codegen-check
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Unit + local E2E tests
+# ---------------------------------------------------------------------------
+test:
+  stage: test
+  extends: .go-cache
+  image: golang:${GO_VERSION}
+  # Shares the e2e_compile resource_group with `e2e`/`e2e-staging`: the unit-test
+  # run also compiles aws-sdk-go-v2, so a concurrent run alongside an e2e job (e.g.
+  # a post-merge `main` pipeline) OOM-wedges the 2-slot runner pool. Serializing all
+  # three heavy compiles project-wide closes the gap the e2e-only fix left open.
+  resource_group: e2e_compile
+  script:
+    # ./e2e is excluded: the dedicated `e2e` job below runs that suite, and
+    # `go test -v ./...` executed it a second time per pipeline (pure waste —
+    # the duplicate runs were merely serialized by the shared resource_group).
+    - go test -v $(go list ./... | grep -v /e2e)
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Mermaid fixture validation — ensures mermaid v10+ syntax is correct
+# ---------------------------------------------------------------------------
+mermaid-validate:
+  stage: test
+  image: node:22-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends
+        ca-certificates fonts-liberation libasound2 libatk-bridge2.0-0 libatk1.0-0
+        libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1
+        libgcc-s1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0
+        libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1
+        libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1
+        libxss1 libxtst6 libxkbcommon0 libdrm2 lsb-release wget xdg-utils
+  script:
+    - npm install -g @mermaid-js/mermaid-cli
+    - echo '{"args":["--no-sandbox"]}' > /tmp/puppeteer-config.json
+    - mmdc -p /tmp/puppeteer-config.json -i internal/output/testdata/diagram.mmd -o /tmp/out.svg
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# E2E — runs on the standard untagged group runner.
+# The OS matrix (linux + darwin) was dropped: we have no darwin runner today,
+# and the linux/darwin tags left jobs stuck with `stuck_pending_no_matching_runners`.
+# Restore the matrix when a darwin runner is registered.
+# ---------------------------------------------------------------------------
+e2e:
+  stage: e2e
+  extends: .go-cache
+  image: golang:${GO_VERSION}
+  # Serialized against e2e-staging via a shared resource_group: both compile
+  # aws-sdk-go-v2, and running them concurrently OOM-wedges the 2-slot runner
+  # pool (~60min un-cancellable hangs). resource_group caps it at one at a time.
+  resource_group: e2e_compile
+  script:
+    - go test -v ./e2e/...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Staging E2E — compiles & runs the e2e suite under the e2e_staging build tag.
+#
+# TestStagingConnectivity is OPT-IN (CB_E2E_STAGING): it drives an interactive
+# `login --device-code` against live staging that needs human approval, so it
+# cannot pass in any unattended pipeline. Without CB_E2E_STAGING it self-skips,
+# leaving this job green (it then mirrors `e2e`, just under the build tag) so it
+# never blocks a merge. To make it a real gate, a maintainer must set
+# CB_E2E_STAGING (protected var) AND solve unattended device-code auth; locally
+# `make test-e2e-staging` sets it. See e2e/staging_test.go.
+# ---------------------------------------------------------------------------
+e2e-staging:
+  stage: e2e
+  extends: .go-cache
+  image: golang:${GO_VERSION}
+  # Shares the e2e_compile resource_group with `e2e` so the two never compile
+  # aws-sdk-go-v2 concurrently — see the note on the `e2e` job above.
+  resource_group: e2e_compile
+  variables:
+    CB_API_URL: "https://api.staging.cloudbooster.io"
+  script:
+    - go test -v ./e2e/... -tags=e2e_staging
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ---------------------------------------------------------------------------
+# Release — tag-triggered GoReleaser run.
+#
+# Publishes GitHub Releases + Homebrew cask + Scoop manifest + .deb/.rpm per
+# .goreleaser.yml, with keyless Cosign signing and Syft SBOMs (both tools ship
+# in the goreleaser image). Keyless signing needs an OIDC token: the id_tokens
+# block mints SIGSTORE_ID_TOKEN (aud: sigstore), which cosign >= 2.0 picks up
+# automatically in CI.
+#
+# Required CI/CD variables (maintainer-configured, masked + protected):
+#   GITHUB_TOKEN  PAT with repo scope on cloudbooster-io/cbx-cli,
+#                 cloudbooster-io/homebrew-tap and cloudbooster-io/scoop-bucket
+#                 — GoReleaser publishes to GitHub even though CI runs on GitLab.
+#   SENTRY_DSN    telemetry endpoint baked into the binary via ldflags (see the
+#                 env block in .goreleaser.yml); optional — when unset the
+#                 release ships with no telemetry endpoint.
+#
+# Go toolchain: the image bundles go1.26.x; if that ever trails the go.mod
+# `toolchain go1.26.4` pin, GOTOOLCHAIN=auto (the default) downloads the exact
+# pinned toolchain before building.
+# ---------------------------------------------------------------------------
+release:
+  stage: release
+  image:
+    # Pinned v2 release; bundles Go 1.26, cosign and syft. Bump deliberately.
+    name: goreleaser/goreleaser:v2.16.0
+    # The image's entrypoint is goreleaser itself — blank it so the runner can
+    # execute the script in a shell (per the GoReleaser GitLab CI docs).
+    entrypoint: [""]
+  variables:
+    # Full clone: GoReleaser needs the whole tag history for the changelog and
+    # refuses to release from a shallow checkout.
+    GIT_DEPTH: 0
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  script:
+    - goreleaser release --clean
+  rules:
+    - if: '$CI_COMMIT_TAG'
+
+# ---------------------------------------------------------------------------
+# Brew smoke test — post-release verification
+# Runs only on tags or when explicitly requested.
+# ---------------------------------------------------------------------------
+smoke-brew:
+  stage: release
+  image: homebrew/brew:latest
+  tags:
+    - darwin
+  # Ordered after `release` so the cask exists in the tap before the smoke
+  # test installs it. `optional: true` keeps RUN_SMOKE_BREW pipelines (where
+  # the release job is absent) valid.
+  needs:
+    - job: release
+      optional: true
+  script:
+    - ./scripts/smoke-brew.sh
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$RUN_SMOKE_BREW == "true"'
+  # TODO(N9): drop allow_failure once the brew tap is public and the `release`
+  # job above has cut a cask release (L1.19) — then a red smoke-brew is real
+  # signal of a broken install path.
+  allow_failure: true
