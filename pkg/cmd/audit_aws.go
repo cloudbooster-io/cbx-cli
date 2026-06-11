@@ -196,6 +196,12 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			discResult, err := awsdisc.Discover(ctx, discoverParams)
 			ui.Done()
 			if err != nil {
+				// Keep the --json contract: machine consumers get an
+				// Envelope{Error} on stdout even when discovery dies
+				// before any findings exist (same pattern as plan.go).
+				if output.JSON() {
+					_ = output.PrintJSON(nil, output.JSONError(err))
+				}
 				return err
 			}
 
@@ -302,6 +308,12 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				groundingSpinner.Stop()
 			}
 			if runErr != nil && result == nil {
+				// Same --json envelope guarantee as the discovery error
+				// path above: a pipeline-level failure with no partial
+				// result still produces machine-readable output.
+				if output.JSON() {
+					_ = output.PrintJSON(nil, output.JSONError(runErr))
+				}
 				return runErr
 			}
 

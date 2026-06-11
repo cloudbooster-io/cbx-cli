@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cloudbooster-io/cbx-cli/core/plan"
@@ -383,12 +384,12 @@ func (l *llmAnalyzer) postProcessGrounded(findings []Finding) []Finding {
 
 	if cost := trailer.TotalCostUSD(); l.maxCostUSD > 0 && cost > l.maxCostUSD {
 		fmt.Fprintf(os.Stderr,
-			"WARN: grounded audit cost $%.2f exceeded --llm-max-cost $%.2f; partial findings preserved.\n",
-			cost, l.maxCostUSD,
+			"WARN: grounded audit cost $%.2f exceeded --llm-max-cost $%s; partial findings preserved.\n",
+			cost, formatCostCap(l.maxCostUSD),
 		)
 		findings = append(findings, Finding{
 			RuleID:      "LLM-CB-COST-CAP",
-			Title:       fmt.Sprintf("Audit cost $%.2f exceeded cap $%.2f", cost, l.maxCostUSD),
+			Title:       fmt.Sprintf("Audit cost $%.2f exceeded cap $%s", cost, formatCostCap(l.maxCostUSD)),
 			Description: "The grounded audit's reported total_cost_usd exceeded --llm-max-cost. The run completed and findings are preserved, but rerun with a higher cap or scoped --source if you expect more turns.",
 			Severity:    SeverityInfo,
 			Resource:    l.providerForRuleID,
@@ -398,6 +399,16 @@ func (l *llmAnalyzer) postProcessGrounded(findings []Finding) []Finding {
 	}
 
 	return findings
+}
+
+// formatCostCap renders a --llm-max-cost value without rounding small
+// caps to "$0.00" (a $0.001 cap is legitimate for validation runs).
+// Two decimals for ordinary dollar amounts, full precision below a cent.
+func formatCostCap(v float64) string {
+	if v >= 0.01 {
+		return fmt.Sprintf("%.2f", v)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // snippetForCitation tries to find a chunk text matching the citation's
