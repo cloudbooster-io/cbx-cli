@@ -9,10 +9,13 @@ package audit_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	internalaudit "github.com/cloudbooster-io/cbx-cli/internal/audit"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 	pkgaudit "github.com/cloudbooster-io/cbx-cli/pkg/audit"
 )
 
@@ -31,6 +34,7 @@ func TestFacade_TypeAliasesIdentical(t *testing.T) {
 		_ = pkgaudit.Component(group.Component{})
 		_ = pkgaudit.AWSAuditContext(internalaudit.AWSAuditContext{})
 		_ = pkgaudit.ExitCodeError(internalaudit.ExitCodeError{})
+		_ = pkgaudit.ParseError(parsers.ParseError{})
 
 		// Types that escape through exported fields of the aliases
 		// above (review H3).
@@ -91,6 +95,29 @@ func TestFacade_CollectContextHonorsCancellation(t *testing.T) {
 	_, err := pkgaudit.CollectContext(ctx, pkgaudit.Options{StateFile: "does-not-exist.json"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled from a pre-cancelled ctx, got %v", err)
+	}
+}
+
+func TestFacade_ParseErrorRoundTrip(t *testing.T) {
+	// A real parse failure through the public entry point must come back
+	// as a *ParseError extractable with errors.As — library consumers
+	// branch on the typed error instead of string-matching the rendered
+	// three-line message.
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte(`{"invalid`), 0o644); err != nil {
+		t.Fatalf("writing state file: %v", err)
+	}
+
+	_, err := pkgaudit.Collect(pkgaudit.Options{StateFile: path, MockScanners: true})
+	if err == nil {
+		t.Fatal("expected a parse error for malformed JSON")
+	}
+	var pe *pkgaudit.ParseError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected errors.As to extract *ParseError, got %T: %v", err, err)
+	}
+	if pe.What == "" || pe.Cause == "" || pe.Hint == "" {
+		t.Fatalf("ParseError fields not populated: %+v", pe)
 	}
 }
 
