@@ -142,7 +142,7 @@ func (c *CodexClient) Complete(ctx context.Context, prompt string, opts Complete
 		defer resp.Body.Close()
 		scanErr := scanOpenAISSE(bufio.NewReader(resp.Body), tokens)
 		if scanErr != nil {
-			stream.setErr(scanErr)
+			stream.SetErr(scanErr)
 		}
 	}()
 

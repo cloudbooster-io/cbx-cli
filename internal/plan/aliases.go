@@ -42,5 +42,21 @@ func ExportJSON(p *Plan) (string, error) {
 }
 
 func GetProvider(session *Session, cfg *config.Config) string {
-	return coreplan.GetProvider(session, cfg)
+	return coreplan.GetProvider(session, RunnerConfigFromConfig(cfg))
+}
+
+// RunnerConfigFromConfig adapts the CLI's *config.Config to the core/plan
+// RunnerConfig consumed by coreplan.NewRunner and coreplan.GetProvider. The
+// conversion lives here, at the composition-root side of the boundary, so
+// core/plan stays free of internal/config.
+func RunnerConfigFromConfig(cfg *config.Config) coreplan.RunnerConfig {
+	providers := make(map[string]coreplan.LLMProvider, len(cfg.LLM.Providers))
+	for name, p := range cfg.LLM.Providers {
+		providers[name] = coreplan.LLMProvider{Name: p.Name, BaseURL: p.BaseURL, Model: p.Model}
+	}
+	return coreplan.RunnerConfig{
+		APIURL:          cfg.APIURL,
+		DefaultProvider: cfg.LLM.Default,
+		Providers:       providers,
+	}
 }

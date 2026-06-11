@@ -36,7 +36,7 @@ func TestStreamError(t *testing.T) {
 	close(ch)
 
 	s := newStream(ch)
-	s.setErr(io.ErrUnexpectedEOF)
+	s.SetErr(io.ErrUnexpectedEOF)
 
 	_, err := s.Next()
 	if err != io.ErrUnexpectedEOF {

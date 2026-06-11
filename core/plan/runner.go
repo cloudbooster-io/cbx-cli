@@ -4,9 +4,27 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
+
+// LLMProvider identifies an HTTP LLM API provider for the plan pipeline. It
+// mirrors the subset of the CLI's config.LLMProvider that core/plan actually
+// reads, so this shared package stays decoupled from internal/config; the
+// conversion happens at the composition roots (see internal/plan).
+type LLMProvider struct {
+	Name    string
+	BaseURL string
+	Model   string
+}
+
+// RunnerConfig carries the configuration the Runner needs: the CloudBooster
+// API endpoint, the default LLM provider name, and the configured HTTP api
+// providers. CLI executors (claude-code, codex) are not listed in Providers —
+// they are selected by name alone (see IsCLIExecutor).
+type RunnerConfig struct {
+	APIURL          string
+	DefaultProvider string
+	Providers       map[string]LLMProvider
+}
 
 // Progress receives progress updates from Runner.
 type Progress interface {
@@ -19,7 +37,7 @@ type Progress interface {
 
 // Runner executes the propose → LLM → resolve flow synchronously.
 type Runner struct {
-	cfg            *config.Config
+	cfg            RunnerConfig
 	activeProvider string
 	// token is the CloudBooster bearer token used for compose API calls.
 	// It is injected by the caller (resolved at the CLI composition root via
@@ -39,7 +57,7 @@ type Runner struct {
 // (empty = anonymous/mock) and llmToken resolves the per-provider LLM
 // credential; both are resolved at the composition root rather than having the
 // runner reach into the OS keyring. A nil llmToken resolves to an empty token.
-func NewRunner(cfg *config.Config, activeProvider, token string, llmToken func(provider string) string) *Runner {
+func NewRunner(cfg RunnerConfig, activeProvider, token string, llmToken func(provider string) string) *Runner {
 	return &Runner{cfg: cfg, activeProvider: activeProvider, token: token, llmToken: llmToken}
 }
 
@@ -47,20 +65,20 @@ func NewRunner(cfg *config.Config, activeProvider, token string, llmToken func(p
 func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Plan, error) {
 	provider := r.activeProvider
 	if provider == "" {
-		provider = r.cfg.LLM.Default
+		provider = r.cfg.DefaultProvider
 	}
 
-	// CLI executors (`claude-code`, `codex`) are not stored in cfg.LLM.Providers —
+	// CLI executors (`claude-code`, `codex`) are not stored in cfg.Providers —
 	// they're selected by name via `cbx llm default <name>` and shell out to a
 	// local binary that owns its own auth. Resolve them before the API provider
 	// lookup so a CLI-only setup (no `llm api login`) still works.
 	cliExecutor := IsCLIExecutor(provider)
-	var provCfg config.LLMProvider
+	var provCfg LLMProvider
 	if !cliExecutor {
 		// CLI executors route on the provider name alone (see Phase 2); only
 		// HTTP api providers need a LLMProvider config from the map.
 		var ok bool
-		provCfg, ok = r.cfg.LLM.Providers[provider]
+		provCfg, ok = r.cfg.Providers[provider]
 		if !ok {
 			return nil, fmt.Errorf("provider %s not configured", provider)
 		}
@@ -133,11 +151,11 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 }
 
 // GetProvider returns the active provider from the session or the config default.
-func GetProvider(session *Session, cfg *config.Config) string {
+func GetProvider(session *Session, cfg RunnerConfig) string {
 	if session.ActiveProvider != "" {
 		return session.ActiveProvider
 	}
-	return cfg.LLM.Default
+	return cfg.DefaultProvider
 }
 
 func buildLLMPrompt(intent string, components []Component) string {

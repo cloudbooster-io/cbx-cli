@@ -169,7 +169,7 @@ func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPrevi
 		return fmt.Errorf("free tier capped at 2 variants")
 	}
 
-	runner := coreplan.NewRunner(cfg, llmProvider, token, llmToken)
+	runner := coreplan.NewRunner(plan.RunnerConfigFromConfig(cfg), llmProvider, token, llmToken)
 	ctx := context.Background()
 
 	var plans []*coreplan.Plan

@@ -1,7 +1,10 @@
 package v1
 
 import (
-	"fmt"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"math"
 	"math/rand"
@@ -28,7 +31,9 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		base = http.DefaultTransport
 	}
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	// Every branch below returns when attempt == maxRetries, so the loop
+	// terminates without a fallthrough exit.
+	for attempt := 0; ; attempt++ {
 		newReq, err := cloneRequest(req)
 		if err != nil {
 			return nil, err
@@ -53,9 +58,9 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if attempt == maxRetries {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("giving up after %d attempts: server returned %s", maxRetries+1, resp.Status)
+			// Retries exhausted: return the last response intact (nil error)
+			// so callers can inspect the status code and error body.
+			return resp, nil
 		}
 
 		// Drain body to allow connection reuse.
@@ -69,8 +74,6 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		case <-time.After(backoff):
 		}
 	}
-
-	return nil, fmt.Errorf("giving up after %d attempts", maxRetries+1)
 }
 
 func (t *RetryTransport) backoff(attempt int, resp *http.Response) time.Duration {
@@ -111,8 +114,39 @@ func isRetriableStatus(code int) bool {
 }
 
 func isRetriableError(err error) bool {
-	// Network-level errors are generally retriable.
+	// Caller-driven cancellation and deadline expiry are permanent: retrying
+	// only burns backoff time against a context that is already done.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	// Certificate verification failures won't fix themselves on retry.
+	// errors.As unwraps through *url.Error, so both bare transport errors
+	// and client-wrapped ones are covered.
+	if isCertVerificationError(err) {
+		return false
+	}
+
+	// Everything else (DNS timeouts, connection refused/reset, ...) is
+	// treated as transient.
 	return true
+}
+
+// isCertVerificationError reports whether err is (or wraps) a TLS
+// certificate/verification failure.
+func isCertVerificationError(err error) bool {
+	var (
+		tlsVerify   *tls.CertificateVerificationError
+		certInvalid x509.CertificateInvalidError
+		hostname    x509.HostnameError
+		unknownAuth x509.UnknownAuthorityError
+		sysRoots    x509.SystemRootsError
+	)
+	return errors.As(err, &tlsVerify) ||
+		errors.As(err, &certInvalid) ||
+		errors.As(err, &hostname) ||
+		errors.As(err, &unknownAuth) ||
+		errors.As(err, &sysRoots)
 }
 
 func cloneRequest(req *http.Request) (*http.Request, error) {

@@ -111,7 +111,7 @@ func (c *ClaudeClient) Complete(ctx context.Context, prompt string, opts Complet
 		defer resp.Body.Close()
 		scanErr := scanClaudeSSE(bufio.NewReader(resp.Body), tokens)
 		if scanErr != nil {
-			stream.setErr(scanErr)
+			stream.SetErr(scanErr)
 		}
 	}()
 

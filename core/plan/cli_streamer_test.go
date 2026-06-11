@@ -7,8 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // writeFakeCLIBinary writes a tiny shell script that mimics a non-interactive
@@ -183,8 +181,8 @@ func TestRunner_CLIExecutorDefault(t *testing.T) {
 	restore := withFakeClaudeBinary(t, "**Refined components**\n", 0)
 	defer restore()
 
-	cfg := &config.Config{}
-	cfg.LLM.Default = CLIExecutorClaudeCode // empty Providers map on purpose
+	// Empty Providers map on purpose.
+	cfg := RunnerConfig{DefaultProvider: CLIExecutorClaudeCode}
 
 	runner := NewRunner(cfg, "", "", nil)
 	var streamed strings.Builder
@@ -209,8 +207,8 @@ func TestRunner_CodexExecutorDefault(t *testing.T) {
 	restore := withFakeCodexBinary(t, "**Codex-refined components**\n", 0)
 	defer restore()
 
-	cfg := &config.Config{}
-	cfg.LLM.Default = CLIExecutorCodex // empty Providers map on purpose
+	// Empty Providers map on purpose.
+	cfg := RunnerConfig{DefaultProvider: CLIExecutorCodex}
 
 	runner := NewRunner(cfg, "", "", nil)
 	var streamed strings.Builder
