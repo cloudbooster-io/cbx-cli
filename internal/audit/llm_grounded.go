@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,12 +130,17 @@ func (g *groundedClaudeStreamer) InstallBundle(bundle *GroundingBundle) {
 	g.trail = bundle.toEvents()
 }
 
-// Stream invokes `claude -p` with text output and the prompt on
-// stdin. No --mcp-config / --allowedTools / --output-format stream-json
-// — the model has no tools to call and we don't need to parse the
-// stream-json envelope. stdout accumulates into the final text result.
+// Stream invokes `claude -p` with stream-json output and the prompt on
+// stdin. No --mcp-config / --allowedTools — the model has no tools to
+// call. We ask for stream-json (which in print mode requires --verbose)
+// because the final `result` event is the only place claude surfaces
+// total_cost_usd, the field that makes --llm-max-cost enforceable.
+// Parsing is tolerant: when the output isn't recognisable stream-json
+// (an older claude that ignored the flag, a shim emitting plain text),
+// the raw stdout is surfaced as the response and the cost stays 0
+// rather than failing the audit.
 func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onToken func(string)) error {
-	cmd := exec.CommandContext(ctx, g.binary, "-p", "--output-format", "text")
+	cmd := exec.CommandContext(ctx, g.binary, "-p", "--output-format", "stream-json", "--verbose")
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -152,8 +158,58 @@ func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onTo
 		return fmt.Errorf("running %s: %w", g.binary, runErr)
 	}
 
+	if text, cost, ok := parseClaudeStreamJSON(stdout.Bytes()); ok {
+		g.totalCostUSD = cost
+		onToken(text)
+		return nil
+	}
+	// Degraded fallback: treat stdout as the plain-text response.
 	onToken(stdout.String())
 	return nil
+}
+
+// claudeStreamResultEvent is the subset of the stream-json `result`
+// event we read: the final response text and the run's reported cost.
+// Older claude builds emitted the cost as cost_usd, so both spellings
+// are accepted (total_cost_usd wins when present).
+type claudeStreamResultEvent struct {
+	Type         string   `json:"type"`
+	Result       *string  `json:"result"`
+	TotalCostUSD *float64 `json:"total_cost_usd"`
+	CostUSD      *float64 `json:"cost_usd"`
+}
+
+// parseClaudeStreamJSON scans `claude -p --output-format stream-json`
+// output (one JSON event per line) for the `result` event and returns
+// its response text + reported cost. The result event is not guaranteed
+// to be the last line (hook/system events can trail it), so every line
+// is scanned and the last result event wins. ok is false when no result
+// event carrying a `result` text field is found — the caller falls back
+// to treating the raw output as plain text (older claude versions, test
+// shims), with cost 0.
+func parseClaudeStreamJSON(out []byte) (text string, cost float64, ok bool) {
+	var found *claudeStreamResultEvent
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev claudeStreamResultEvent
+		if err := json.Unmarshal(line, &ev); err != nil || ev.Type != "result" {
+			continue
+		}
+		found = &ev
+	}
+	if found == nil || found.Result == nil {
+		return "", 0, false
+	}
+	switch {
+	case found.TotalCostUSD != nil:
+		cost = *found.TotalCostUSD
+	case found.CostUSD != nil:
+		cost = *found.CostUSD
+	}
+	return *found.Result, cost, true
 }
 
 // GroundingTrail exposes the pre-fetched grounding events surfaced by
@@ -161,12 +217,11 @@ func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onTo
 // tests using a fake streamer).
 func (g *groundedClaudeStreamer) GroundingTrail() []GroundingEvent { return g.trail }
 
-// TotalCostUSD reports the model's reported cost. With no MCP tool
-// loop and a single non-stream invocation, claude -p does not surface
-// a structured cost back to us — this returns 0. The cost-cap finding
-// in postProcessGrounded therefore only fires for legacy MCP-driven
-// streamers (kept for future use if/when claude -p exposes a cost
-// header).
+// TotalCostUSD reports the run's cost as surfaced by the stream-json
+// `result` event's total_cost_usd field, assigned by Stream. It feeds
+// the LLM-CB-COST-CAP finding in postProcessGrounded. Returns 0 before
+// Stream runs, and stays 0 on the plain-text fallback path (output that
+// wasn't parseable stream-json) — the cost cap is best-effort there.
 func (g *groundedClaudeStreamer) TotalCostUSD() float64 { return g.totalCostUSD }
 
 // groundingTrailer is the optional capability postProcessGrounded

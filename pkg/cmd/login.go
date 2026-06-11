@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -13,6 +13,7 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2"
 )
 
 // runLogin / runLogout / runStatus are the shared bodies used by both
@@ -147,8 +148,12 @@ func runStatus(cmd *cobra.Command) error {
 
 	resp, err := client.GetMeWithResponse(cmd.Context())
 	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "401") || strings.Contains(errStr, "Unauthorized") || strings.Contains(errStr, "cannot fetch token") {
+		// Transport-level failure: no HTTP response reached us. The case
+		// that means "auth expired" here is a failed token refresh, which
+		// the oauth2 transport surfaces as a typed *oauth2.RetrieveError
+		// (wrapped in *url.Error by net/http) — not as a 401 response.
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) {
 			if output.JSON() {
 				_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
 				return fmt.Errorf("authentication expired")

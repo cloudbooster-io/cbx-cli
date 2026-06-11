@@ -74,11 +74,27 @@ type Result struct {
 // report. It is used by the interactive TUI path. Note: opts.AWS audits go
 // through CollectFromResources instead — the AWS subcommand owns its own
 // discovery so it can render the account / region header before scanning.
+//
+// Collect is CollectContext with a background parent context; library
+// callers that need cancellation should use CollectContext directly.
 func Collect(opts Options) ([]Finding, error) {
-	if opts.SourceDir != "" {
-		return collectFromSource(opts)
+	return CollectContext(context.Background(), opts)
+}
+
+// CollectContext is Collect with a caller-supplied parent context so library
+// consumers can cancel an in-flight audit. A pre-cancelled ctx returns
+// ctx.Err() before any scanner is dispatched; mid-flight cancellation
+// propagates into every provider Scan call. opts.Timeout still applies — it
+// is layered onto ctx via context.WithTimeout, so whichever expires first
+// wins.
+func CollectContext(ctx context.Context, opts Options) ([]Finding, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return collectFromState(opts)
+	if opts.SourceDir != "" {
+		return collectFromSource(ctx, opts)
+	}
+	return collectFromState(ctx, opts)
 }
 
 // CollectFromResources runs the configured FindingProviders against a
@@ -123,7 +139,7 @@ func CollectFromResourcesWithDiagram(opts Options, resources []DiscoveredResourc
 	return findings, nil, err
 }
 
-func collectFromState(opts Options) ([]Finding, error) {
+func collectFromState(ctx context.Context, opts Options) ([]Finding, error) {
 	resources, err := ParseState(opts)
 	if err != nil {
 		return nil, err
@@ -131,13 +147,13 @@ func collectFromState(opts Options) ([]Finding, error) {
 
 	providers := selectProviders(opts)
 
-	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	ctx, cancel := contextWithOptionalTimeout(ctx, opts.Timeout)
 	defer cancel()
 
 	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, opts.TimeoutPerScanner))
 }
 
-func collectFromSource(opts Options) ([]Finding, error) {
+func collectFromSource(ctx context.Context, opts Options) ([]Finding, error) {
 	if err := validateSourceDir(opts.SourceDir); err != nil {
 		return nil, err
 	}
@@ -163,7 +179,7 @@ func collectFromSource(opts Options) ([]Finding, error) {
 		}
 	}
 
-	ctx, cancel := contextWithOptionalTimeout(context.Background(), opts.Timeout)
+	ctx, cancel := contextWithOptionalTimeout(ctx, opts.Timeout)
 	defer cancel()
 
 	return collectFindings(RunProvidersSourceWithProgress(ctx, providers, opts.SourceDir, opts.TimeoutPerScanner))
@@ -258,9 +274,14 @@ func iacTypeForMessage(t string) string {
 }
 
 // selectProviders resolves the FindingProvider list for an audit run,
-// respecting MockScanners and the --scanners filter.
+// respecting MockScanners and the Scanners name filter. External scanners
+// are strictly opt-in by name: when MockScanners is false AND Scanners is
+// empty, the built-in zero-network mock set runs — never the external-tool
+// adapters. This is the library-mode safety guarantee documented on
+// Options: a zero-value Options never executes external binaries or
+// network-capable scanners.
 func selectProviders(opts Options) []FindingProvider {
-	if opts.MockScanners {
+	if opts.MockScanners || len(opts.Scanners) == 0 {
 		return MockScanners()
 	}
 	scanners := loadScanners(opts.Scanners)
@@ -504,12 +525,12 @@ func defaultReportPath(opts Options) string {
 	return base + "_audit_report.md"
 }
 
-// loadScanners returns the scanners requested by name. If names is empty
-// every registered scanner (static + external adapters) is returned.
+// loadScanners returns the scanners requested by name; unknown names are
+// silently skipped. The external-tool adapters (tfsec, checkov, prowler,
+// trivy) are reachable only through an explicit name here — an empty list
+// resolves to nothing (selectProviders maps "no names" to MockScanners
+// before ever calling this, keeping external scanners opt-in by name).
 func loadScanners(names []string) []Scanner {
-	if len(names) == 0 {
-		return AllScanners()
-	}
 	registry := map[string]Scanner{
 		"static":  &staticScanner{},
 		"orphan":  &orphanProvider{},

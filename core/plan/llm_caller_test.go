@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 func TestLLMCallerStreamClaude(t *testing.T) {
@@ -27,7 +25,7 @@ func TestLLMCallerStreamClaude(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(config.LLMProvider{
+	caller := NewLLMCaller(LLMProvider{
 		Name:    "claude",
 		BaseURL: srv.URL,
 		Model:   "claude-test",
@@ -58,7 +56,7 @@ func TestLLMCallerStreamOpenAI(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(config.LLMProvider{
+	caller := NewLLMCaller(LLMProvider{
 		Name:    "openai",
 		BaseURL: srv.URL,
 		Model:   "gpt-4o",
@@ -88,7 +86,7 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(config.LLMProvider{
+	caller := NewLLMCaller(LLMProvider{
 		Name:    "ollama",
 		BaseURL: srv.URL,
 		Model:   "llama3",
@@ -108,7 +106,7 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 }
 
 func TestLLMCallerUnsupportedProvider(t *testing.T) {
-	caller := NewLLMCaller(config.LLMProvider{Name: "unknown"}, "")
+	caller := NewLLMCaller(LLMProvider{Name: "unknown"}, "")
 	err := caller.Stream(context.Background(), "test", func(string) {})
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")

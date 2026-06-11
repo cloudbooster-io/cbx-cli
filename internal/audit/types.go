@@ -201,16 +201,32 @@ type FindingProvider interface {
 type Scanner = FindingProvider
 
 // Options configures an audit run.
+//
+// Library-mode safety guarantee: a zero-value Options never executes
+// external binaries or network-capable scanners. External scanners are
+// strictly opt-in by name via Scanners — when MockScanners is false and
+// Scanners is empty, the built-in zero-network mock set runs.
 type Options struct {
-	StateFile         string
-	OutputFormat      string
-	ReportFile        string
-	Interactive       bool
-	NoTUI             bool
-	Quiet             bool
-	Yes               bool          // when true, bypass interactive confirmations
-	MockScanners      bool          // when true, use mock scanner implementations (zero network)
-	Scanners          []string      // scanner names to run; empty means all available
+	StateFile    string
+	OutputFormat string
+	ReportFile   string
+	Interactive  bool
+	NoTUI        bool
+	Quiet        bool
+	Yes          bool // when true, bypass interactive confirmations
+
+	// MockScanners forces the built-in zero-network mock scanner set,
+	// overriding any Scanners selection. External scanners are opt-in by
+	// name regardless of this flag — see Scanners.
+	MockScanners bool
+
+	// Scanners selects FindingProviders by name (static, orphan, tfsec,
+	// checkov, prowler, trivy). The external-tool adapters — tfsec,
+	// checkov, prowler (scans live AWS), trivy (may download vulnerability
+	// DBs) — run ONLY when explicitly named here. Empty means the built-in
+	// zero-network mock set, never "all available".
+	Scanners []string
+
 	Timeout           time.Duration // overall audit timeout
 	TimeoutPerScanner time.Duration // timeout for each individual scanner/provider
 

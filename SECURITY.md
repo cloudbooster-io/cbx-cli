@@ -48,8 +48,12 @@ no exploitation path through `cbx-cli` itself.
 
 - **File keyring backend (`CBX_KEYRING_BACKEND=file`)** encrypts stored
   credentials with a fixed, source-published passphrase. On-disk tokens are
-  therefore obfuscated rather than meaningfully protected. Use this backend
-  only as a convenience fallback for throwaway or headless contexts; prefer a
-  real OS keyring (macOS Keychain, Secret Service, Windows Credential Manager)
-  for long-lived credentials. Hardening to a user-supplied passphrase is
-  planned.
+  therefore obfuscated rather than meaningfully protected. The files live in
+  `CBX_KEYRING_FILE_DIR` if set, otherwise in a `cbx-keyring` directory
+  created mode 0700 under the OS user cache dir (`os.UserCacheDir()`), with a
+  fallback to the system temp dir only when the cache dir is unavailable. The
+  private directory limits casual exposure on shared machines but does not
+  change the obfuscation-only nature of the encryption. Use this backend only
+  as a convenience fallback for throwaway or headless contexts; prefer a real
+  OS keyring (macOS Keychain, Secret Service, Windows Credential Manager) for
+  long-lived credentials. Hardening to a user-supplied passphrase is planned.

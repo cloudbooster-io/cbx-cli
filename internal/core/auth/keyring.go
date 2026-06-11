@@ -3,10 +3,18 @@ package auth
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/99designs/keyring"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
+
+// fileBackendObfuscationKey is the fixed, source-published passphrase the
+// file keyring backend encrypts with. It is deliberately NOT a secret —
+// anyone with this repository can decrypt the files — so it provides
+// obfuscation only, never protection (see SECURITY.md, "Known limitations").
+// Keep the value stable: changing it invalidates existing file-backend stores.
+const fileBackendObfuscationKey = "cbx-test-passphrase"
 
 // Keyring abstracts OS-native credential storage.
 type Keyring interface {
@@ -75,7 +83,7 @@ func openBackend(name string) (Keyring, error) {
 
 	dir := config.Env("KEYRING_FILE_DIR")
 	if dir == "" && bt == keyring.FileBackend {
-		dir = os.TempDir()
+		dir = defaultFileBackendDir()
 	}
 	cfg := keyring.Config{
 		ServiceName:     serviceName,
@@ -90,7 +98,7 @@ func openBackend(name string) (Keyring, error) {
 		// headless contexts, NOT for long-lived real credentials. Hardening
 		// (a user-supplied passphrase) is tracked — see SECURITY.md.
 		cfg.FilePasswordFunc = func(_ string) (string, error) {
-			return "cbx-test-passphrase", nil
+			return fileBackendObfuscationKey, nil
 		}
 	}
 	kr, err := keyring.Open(cfg)
@@ -98,6 +106,23 @@ func openBackend(name string) (Keyring, error) {
 		return nil, err
 	}
 	return &osKeyring{kr: kr}, nil
+}
+
+// defaultFileBackendDir returns the directory the file keyring backend uses
+// when CBX_KEYRING_FILE_DIR is not set: a user-private (0700) directory under
+// the OS user cache dir. Falls back to the world-readable os.TempDir() only
+// when the cache dir cannot be resolved or created — the file backend remains
+// usable there, just without the directory-permission layer.
+func defaultFileBackendDir() string {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return os.TempDir()
+	}
+	dir := filepath.Join(cache, "cbx-keyring")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return os.TempDir()
+	}
+	return dir
 }
 
 func (k *osKeyring) Store(key, secret string) error {

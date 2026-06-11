@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 func TestAuthTransport_InjectsBearerToken(t *testing.T) {
@@ -50,8 +48,7 @@ func TestAuthTransport_SkipsHeaderWhenTokenEmpty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg)
+	client, err := NewAPIClient(ts.URL)
 	if err != nil {
 		t.Fatalf("NewAPIClient: %v", err)
 	}
@@ -78,8 +75,7 @@ func TestRetryTransport_RetriesOn500(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.MaxRetries = 3
 	})
 	if err != nil {
@@ -115,8 +111,7 @@ func TestRetryTransport_RetriesOn429WithRetryAfter(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.MaxRetries = 3
 	})
 	if err != nil {
@@ -144,8 +139,7 @@ func TestRetryTransport_RespectsContextCancellation(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.MaxRetries = 5
 	})
 	if err != nil {
@@ -164,28 +158,31 @@ func TestRetryTransport_RespectsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestRetryTransport_ReturnsErrorWhenRetriesExhausted(t *testing.T) {
+func TestRetryTransport_ReturnsLastResponseWhenRetriesExhausted(t *testing.T) {
 	var count atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"overloaded"}`))
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.MaxRetries = 2
 	})
 	if err != nil {
 		t.Fatalf("NewAPIClient: %v", err)
 	}
 
-	_, err = client.GetHealthWithResponse(context.Background())
-	if err == nil {
-		t.Fatal("expected error when retries are exhausted")
+	resp, err := client.GetHealthWithResponse(context.Background())
+	if err != nil {
+		t.Fatalf("expected last response (nil error) when retries are exhausted, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "giving up") {
-		t.Fatalf("expected exhausted retry error, got: %v", err)
+	if resp.StatusCode() != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode())
+	}
+	if !strings.Contains(string(resp.Body), "overloaded") {
+		t.Fatalf("expected error body to be preserved, got: %q", resp.Body)
 	}
 	if count.Load() != 3 {
 		t.Fatalf("expected 3 attempts, got %d", count.Load())
@@ -201,8 +198,7 @@ func TestRateLimitTransport_WarnsWhenLow(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.OnRateLimit = func(remaining int) {
 			warned = true
 			if remaining != 3 {
@@ -233,8 +229,7 @@ func TestRateLimitTransport_SuppressesWarningWhenQuiet(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.Quiet = true
 		o.OnRateLimit = func(remaining int) {
 			warned = true
@@ -263,8 +258,7 @@ func TestRateLimitTransport_NoWarningWhenPlenty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{APIURL: ts.URL}
-	client, err := NewAPIClient(cfg, func(o *ClientOptions) {
+	client, err := NewAPIClient(ts.URL, func(o *ClientOptions) {
 		o.OnRateLimit = func(remaining int) {
 			warned = true
 		}
@@ -284,8 +278,7 @@ func TestRateLimitTransport_NoWarningWhenPlenty(t *testing.T) {
 }
 
 func TestNewAPIClient_RequiresAPIURL(t *testing.T) {
-	cfg := &config.Config{}
-	_, err := NewAPIClient(cfg)
+	_, err := NewAPIClient("")
 	if err == nil {
 		t.Fatal("expected error when APIURL is empty")
 	}

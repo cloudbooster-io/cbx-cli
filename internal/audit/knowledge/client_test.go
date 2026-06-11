@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // envelopeJSON helper assembles a {schema_version, data, meta} body
@@ -161,5 +163,145 @@ func TestDo_429Surface(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "429") {
 		t.Errorf("error should mention status: %v", err)
+	}
+}
+
+// shrinkRetryBackoff drops the retry sleep to ~nothing for the duration
+// of the test so retry-path tests stay fast.
+func shrinkRetryBackoff(t *testing.T) {
+	t.Helper()
+	old := retryBackoff
+	retryBackoff = time.Millisecond
+	t.Cleanup(func() { retryBackoff = old })
+}
+
+func TestDo_Retries503ThenSucceeds(t *testing.T) {
+	shrinkRetryBackoff(t)
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":"unavailable","message":"flap"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(envelopeJSON(t, map[string]interface{}{
+			"kb_version": 3,
+			"chunks":     []map[string]interface{}{},
+		})))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	got, err := c.LookupPrimitive(context.Background(), "aws:s3/bucket@v1")
+	if err != nil {
+		t.Fatalf("LookupPrimitive after transient 503: %v", err)
+	}
+	if got.KBVersion != 3 {
+		t.Errorf("kb_version: got %d want 3", got.KBVersion)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("server calls: got %d want 2 (one failure + one retry)", n)
+	}
+}
+
+func TestDo_5xxExhaustsBoundedRetries(t *testing.T) {
+	shrinkRetryBackoff(t)
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"code":"boom","message":"still down"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_, err := c.LookupPrimitive(context.Background(), "aws:s3/bucket@v1")
+	if err == nil {
+		t.Fatal("want error after exhausting retries, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error should surface the final status: %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != int32(retryAttempts) {
+		t.Errorf("server calls: got %d want %d (bounded retry)", n, retryAttempts)
+	}
+}
+
+func TestDo_4xxNotRetried(t *testing.T) {
+	shrinkRetryBackoff(t)
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":{"code":"not_found","message":"nope"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	_, err := c.LookupPrimitive(context.Background(), "aws:missing/thing@v1")
+	if !errors.Is(err, ErrNotAuthored) {
+		t.Fatalf("want ErrNotAuthored, got %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("server calls: got %d want 1 (4xx is deterministic — never retried)", n)
+	}
+}
+
+func TestDo_PostBodyRewoundOnRetry(t *testing.T) {
+	shrinkRetryBackoff(t)
+	var calls int32
+	var secondBody map[string][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		raw, _ := io.ReadAll(r.Body)
+		if n == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if err := json.Unmarshal(raw, &secondBody); err != nil {
+			t.Errorf("retried request body not valid JSON: %v", err)
+		}
+		_, _ = w.Write([]byte(envelopeJSON(t, map[string]interface{}{
+			"kb_version": 1,
+			"chunks":     []map[string]interface{}{},
+		})))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL)
+	if _, err := c.CompositionFor(context.Background(), []string{"aws:s3/bucket@v1"}); err != nil {
+		t.Fatalf("CompositionFor after transient 502: %v", err)
+	}
+	if got := secondBody["type_ids"]; len(got) != 1 || got[0] != "aws:s3/bucket@v1" {
+		t.Errorf("retried POST body not rewound intact: %v", secondBody)
+	}
+}
+
+func TestDo_RetryHonorsContextCancellation(t *testing.T) {
+	// Make the backoff long enough that cancellation always lands inside it.
+	old := retryBackoff
+	retryBackoff = 5 * time.Second
+	t.Cleanup(func() { retryBackoff = old })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := New(srv.URL).LookupPrimitive(ctx, "aws:s3/bucket@v1")
+		done <- err
+	}()
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("want context.Canceled from the backoff wait, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retry backoff ignored context cancellation")
 	}
 }

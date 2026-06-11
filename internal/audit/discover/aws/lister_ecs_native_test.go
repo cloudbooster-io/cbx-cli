@@ -75,9 +75,9 @@ func TestTaskDefinitionToRaw_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestTaskDefinitionToRaw_RedactsSecretEnvValues pins the env-value redaction:
-// there is no TaskDefinition describer, so the synthesised ContainerDefinitions
-// are exactly what the grounded prompt inlines — a secret-shaped Name's literal
+// TestTaskDefinitionToRaw_RedactsSecretEnvValues pins the env-value redaction
+// at the lister itself (ecsTaskDefinitionDescriber re-applies the same policy
+// idempotently at enrich time) — a secret-shaped Name's literal
 // Value must come out masked, while the Name itself survives (the grounded
 // plaintext-env rule is a key-NAME heuristic and still needs it). Non-secret
 // values, reference-shaped keys (_ARN-suffixed) and arn:-prefixed values (the

@@ -9,13 +9,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/config"
 )
 
 // LLMCaller streams prompts to the user's configured LLM provider.
 type LLMCaller struct {
-	Provider config.LLMProvider
+	Provider LLMProvider
 	Token    string
 	client   *http.Client
 }
@@ -26,7 +24,7 @@ type LLMCaller struct {
 // out of core/plan is what lets library consumers and unit tests construct the
 // plan stack without triggering a keychain authorization prompt. An empty
 // token is acceptable for offline providers like ollama.
-func NewLLMCaller(provider config.LLMProvider, token string) *LLMCaller {
+func NewLLMCaller(provider LLMProvider, token string) *LLMCaller {
 	return &LLMCaller{
 		Provider: provider,
 		Token:    token,

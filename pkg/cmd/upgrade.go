@@ -127,6 +127,21 @@ func newUpgradeCmd() *cobra.Command {
 				fmt.Print(directCard.Render())
 				return nil
 			}
+			if result.InstallMethod == update.InstallDeb || result.InstallMethod == update.InstallRPM {
+				// Package upgrades need sudo; cbx never sudoes on the
+				// user's behalf, so hand back the command instead.
+				pkgCard := output.Card{
+					Label: output.Chip("UPGRADE", lipgloss.Color("231"), lipgloss.Color("166")),
+					Title: "package-manager upgrade needs sudo",
+					Rows: []output.CardRow{
+						{Key: "release", Value: result.ReleaseURL},
+						{Key: "command", Value: update.UpgradeCommand(result)},
+					},
+					Footer: output.Dim.Render(output.Symbol("arrow") + " run the command above to upgrade via your package manager"),
+				}
+				fmt.Print(pkgCard.Render())
+				return nil
+			}
 			if err := update.Upgrade(ctx, result); err != nil {
 				return fmt.Errorf("upgrade failed: %w", err)
 			}

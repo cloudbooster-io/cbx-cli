@@ -63,6 +63,12 @@ func Init(version, commit string) {
 		// enabled" — useful for tests and local dev.
 		return
 	}
+	if dsn == "" {
+		// No DSN baked in and none provided via env — there is nowhere to
+		// send events, so skip Sentry init entirely (see defaultDSN above:
+		// plain `go build` produces such binaries on purpose).
+		return
+	}
 
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
@@ -200,6 +206,12 @@ var (
 
 	// ARNs carry account IDs and resource names; redact the variable tail.
 	arnPattern = regexp.MustCompile(`arn:aws:[a-z0-9\-]+:[a-z0-9\-]*:\d{12}:[^\s"']+`)
+
+	// Generic key=value secret shapes (password=…, secret=…, token=…,
+	// api_key=…), as they'd appear in env dumps, URLs, or error messages.
+	// The optional word prefix also catches client_secret=, access_token=,
+	// etc. Requires an explicit "=" so prose like "token expired" survives.
+	secretKVPattern = regexp.MustCompile(`(?i)\b([\w.-]*(?:password|passwd|secret|token|api[_-]?key))\s*=\s*[^\s"']+`)
 )
 
 func scrubString(s string) string {
@@ -211,6 +223,7 @@ func scrubString(s string) string {
 	s = openaiKey.ReplaceAllString(s, "sk-<redacted>")
 	s = arnPattern.ReplaceAllString(s, "arn:aws:<redacted>")
 	s = awsAccountID.ReplaceAllString(s, "<aws-account>")
+	s = secretKVPattern.ReplaceAllString(s, "${1}=<redacted>")
 	return s
 }
 
@@ -228,6 +241,16 @@ func scrubEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	}
 	for i := range event.Breadcrumbs {
 		event.Breadcrumbs[i].Message = scrubString(event.Breadcrumbs[i].Message)
+	}
+	// Scrub the string leaves of structured context data too (the SDK and
+	// integrations populate Contexts; the sentry-go version we pin has no
+	// Event.Extra field — extras land in Contexts instead).
+	for _, ctx := range event.Contexts {
+		for k, v := range ctx {
+			if s, ok := v.(string); ok {
+				ctx[k] = scrubString(s)
+			}
+		}
 	}
 	if event.Request != nil {
 		event.Request.Cookies = ""

@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,9 @@ func TestLLMAnalyzer_StreamErrorBecomesErrorFinding(t *testing.T) {
 	if len(findings) != 1 || findings[0].RuleID != "LLM-ERROR" {
 		t.Fatalf("expected LLM-ERROR, got %v", findings)
 	}
+	if findings[0].Severity != SeverityWarning {
+		t.Errorf("LLM-ERROR is a total analysis failure and must be warning (exit 2), got %q", findings[0].Severity)
+	}
 	if !strings.Contains(findings[0].Description, "transport failure") {
 		t.Errorf("stream error should surface in description, got %q", findings[0].Description)
 	}
@@ -185,6 +189,136 @@ func TestClampSeverity(t *testing.T) {
 	for in, want := range cases {
 		if got := clampSeverity(in); got != want {
 			t.Errorf("clampSeverity(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// syntheticResources builds n small, distinctly-URN'd resources whose
+// sorted order is deterministic (zero-padded index in the URN).
+func syntheticResources(n int) []DiscoveredResource {
+	out := make([]DiscoveredResource, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, DiscoveredResource{
+			Type:   "AWS::S3::Bucket",
+			URN:    fmt.Sprintf("aws://us-east-1/AWS::S3::Bucket/b-%04d", i),
+			ID:     fmt.Sprintf("b-%04d", i),
+			Region: "us-east-1",
+			Inputs: map[string]any{"BucketName": fmt.Sprintf("b-%04d", i)},
+		})
+	}
+	return out
+}
+
+func TestCapPromptResources_CountCap(t *testing.T) {
+	resources := syntheticResources(defaultLLMMaxPromptResources + 10)
+
+	kept, omitted := capPromptResources(resources)
+	if len(kept) != defaultLLMMaxPromptResources {
+		t.Fatalf("kept = %d, want %d", len(kept), defaultLLMMaxPromptResources)
+	}
+	if omitted != 10 {
+		t.Fatalf("omitted = %d, want 10", omitted)
+	}
+	// Truncation must be stable: the kept set is the sorted prefix, so the
+	// last kept URN is the (cap-1)th in sorted order on every run.
+	wantLast := fmt.Sprintf("aws://us-east-1/AWS::S3::Bucket/b-%04d", defaultLLMMaxPromptResources-1)
+	if got := kept[len(kept)-1].resource.URN; got != wantLast {
+		t.Errorf("last kept URN = %q, want %q (deterministic prefix)", got, wantLast)
+	}
+
+	kept2, omitted2 := capPromptResources(resources)
+	if len(kept2) != len(kept) || omitted2 != omitted {
+		t.Errorf("second run diverged: kept %d/omitted %d vs kept %d/omitted %d",
+			len(kept2), omitted2, len(kept), omitted)
+	}
+}
+
+func TestCapPromptResources_ByteCapKeepsAtLeastOne(t *testing.T) {
+	// Each resource serialises to well over half the byte budget, so the
+	// second one trips the cap — but the first must always survive (a
+	// single oversized resource can't blank the whole table).
+	big := strings.Repeat("x", defaultLLMMaxResourceTableBytes*3/4)
+	resources := []DiscoveredResource{
+		{Type: "AWS::S3::Bucket", URN: "aws://r/a", Inputs: map[string]any{"Blob": big}},
+		{Type: "AWS::S3::Bucket", URN: "aws://r/b", Inputs: map[string]any{"Blob": big}},
+		{Type: "AWS::S3::Bucket", URN: "aws://r/c", Inputs: map[string]any{"Blob": big}},
+	}
+
+	kept, omitted := capPromptResources(resources)
+	if len(kept) != 1 {
+		t.Fatalf("kept = %d, want 1 (byte cap after first oversized resource)", len(kept))
+	}
+	if omitted != 2 {
+		t.Fatalf("omitted = %d, want 2", omitted)
+	}
+	if kept[0].resource.URN != "aws://r/a" {
+		t.Errorf("kept URN = %q, want the sorted-first resource", kept[0].resource.URN)
+	}
+}
+
+func TestWriteResourceTable_MarksTruncation(t *testing.T) {
+	resources := syntheticResources(defaultLLMMaxPromptResources + 3)
+
+	var sb strings.Builder
+	writeResourceTable(&sb, resources)
+	table := sb.String()
+	if !strings.Contains(table, "TRUNCATED: 3 additional resources omitted") {
+		t.Errorf("table missing the explicit TRUNCATED marker:\n%s", table[len(table)-400:])
+	}
+	wantLast := fmt.Sprintf("b-%04d", defaultLLMMaxPromptResources-1)
+	if !strings.Contains(table, wantLast) {
+		t.Errorf("table missing last kept resource %s", wantLast)
+	}
+	if strings.Contains(table, fmt.Sprintf("b-%04d", defaultLLMMaxPromptResources)) {
+		t.Errorf("table contains a resource past the cap")
+	}
+}
+
+func TestScanResources_EmitsTruncationFinding(t *testing.T) {
+	useFakeKnowledgeBackend(t)
+	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
+	a := newTestAnalyzer(stream)
+	a.iacType = IaCTypeCloudFormation
+	a.cbKnowledge = true
+
+	resources := syntheticResources(defaultLLMMaxPromptResources + 7)
+
+	findings, err := a.ScanResources(context.Background(), resources)
+	if err != nil {
+		t.Fatalf("ScanResources: %v", err)
+	}
+
+	var trunc *Finding
+	for i := range findings {
+		if findings[i].RuleID == "LLM-CB-TRUNCATED" {
+			trunc = &findings[i]
+		}
+	}
+	if trunc == nil {
+		t.Fatalf("expected an LLM-CB-TRUNCATED finding, got %+v", findings)
+	}
+	if trunc.Severity != SeverityInfo {
+		t.Errorf("truncation finding severity = %q, want %q", trunc.Severity, SeverityInfo)
+	}
+	if !strings.Contains(trunc.Title, "7") {
+		t.Errorf("truncation finding title should carry the omitted count, got %q", trunc.Title)
+	}
+}
+
+func TestScanResources_NoTruncationFindingUnderCap(t *testing.T) {
+	useFakeKnowledgeBackend(t)
+	stream := &fakeStreamer{chunks: []string{`{"findings":[]}`}}
+	a := newTestAnalyzer(stream)
+	a.iacType = IaCTypeCloudFormation
+	a.cbKnowledge = true
+
+	findings, err := a.ScanResources(context.Background(), syntheticResources(3))
+	if err != nil {
+		t.Fatalf("ScanResources: %v", err)
+	}
+	for _, f := range findings {
+		if f.RuleID == "LLM-CB-TRUNCATED" {
+			t.Errorf("no truncation finding expected under the cap, got %+v", f)
 		}
 	}
 }

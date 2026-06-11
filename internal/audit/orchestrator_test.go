@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,6 +72,15 @@ func (p *customProvider) Scan(_ context.Context, _ []Resource) ([]Finding, error
 
 // ---- tests ----
 
+// runProvidersCollected drains RunProvidersWithProgress into a deduplicated
+// findings slice plus a joined error — the same collapsed view production
+// callers get via collectFindings. It replaces the deleted legacy
+// RunProviders entry point in these tests; unlike that helper it surfaces
+// provider panics and scan errors instead of discarding them.
+func runProvidersCollected(ctx context.Context, providers []FindingProvider, resources []Resource, timeoutPerProvider time.Duration) ([]Finding, error) {
+	return collectFindings(RunProvidersWithProgress(ctx, providers, resources, timeoutPerProvider))
+}
+
 func TestRunProvidersTimeout(t *testing.T) {
 	providers := []FindingProvider{&slowProvider{}}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
@@ -79,9 +89,12 @@ func TestRunProvidersTimeout(t *testing.T) {
 	defer cancel()
 
 	// The provider sleeps 5s; we give it 50ms per-provider so it times out.
-	findings := RunProviders(ctx, providers, resources, 50*time.Millisecond)
+	findings, err := runProvidersCollected(ctx, providers, resources, 50*time.Millisecond)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings after timeout, got %d", len(findings))
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected per-provider deadline error to surface, got %v", err)
 	}
 }
 
@@ -97,12 +110,15 @@ func TestRunProvidersPanicDoesNotAbort(t *testing.T) {
 	}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding from non-panicking provider, got %d", len(findings))
 	}
 	if findings[0].RuleID != "GOOD-001" {
 		t.Fatalf("expected GOOD-001, got %s", findings[0].RuleID)
+	}
+	if err == nil || !strings.Contains(err.Error(), "provider panic") {
+		t.Fatalf("expected the panic to surface as a provider error, got %v", err)
 	}
 }
 
@@ -118,9 +134,12 @@ func TestRunProvidersErrorDoesNotAbort(t *testing.T) {
 	}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding from non-error provider, got %d", len(findings))
+	}
+	if err == nil || !strings.Contains(err.Error(), "provider failed") {
+		t.Fatalf("expected the scan error to surface, got %v", err)
 	}
 }
 
@@ -136,7 +155,10 @@ func TestRunProvidersEmptyFindings(t *testing.T) {
 	}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(findings))
 	}
@@ -165,7 +187,10 @@ func TestRunProvidersMixedSeverities(t *testing.T) {
 	}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 3 {
 		t.Fatalf("expected 3 findings, got %d", len(findings))
 	}
@@ -210,7 +235,10 @@ func TestRunProvidersDedupe(t *testing.T) {
 	}
 	resources := []Resource{{Type: "aws:s3/bucket:Bucket", URN: "bucket-1"}}
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 1 {
 		t.Fatalf("expected 1 deduplicated finding, got %d", len(findings))
 	}
@@ -236,7 +264,10 @@ func TestRunProvidersParallelExecution(t *testing.T) {
 		close(blocker)
 	}()
 
-	findings := RunProviders(context.Background(), providers, resources, 0)
+	findings, err := runProvidersCollected(context.Background(), providers, resources, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings, got %d", len(findings))
 	}
@@ -308,9 +339,12 @@ func TestRunProvidersRespectsOverallTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	findings := RunProviders(ctx, providers, resources, 10*time.Second)
+	findings, err := runProvidersCollected(ctx, providers, resources, 10*time.Second)
 	if len(findings) != 0 {
 		t.Fatalf("expected 0 findings after overall timeout, got %d", len(findings))
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the overall deadline error to surface, got %v", err)
 	}
 }
 

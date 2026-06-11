@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cloudbooster-io/cbx-cli/internal/core/llm"
-	"github.com/cloudbooster-io/cbx-cli/internal/output"
+	"github.com/cloudbooster-io/cbx-cli/core/llm"
 )
 
 // LLMPlanClient implements Client by delegating to an underlying LLM. If the
@@ -39,7 +38,7 @@ Respond with a concise architecture decision record (ADR) in Markdown format des
 		return nil, err
 	}
 
-	adr, err := output.WriteStream(nil, stream)
+	adr, err := stream.Collect()
 	if err != nil {
 		if c.Fallback != nil {
 			return c.Fallback.GeneratePlan(ctx, intent, provider)
@@ -83,7 +82,7 @@ Respond with an updated architecture decision record (ADR) in Markdown format.`,
 		return nil, err
 	}
 
-	adr, err := output.WriteStream(nil, stream)
+	adr, err := stream.Collect()
 	if err != nil {
 		if c.Fallback != nil {
 			return c.Fallback.RefinePlan(ctx, current, refineText, provider)

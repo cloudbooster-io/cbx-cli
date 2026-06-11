@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/output"
 )
 
 // RenderADR generates an Architecture Decision Record in Markdown.
 func RenderADR(p *Plan) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# ADR: %s\n\n", output.TitleCase(p.Intent)))
+	sb.WriteString(fmt.Sprintf("# ADR: %s\n\n", titleCase(p.Intent)))
 	sb.WriteString("## Status\nProposed\n\n")
 	sb.WriteString(fmt.Sprintf("## Context\nThe user requested: %q\n\n", p.Intent))
 	sb.WriteString("## Options\n")
@@ -155,6 +153,21 @@ func ExportJSON(p *Plan) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// titleCase upper-cases the first letter of each whitespace-separated word,
+// mirroring internal/output.TitleCase so core/plan stays internal-free.
+func titleCase(s string) string {
+	if s == "" {
+		return ""
+	}
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 func nodeID(name string) string {

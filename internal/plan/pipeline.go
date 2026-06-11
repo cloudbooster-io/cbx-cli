@@ -89,7 +89,7 @@ func (pp *pipelineProgress) Commit() {
 }
 
 func (p *Pipeline) run(ctx context.Context, intent string) {
-	runner := coreplan.NewRunner(p.cfg, p.session.ActiveProvider, p.token, p.llmToken)
+	runner := coreplan.NewRunner(RunnerConfigFromConfig(p.cfg), p.session.ActiveProvider, p.token, p.llmToken)
 	plan, err := runner.Run(ctx, intent, &pipelineProgress{sender: p.sender})
 	if err != nil {
 		p.sendError(err)

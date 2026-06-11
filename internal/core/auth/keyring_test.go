@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/99designs/keyring"
@@ -105,16 +108,48 @@ func TestKeyringWithoutEnvFailsOnMissingBackend(t *testing.T) {
 }
 
 func TestKeyringFileBackendDefaultDir(t *testing.T) {
+	// Redirect os.UserCacheDir into a temp dir so the test never touches
+	// the real user cache (covers darwin/linux/windows resolution paths).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("LocalAppData", filepath.Join(home, "appdata"))
+
 	t.Setenv("CB_KEYRING_BACKEND", "file")
 	t.Setenv("CB_KEYRING_FILE_DIR", "")
 
-	// Should still open successfully, using the default temp dir.
+	// Should open successfully, defaulting to <user cache dir>/cbx-keyring.
 	kr, err := NewKeyring()
 	if err != nil {
 		t.Fatalf("new keyring with default file dir: %v", err)
 	}
 	if err := kr.Store("test-key", "test-val"); err != nil {
 		t.Fatalf("store: %v", err)
+	}
+
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatalf("user cache dir: %v", err)
+	}
+	dir := filepath.Join(cache, "cbx-keyring")
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("default keyring dir not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("default keyring path is not a directory: %s", dir)
+	}
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Errorf("default keyring dir permissions = %o, want 700", perm)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read default keyring dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Error("expected stored item under the default keyring dir")
 	}
 }
 

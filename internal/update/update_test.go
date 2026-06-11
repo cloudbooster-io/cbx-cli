@@ -188,7 +188,8 @@ func TestCachePathXDG(t *testing.T) {
 func TestDirectAssetURL(t *testing.T) {
 	// Locks the GoReleaser archive name contract: .goreleaser.yml's
 	// archives name_template produces cbx-cli_<TitleOs>_<arch> with
-	// amd64 -> x86_64 and arm64 passing through. The direct-upgrade
+	// amd64 -> x86_64 and arm64 passing through, and format_overrides
+	// ships windows as .zip (everything else tar.gz). The direct-upgrade
 	// download path breaks if the two ever drift apart.
 	tests := []struct {
 		goos, goarch string
@@ -198,6 +199,8 @@ func TestDirectAssetURL(t *testing.T) {
 		{"darwin", "amd64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Darwin_x86_64.tar.gz"},
 		{"linux", "amd64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Linux_x86_64.tar.gz"},
 		{"linux", "arm64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Linux_arm64.tar.gz"},
+		{"windows", "amd64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Windows_x86_64.zip"},
+		{"windows", "arm64", "https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Windows_arm64.zip"},
 	}
 
 	origGoos, origGoarch := goos, goarch
@@ -211,5 +214,113 @@ func TestDirectAssetURL(t *testing.T) {
 				t.Fatalf("directAssetURL(%s/%s) = %q, want %q", tc.goos, tc.goarch, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUpgradeCommand(t *testing.T) {
+	origGoos, origGoarch := goos, goarch
+	t.Cleanup(func() { goos, goarch = origGoos, origGoarch })
+	goos, goarch = "linux", "amd64"
+
+	tests := []struct {
+		method InstallMethod
+		want   string
+	}{
+		{InstallBrew, "brew upgrade cbx-cli"},
+		{InstallScoop, "scoop update cbx-cli"},
+		{InstallDeb, "sudo apt-get install --only-upgrade cbx-cli"},
+		{InstallRPM, "sudo dnf upgrade cbx-cli"},
+		// The direct path downloads to disk so the artifact can be
+		// verified against the GoReleaser checksums.txt before install.
+		{InstallDirect, "curl -fsSLO https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/cbx-cli_Linux_x86_64.tar.gz && " +
+			"curl -fsSL https://github.com/cloudbooster-io/cbx-cli/releases/download/v1.2.3/checksums.txt | grep cbx-cli_Linux_x86_64.tar.gz | sha256sum -c && " +
+			"tar -xzf cbx-cli_Linux_x86_64.tar.gz cbx && mv cbx $(which cbx)"},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.method), func(t *testing.T) {
+			result := &Result{LatestVersion: "v1.2.3", InstallMethod: tc.method}
+			if got := UpgradeCommand(result); got != tc.want {
+				t.Fatalf("UpgradeCommand(%s) = %q, want %q", tc.method, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectLinuxPackage(t *testing.T) {
+	origDpkg, origRPMDirs, origRPMQuery := dpkgInfoGlobs, rpmDBDirs, rpmQuery
+	t.Cleanup(func() { dpkgInfoGlobs, rpmDBDirs, rpmQuery = origDpkg, origRPMDirs, origRPMQuery })
+
+	// missingGlob points at an empty fixture dir, i.e. dpkg does not know
+	// the package.
+	missingGlob := func(t *testing.T) []string {
+		t.Helper()
+		return []string{filepath.Join(t.TempDir(), "cbx-cli.*")}
+	}
+
+	t.Run("deb_owned", func(t *testing.T) {
+		tmp := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tmp, "cbx-cli.list"), []byte("/usr/bin/cbx\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dpkgInfoGlobs = []string{filepath.Join(tmp, "cbx-cli.*")}
+		rpmDBDirs = nil
+		method, ok := detectLinuxPackage()
+		if !ok || method != InstallDeb {
+			t.Fatalf("detectLinuxPackage() = (%s, %v), want (%s, true)", method, ok, InstallDeb)
+		}
+	})
+
+	t.Run("rpm_owned", func(t *testing.T) {
+		dpkgInfoGlobs = missingGlob(t)
+		rpmDBDirs = []string{t.TempDir()}
+		rpmQuery = func() bool { return true }
+		method, ok := detectLinuxPackage()
+		if !ok || method != InstallRPM {
+			t.Fatalf("detectLinuxPackage() = (%s, %v), want (%s, true)", method, ok, InstallRPM)
+		}
+	})
+
+	t.Run("rpm_db_present_not_owned", func(t *testing.T) {
+		dpkgInfoGlobs = missingGlob(t)
+		rpmDBDirs = []string{t.TempDir()}
+		rpmQuery = func() bool { return false }
+		if method, ok := detectLinuxPackage(); ok {
+			t.Fatalf("detectLinuxPackage() = (%s, true), want not-owned", method)
+		}
+	})
+
+	t.Run("no_package_db", func(t *testing.T) {
+		dpkgInfoGlobs = missingGlob(t)
+		rpmDBDirs = []string{filepath.Join(t.TempDir(), "missing")}
+		rpmQuery = func() bool { t.Fatal("rpmQuery must not run without an rpm db"); return false }
+		if method, ok := detectLinuxPackage(); ok {
+			t.Fatalf("detectLinuxPackage() = (%s, true), want not-owned", method)
+		}
+	})
+}
+
+func TestDetectInstallMethodFor_LinuxPackagedBindirs(t *testing.T) {
+	origGoos := goos
+	origDpkg, origRPMDirs, origRPMQuery := dpkgInfoGlobs, rpmDBDirs, rpmQuery
+	t.Cleanup(func() {
+		goos = origGoos
+		dpkgInfoGlobs, rpmDBDirs, rpmQuery = origDpkg, origRPMDirs, origRPMQuery
+	})
+
+	goos = "linux"
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "cbx-cli.list"), []byte("/usr/bin/cbx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dpkgInfoGlobs = []string{filepath.Join(tmp, "cbx-cli.*")}
+	rpmDBDirs = nil
+
+	// Packaged bindir + dpkg ownership → deb.
+	if got := detectInstallMethodFor("/usr/bin/cbx"); got != InstallDeb {
+		t.Fatalf("detectInstallMethodFor(/usr/bin/cbx) = %s, want %s", got, InstallDeb)
+	}
+	// Outside the packaged bindirs the dpkg record is irrelevant → direct.
+	if got := detectInstallMethodFor("/home/user/bin/cbx"); got != InstallDirect {
+		t.Fatalf("detectInstallMethodFor(/home/user/bin/cbx) = %s, want %s", got, InstallDirect)
 	}
 }

@@ -31,6 +31,23 @@ func TestRenderADR(t *testing.T) {
 	}
 }
 
+func TestTitleCase(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"static site", "Static Site"},
+		{"  multiple   spaces  ", "Multiple Spaces"},
+		{"Already Title", "Already Title"},
+		{"s3 + lambda", "S3 + Lambda"},
+	}
+	for _, c := range cases {
+		if got := titleCase(c.in); got != c.want {
+			t.Errorf("titleCase(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestRenderD2(t *testing.T) {
 	p := &Plan{
 		Intent: "api",
