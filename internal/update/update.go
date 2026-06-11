@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -48,6 +49,8 @@ type InstallMethod string
 const (
 	InstallBrew    InstallMethod = "brew"
 	InstallScoop   InstallMethod = "scoop"
+	InstallDeb     InstallMethod = "deb"
+	InstallRPM     InstallMethod = "rpm"
 	InstallDirect  InstallMethod = "direct"
 	InstallUnknown InstallMethod = "unknown"
 )
@@ -120,11 +123,15 @@ func DetectInstallMethod() InstallMethod {
 	if err != nil {
 		return InstallUnknown
 	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		exe, _ = os.Executable()
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
 	}
+	return detectInstallMethodFor(exe)
+}
 
+// detectInstallMethodFor classifies the resolved executable path. Split out
+// from DetectInstallMethod so tests can pin the path and platform.
+func detectInstallMethodFor(exe string) InstallMethod {
 	// Brew detection
 	if strings.Contains(exe, "/Cellar/") || strings.Contains(exe, "/homebrew/Cellar/") {
 		return InstallBrew
@@ -143,7 +150,64 @@ func DetectInstallMethod() InstallMethod {
 		return InstallScoop
 	}
 
+	// deb/rpm detection (Linux). The nfpms packages install the binary to
+	// /usr/bin (bindir in .goreleaser.yml); a binary there that the dpkg
+	// or rpm database claims is package-managed, and the InstallDirect
+	// guidance (overwrite the binary in place) would fight the package
+	// manager — hand those installs to apt/dnf instead.
+	if goos == "linux" && (strings.HasPrefix(exe, "/usr/bin/") || strings.HasPrefix(exe, "/usr/local/bin/")) {
+		if method, ok := detectLinuxPackage(); ok {
+			return method
+		}
+	}
+
 	return InstallDirect
+}
+
+// Linux package-database probe locations. Package-level vars so tests can
+// point them at fixture trees (same seam style as goos/goarch below).
+var (
+	// dpkgInfoGlobs match the bookkeeping files dpkg writes for the nfpms
+	// package (package_name cbx-cli in .goreleaser.yml): <pkg>.list,
+	// <pkg>.md5sums, … or <pkg>:<arch>.* for multi-arch installs.
+	dpkgInfoGlobs = []string{
+		"/var/lib/dpkg/info/cbx-cli.*",
+		"/var/lib/dpkg/info/cbx-cli:*",
+	}
+	// rpmDBDirs are the rpm database locations across distros; one existing
+	// gates the (more expensive) `rpm -q` ownership query.
+	rpmDBDirs = []string{"/var/lib/rpm", "/usr/lib/sysimage/rpm"}
+	// rpmQuery asks the rpm database whether the cbx-cli package is
+	// installed. Var so tests can stub it without an rpm binary.
+	rpmQuery = rpmHasPackage
+)
+
+// detectLinuxPackage reports whether cbx appears to have been installed from
+// the GoReleaser nfpms .deb or .rpm package, preferring cheap filesystem
+// checks over exec'ing the package managers.
+func detectLinuxPackage() (InstallMethod, bool) {
+	for _, glob := range dpkgInfoGlobs {
+		if matches, err := filepath.Glob(glob); err == nil && len(matches) > 0 {
+			return InstallDeb, true
+		}
+	}
+	for _, dir := range rpmDBDirs {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			if rpmQuery() {
+				return InstallRPM, true
+			}
+			break
+		}
+	}
+	return InstallUnknown, false
+}
+
+// rpmHasPackage execs `rpm -q cbx-cli` with a short timeout. Any failure
+// (rpm missing, package not installed, timeout) is treated as not-owned.
+func rpmHasPackage() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "rpm", "-q", "cbx-cli").Run() == nil
 }
 
 // Upgrade attempts an in-place upgrade using the detected install method.
@@ -153,6 +217,10 @@ func Upgrade(ctx context.Context, result *Result) error {
 		return upgradeBrew(ctx)
 	case InstallScoop:
 		return upgradeScoop(ctx)
+	case InstallDeb, InstallRPM:
+		// Package upgrades need sudo; never run that on the user's
+		// behalf — hand back the command instead.
+		return fmt.Errorf("cbx was installed from a system package; upgrade with: %s", UpgradeCommand(result))
 	case InstallDirect:
 		return upgradeDirect(ctx, result)
 	default:
@@ -167,8 +235,19 @@ func UpgradeCommand(result *Result) string {
 		return "brew upgrade cbx-cli"
 	case InstallScoop:
 		return "scoop update cbx-cli"
+	case InstallDeb:
+		return "sudo apt-get install --only-upgrade cbx-cli"
+	case InstallRPM:
+		return "sudo dnf upgrade cbx-cli"
 	default:
-		return fmt.Sprintf("curl -fsSL %s | tar -xz && mv cbx $(which cbx)", directAssetURL(result))
+		// Download to disk, verify against the GoReleaser-published
+		// checksums.txt (checksum.name_template in .goreleaser.yml),
+		// then install — one copy-pasteable line.
+		asset := directAssetURL(result)
+		file := path.Base(asset)
+		checksums := fmt.Sprintf("%s/download/%s/checksums.txt", fallbackHTMLURL, result.LatestVersion)
+		return fmt.Sprintf("curl -fsSLO %s && curl -fsSL %s | grep %s | sha256sum -c && tar -xzf %s cbx && mv cbx $(which cbx)",
+			asset, checksums, file, file)
 	}
 }
 
@@ -377,6 +456,12 @@ func directAssetURL(result *Result) string {
 	case "arm64":
 		arch = "arm64"
 	}
-	return fmt.Sprintf("%s/download/%s/cbx-cli_%s_%s.tar.gz",
-		fallbackHTMLURL, result.LatestVersion, osName, arch)
+	// .goreleaser.yml format_overrides ships windows archives as .zip;
+	// everything else is tar.gz.
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
+	return fmt.Sprintf("%s/download/%s/cbx-cli_%s_%s.%s",
+		fallbackHTMLURL, result.LatestVersion, osName, arch, ext)
 }
