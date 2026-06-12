@@ -8,12 +8,12 @@ import (
 	"os/exec"
 	"strings"
 
-	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 	awsdisc "github.com/cloudbooster-io/cbx-cli/internal/audit/discover/aws"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
+	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
 	audittui "github.com/cloudbooster-io/cbx-cli/internal/tui/audit"
 
@@ -796,7 +796,7 @@ func resolveAuditLLMModel(flag string) string {
 func preflightAuditLLM(ctx context.Context, model string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, llmProbeTimeout)
 	defer cancel()
-	if _, err := coreplan.ProbeCLIExecutor(probeCtx, coreplan.CLIExecutorClaudeCode, model); err != nil {
+	if _, err := llm.ProbeCLIExecutor(probeCtx, llm.CLIExecutorClaudeCode, model); err != nil {
 		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
 			What: "the claude CLI can't serve a prompt — audit aborted before AWS discovery",
 			Why:  err.Error(),

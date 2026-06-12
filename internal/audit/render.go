@@ -144,36 +144,7 @@ func renderFooter(stateFile string, findings []Finding, _ int) string {
 		sb.WriteString(output.Dim.Render("  open in browser ") + htmlLink + "\n")
 	}
 
-	suggestions := suggestedFollowups(findings, stateFile)
-	if len(suggestions) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(output.Dim.Render("what next") + "\n")
-		for _, s := range suggestions {
-			sb.WriteString("  " + output.Dim.Render(output.Symbol("arrow")) + " " + s + "\n")
-		}
-	}
 	return sb.String()
-}
-
-// suggestedFollowups returns up to three context-sensitive cbx command
-// suggestions. Only emits commands the CLI actually supports — the
-// previous --severity hint pointed at a flag that doesn't exist on
-// `cbx audit aws`, so it was removed entirely. cbx plan is the only
-// real follow-up surface available today.
-func suggestedFollowups(findings []Finding, _ string) []string {
-	counts := countBySeverity(findings)
-	out := []string{}
-	switch {
-	case counts[SeverityCritical] > 0:
-		out = append(out, fmt.Sprintf("cbx plan \"address the %d critical findings\"    %s",
-			counts[SeverityCritical],
-			output.Dim.Render("# turn findings into an ADR")))
-	case counts[SeverityHigh] > 0:
-		out = append(out, fmt.Sprintf("cbx plan \"address the %d high-severity findings\"    %s",
-			counts[SeverityHigh],
-			output.Dim.Render("# turn findings into an ADR")))
-	}
-	return out
 }
 
 // reportFileFor mirrors the previous behaviour: <base>_audit_report.md

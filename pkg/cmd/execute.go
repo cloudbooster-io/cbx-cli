@@ -132,7 +132,7 @@ func Execute() error {
 
 	// Flush any advisories the run accumulated but didn't render inline.
 	// Audit's RenderPlain drains its own; this catches notices buffered
-	// by other commands (cbx config / cbx llm / cbx plan) so they still
+	// by other commands (cbx config / cbx llm) so they still
 	// surface to the user instead of vanishing at process exit.
 	if !quietFlag && !output.JSON() {
 		if adv := output.FlushAdvisories(); adv != "" {

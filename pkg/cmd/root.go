@@ -50,9 +50,9 @@ const (
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "cbx <command>",
-		Short: "CloudBooster CLI — plan, audit, and manage cloud infrastructure",
-		Long: `cbx is the CloudBooster CLI for planning cloud infrastructure,
-auditing existing deployments, and interacting with the CloudBooster platform.
+		Short: "CloudBooster CLI — audit and manage cloud infrastructure",
+		Long: `cbx is the CloudBooster CLI for auditing existing cloud deployments
+and interacting with the CloudBooster platform.
 
 Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx doctor to check your setup.`,
 		Version:       Version,
@@ -134,7 +134,7 @@ Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx
 			root.AddCommand(c)
 		}
 	}
-	withGroup(groupCore, newPlanCmd(), newAuditCmd())
+	withGroup(groupCore, newAuditCmd())
 	withGroup(groupAccount, newLoginCmd(), newLogoutCmd(), newStatusCmd(), newAuthCmd())
 	withGroup(groupSetup, newLLMCmd(), newConfigCmd(), newTelemetryCmd())
 	withGroup(groupMaint, newDoctorCmd(), newUpgradeCmd(), newVersionCmd())

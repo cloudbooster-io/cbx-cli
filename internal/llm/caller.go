@@ -1,4 +1,4 @@
-package plan
+package llm
 
 import (
 	"bufio"
@@ -11,21 +11,21 @@ import (
 	"time"
 )
 
-// LLMCaller streams prompts to the user's configured LLM provider.
-type LLMCaller struct {
-	Provider LLMProvider
+// Caller streams prompts to the user's configured HTTP LLM provider.
+type Caller struct {
+	Provider Provider
 	Token    string
 	client   *http.Client
 }
 
-// NewLLMCaller creates a new LLM streaming caller. token is the provider
+// NewCaller creates a new LLM streaming caller. token is the provider
 // credential, resolved and injected by the caller (the CLI composition root)
 // instead of being read from the OS keychain here. Keeping the keychain read
-// out of core/plan is what lets library consumers and unit tests construct the
-// plan stack without triggering a keychain authorization prompt. An empty
-// token is acceptable for offline providers like ollama.
-func NewLLMCaller(provider LLMProvider, token string) *LLMCaller {
-	return &LLMCaller{
+// out of this constructor is what lets unit tests construct the stack without
+// triggering a keychain authorization prompt. An empty token is acceptable
+// for offline providers like ollama.
+func NewCaller(provider Provider, token string) *Caller {
+	return &Caller{
 		Provider: provider,
 		Token:    token,
 		// ResponseHeaderTimeout bounds how long we wait for the provider to
@@ -39,7 +39,7 @@ func NewLLMCaller(provider LLMProvider, token string) *LLMCaller {
 }
 
 // Stream sends the prompt to the LLM and calls onToken for each received token.
-func (c *LLMCaller) Stream(ctx context.Context, prompt string, onToken func(string)) error {
+func (c *Caller) Stream(ctx context.Context, prompt string, onToken func(string)) error {
 	switch c.Provider.Name {
 	case "claude":
 		return c.streamClaude(ctx, prompt, onToken)
@@ -52,7 +52,7 @@ func (c *LLMCaller) Stream(ctx context.Context, prompt string, onToken func(stri
 	}
 }
 
-func (c *LLMCaller) streamClaude(ctx context.Context, prompt string, onToken func(string)) error {
+func (c *Caller) streamClaude(ctx context.Context, prompt string, onToken func(string)) error {
 	body, err := json.Marshal(map[string]any{
 		"model":      c.Provider.Model,
 		"max_tokens": 1024,
@@ -107,7 +107,7 @@ func (c *LLMCaller) streamClaude(ctx context.Context, prompt string, onToken fun
 	return scanner.Err()
 }
 
-func (c *LLMCaller) streamOpenAI(ctx context.Context, prompt string, onToken func(string)) error {
+func (c *Caller) streamOpenAI(ctx context.Context, prompt string, onToken func(string)) error {
 	body, err := json.Marshal(map[string]any{
 		"model":    c.Provider.Model,
 		"messages": []map[string]string{{"role": "user", "content": prompt}},
@@ -161,7 +161,7 @@ func (c *LLMCaller) streamOpenAI(ctx context.Context, prompt string, onToken fun
 	return scanner.Err()
 }
 
-func (c *LLMCaller) streamOllama(ctx context.Context, prompt string, onToken func(string)) error {
+func (c *Caller) streamOllama(ctx context.Context, prompt string, onToken func(string)) error {
 	body, err := json.Marshal(map[string]any{
 		"model":  c.Provider.Model,
 		"prompt": prompt,

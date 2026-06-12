@@ -1,4 +1,4 @@
-package plan
+package llm
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestLLMCallerStreamClaude(t *testing.T) {
+func TestCallerStreamClaude(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -25,7 +25,7 @@ func TestLLMCallerStreamClaude(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(LLMProvider{
+	caller := NewCaller(Provider{
 		Name:    "claude",
 		BaseURL: srv.URL,
 		Model:   "claude-test",
@@ -44,7 +44,7 @@ func TestLLMCallerStreamClaude(t *testing.T) {
 	}
 }
 
-func TestLLMCallerStreamOpenAI(t *testing.T) {
+func TestCallerStreamOpenAI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -56,7 +56,7 @@ func TestLLMCallerStreamOpenAI(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(LLMProvider{
+	caller := NewCaller(Provider{
 		Name:    "openai",
 		BaseURL: srv.URL,
 		Model:   "gpt-4o",
@@ -74,7 +74,7 @@ func TestLLMCallerStreamOpenAI(t *testing.T) {
 	}
 }
 
-func TestLLMCallerStreamOllama(t *testing.T) {
+func TestCallerStreamOllama(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -86,7 +86,7 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	caller := NewLLMCaller(LLMProvider{
+	caller := NewCaller(Provider{
 		Name:    "ollama",
 		BaseURL: srv.URL,
 		Model:   "llama3",
@@ -105,8 +105,8 @@ func TestLLMCallerStreamOllama(t *testing.T) {
 	}
 }
 
-func TestLLMCallerUnsupportedProvider(t *testing.T) {
-	caller := NewLLMCaller(LLMProvider{Name: "unknown"}, "")
+func TestCallerUnsupportedProvider(t *testing.T) {
+	caller := NewCaller(Provider{Name: "unknown"}, "")
 	err := caller.Stream(context.Background(), "test", func(string) {})
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")

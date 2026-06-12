@@ -1,8 +1,7 @@
 // Package assets serves embedded binary assets shared across the
-// cbx-cli codebase. The mermaid runtime lives here (rather than under
-// pkg/cmd/assets where it originated) so both `cbx plan --preview` and
-// `cbx audit aws`'s HTML report can render diagrams without
-// duplicating the ~300KB gzipped payload in the binary.
+// cbx-cli codebase. The mermaid runtime lives here so `cbx audit aws`'s
+// HTML report can render diagrams from the embedded payload (~300KB
+// gzipped) without a network fetch.
 package assets
 
 import (

@@ -83,12 +83,6 @@ func runCBX(t *testing.T, env map[string]string, args ...string) (stdout, stderr
 	return runCBXWithHome(t, "", env, args...)
 }
 
-// runCBXInDir executes the cbx binary in a specific working directory with an isolated HOME.
-func runCBXInDir(t *testing.T, dir string, env map[string]string, args ...string) (stdout, stderr string, exitCode int) {
-	t.Helper()
-	return runCBXWithHomeAndDir(t, "", dir, env, args...)
-}
-
 func runCBXWithHome(t *testing.T, home string, env map[string]string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	return runCBXWithHomeAndDir(t, home, "", env, args...)
@@ -129,18 +123,8 @@ func runCBXWithHomeAndDir(t *testing.T, home, dir string, env map[string]string,
 }
 
 // runCBXInteractive runs cbx with piped stdin for interactive testing.
-// CBX_FORCE_TUI overrides plan's TTY detection — these tests deliberately
-// drive the Bubble Tea REPL over pipes, which headless routing would
-// otherwise (correctly, for real users) refuse.
 func runCBXInteractive(t *testing.T, home, dir string, env map[string]string, stdinLines []string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-
-	if env == nil {
-		env = map[string]string{}
-	}
-	if _, ok := env["CBX_FORCE_TUI"]; !ok {
-		env["CBX_FORCE_TUI"] = "1"
-	}
 
 	cmd := exec.Command(binaryPath, args...)
 	if dir != "" {
@@ -184,24 +168,6 @@ func runCBXInteractive(t *testing.T, home, dir string, env map[string]string, st
 	}
 
 	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), exitCode
-}
-
-func requireFileExists(t *testing.T, path string) {
-	t.Helper()
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected file %s to exist: %v", path, err)
-	}
-}
-
-func requireFileContains(t *testing.T, path string, substr string) {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	if !strings.Contains(string(data), substr) {
-		t.Fatalf("expected %s to contain %q, got:\n%s", path, substr, string(data))
-	}
 }
 
 func requireJSONValid(t *testing.T, s string) {

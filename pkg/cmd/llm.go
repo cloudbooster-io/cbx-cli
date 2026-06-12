@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
@@ -130,7 +129,7 @@ func newLLMCmd() *cobra.Command {
 	llmCmd := &cobra.Command{
 		Use:   "llm",
 		Short: "Manage LLM providers (HTTP API keys) and local CLI executors",
-		Long: `Manage how cbx talks to LLMs for 'cbx plan'. ('cbx audit aws' always uses the local Claude Code CLI for grounded analysis; see 'cbx llm cli'.)
+		Long: `Manage how cbx talks to LLMs. ('cbx audit aws' always uses the local Claude Code CLI for grounded analysis; see 'cbx llm cli'.)
 
 Two flavours of provider:
 
@@ -142,7 +141,7 @@ Two flavours of provider:
          by cbx; the CLI handles auth.
 
 Use 'cbx llm list' for a combined view, 'cbx llm default <name>' to
-pick which provider plan/audit use by default, and 'cbx llm model' to
+pick which provider is used by default, and 'cbx llm model' to
 see or pin the model each provider/executor runs with.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			_ = cmd.Help()
@@ -236,7 +235,7 @@ Model IDs are not validated by cbx — use the provider's current names
 		Example: `  # Show effective models for everything
   cbx llm model
 
-  # Pin the Claude Code executor (audit + plan) to Opus
+  # Pin the Claude Code executor (used by audit) to Opus
   cbx llm model claude-code claude-opus-4-8
 
   # Set the model for the claude api provider
@@ -740,7 +739,7 @@ spending time on AWS discovery.`,
 
 			// Prompt probe — the part --version can't cover. Same
 			// invocation shape, binary resolution, and model pin as a
-			// real plan/audit run (see coreplan.ProbeCLIExecutor).
+			// real audit run (see llm.ProbeCLIExecutor).
 			model := pinnedExecutorModel(name)
 			if !output.JSON() && !output.IsQuiet() {
 				modelNote := ""
@@ -753,7 +752,7 @@ spending time on AWS discovery.`,
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), llmProbeTimeout)
 			defer probeCancel()
 			started := time.Now()
-			_, probeErr := coreplan.ProbeCLIExecutor(probeCtx, name, model)
+			_, probeErr := llm.ProbeCLIExecutor(probeCtx, name, model)
 			elapsed := time.Since(started)
 			if probeErr != nil {
 				if output.JSON() {
@@ -883,7 +882,7 @@ func newLLMListCmd() *cobra.Command {
 func newLLMDefaultCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "default <name>",
-		Short: "Set the default LLM provider (api or cli) for plan/audit",
+		Short: "Set the default LLM provider (api or cli)",
 		Example: `  # Use the Anthropic API provider (after cbx llm api login claude)
   cbx llm default claude
 

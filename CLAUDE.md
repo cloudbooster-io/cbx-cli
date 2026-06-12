@@ -28,7 +28,6 @@ CI is GitHub Actions (`.github/workflows/ci.yml`): `validate` (vet + build), `li
 Implications you must respect:
 - **Any breaking change in `pkg/` is a breaking change for downstream library consumers.** Treat `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`, `pkg/cmd` as semver-public.
 - **`cbx audit` (state/source modes) is fully offline / zero CB API calls** — works without a CloudBooster account. Don't add hidden network calls to those paths; mock scanners are the default specifically to keep this property. The carve-out is `cbx audit aws`, which (a) reads live AWS via the SDK (single-account, ad-hoc, user-initiated), and (b) **always** grounds findings in CloudBooster's curated AWS knowledge: it fetches that knowledge directly over the CB knowledge API (`/v1/knowledge/aws/*`), inlines it into the prompt alongside discovered resources, and runs `claude -p` (no MCP) to cite it — that grounding is the entire value of the subcommand, not optional. So `cbx audit aws` **does** make CB knowledge-API calls and hard-requires `claude` on PATH. Library callers in `pkg/audit` can still build non-LLM audits (used by downstream consumers and the state-file parsers), but the `cbx audit aws` CLI surface no longer exposes that path.
-- **`cbx plan` is BYO-LLM by default** (anonymous tier; user pays the LLM provider, CB pays nothing). Keep it functional without a CB login.
 - **State parsers in `internal/audit/parsers/`** are shared substrate with CloudBooster's hosted "import existing infrastructure" feature. Changing `DiscoveredResource` shape or parser semantics has cross-repo impact — coordinate with maintainers.
 - A planned `cbx mcp serve` subcommand will embed an MCP server (Day-2 feature, not yet shipped). When it lands, it must proxy the same `api.cloudbooster.io/v1/*` contract.
 
@@ -37,15 +36,15 @@ Implications you must respect:
 ```
 cmd/cbx/            thin main; just calls pkg/cmd.Execute / ExitCode
 pkg/                public, importable surface — auth/, audit/, config/, output/, cmd/
-core/               cross-module shared logic — core/api/v1/ (generated), core/plan/
-internal/           private to cbx-cli — audit/, plan/, llm/, tui/, output/, config/, …
+core/               cross-module shared logic — core/api/v1/ (generated)
+internal/           private to cbx-cli — audit/, llm/, tui/, output/, config/, …
 ```
 
 - `cmd/cbx/main.go` is **deliberately tiny** (10 lines). All cobra wiring lives in `pkg/cmd/` so it can be embedded by downstream consumers.
 - `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output` are **pure facades**: type aliases and `var X = internal.X` re-exports only. Don't add logic here — implement in `internal/<pkg>` and re-export.
 - `core/api/v1/client.gen.go` is generated from `api/openapi.yaml` via `tools/codegen/generate.sh` (uses `go tool oapi-codegen`). Never hand-edit; CI's `codegen-check` job will fail. Hand-written companions (`client.go`, `auth.go`, `retry.go`, `ratelimit.go`) wrap the generated client.
 - The API target is the **public** `api.cloudbooster.io/v1/*` surface (anonymous → free → paid tiers, API-key auth). Target only this public surface.
-- `internal/audit` and `internal/plan` are the two large feature areas; both have a CLI entry in `pkg/cmd/{audit,plan}.go` and a Bubble Tea TUI in `internal/tui/{audit,chat}`.
+- `internal/audit` is the large feature area, with its CLI entry in `pkg/cmd/audit.go` and a Bubble Tea TUI in `internal/tui/audit`.
 
 ## Audit pipeline
 
@@ -55,11 +54,11 @@ Exit codes are not 0/1: `audit.ExitCodeError` propagates from `Execute` through 
 
 State-file parsing has a 100 MB guard with a `--yes` bypass (see `Options.Yes` in `internal/audit/types.go`); large fixtures must respect this in tests.
 
-## Plan pipeline
+## LLM providers (`cbx llm`)
 
-`cbx plan "<intent>"` runs either headless (`pkg/cmd/plan.go:runOneShot`) or in a Bubble Tea chat TUI (`internal/tui/chat`). The plan engine itself is in `core/plan/` (importable by other modules); `internal/plan/` is the REPL/command wiring on top. LLM providers (Claude, Codex/OpenAI) are in `internal/core/llm`, with credentials in the OS keyring via `internal/core/auth/keyring.go`.
+**`cbx plan` was removed in June 2026** (unfinished; pulled from the surface before launch — the engine in `core/plan/`, `internal/plan/`, the chat TUI in `internal/tui/chat`, and the plan-only API-client chain `core/llm` + `internal/core/llm` were deleted with it). The `cbx llm` provider/executor management remains because `cbx audit aws` uses it.
 
-A plan run requires an LLM provider configured (`cbx llm api login claude|codex` for an API key, or `cbx llm cli list` for a local executor like Claude Code / Codex CLI) — without it `runE` returns early. Model selection is per provider/executor via `cbx llm model <name> <model>` (stored in `cfg.LLM.Providers[name].Model`): api providers default to a current model (`claude-sonnet-4-6`), CLI executors default to the local CLI's own configured model (cbx passes `--model` only when pinned); `cbx audit aws` additionally honors `--llm-model`. The output artifact is `plan.md` (with an embedded Mermaid diagram) written to the output dir; `--diagram d2` also emits a standalone `plan.d2`; HTML preview is opt-in via `--html`.
+LLM provider metadata, keychain-backed credentials, the HTTP streaming caller the audit analyzer uses, and the CLI-executor plumbing (`llm.IsCLIExecutor`, `llm.ProbeCLIExecutor` — the preflight probe behind `cbx llm cli test` and `cbx audit aws`) all live in `internal/llm` (`llm.Providers`, `llm.GetToken`, `llm.Caller`). Model selection is per provider/executor via `cbx llm model <name> <model>` (stored in `cfg.LLM.Providers[name].Model`): api providers default to a current model (`claude-sonnet-4-6`), CLI executors default to the local CLI's own configured model (cbx passes `--model` only when pinned); `cbx audit aws` additionally honors `--llm-model`.
 
 ## Output / JSON contract
 
@@ -80,4 +79,4 @@ Styled (color/spinner) output flows through `output.Configure(noColor, quiet)` s
 
 ## Docs site is partly aspirational
 
-The public documentation site describes some flags and subcommands that **do not exist yet** in this repo (e.g. `cbx accounts add aws`, `cbx plan --validate`, `--no-adr`, `--dry-run`, `--format json` on `plan`). Treat the docs as forward-looking spec, not a source of truth for what's implemented. When adding new flags, check the published docs so naming stays consistent with what's been promised publicly.
+The public documentation site describes some flags and subcommands that **do not exist** in this repo (e.g. `cbx accounts add aws`, and the whole `cbx plan` surface, which was removed from the CLI in June 2026). Treat the docs as forward-looking spec, not a source of truth for what's implemented. When adding new flags, check the published docs so naming stays consistent with what's been promised publicly.

@@ -115,43 +115,4 @@ func TestStagingConnectivity(t *testing.T) {
 			t.Fatalf("expected 'not logged in' after logout, got:\n%s", stdout)
 		}
 	})
-
-	t.Run("plan_headless_against_staging", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		homeDir := tmpDir + "/home"
-
-		llmEnv := map[string]string{
-			"CBX_KEYCHAIN_MOCK":     "1",
-			"CBX_LLM_SKIP_VALIDATE": "1",
-			"CB_API_URL":            apiURL,
-		}
-
-		// Login
-		_, _, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "llm", "login", "claude", "--token", "sk-ant-test123")
-		if code != 0 {
-			t.Fatalf("login failed with code %d", code)
-		}
-
-		// Plan headless against staging
-		stdout, stderr, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, map[string]string{
-			"CB_API_URL": apiURL,
-		}, "plan", "--no-tui", "static site with auth")
-		if code != 0 {
-			t.Fatalf("cbx plan exited %d against staging; stderr:\n%s", code, stderr)
-		}
-
-		// Byte-stable summary line assertion
-		if !strings.Contains(stdout, "Wrote") {
-			t.Fatalf("expected summary line with 'Wrote', got:\n%s", stdout)
-		}
-		if !strings.Contains(stdout, "components") {
-			t.Fatalf("expected summary line with 'components', got:\n%s", stdout)
-		}
-
-		// plan.md must exist and be valid
-		mdPath := tmpDir + "/plan.md"
-		requireFileExists(t, mdPath)
-		requireFileContains(t, mdPath, "ADR:")
-		requireFileContains(t, mdPath, "static site with auth")
-	})
 }

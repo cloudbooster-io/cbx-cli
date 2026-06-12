@@ -112,7 +112,7 @@ func renderDoctorCard(checks []doctorCheck, allOK bool) string {
 	}
 	if allOK {
 		card.Footer = output.Success.Render(output.Symbol("check")+" all systems healthy") +
-			"  " + output.Dim.Render("· run `cbx audit aws` or `cbx plan \"…\"` to get going")
+			"  " + output.Dim.Render("· run `cbx audit aws` to get going")
 	} else {
 		failed := 0
 		for _, c := range checks {

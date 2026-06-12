@@ -16,7 +16,7 @@ type FindingBlock struct {
 	ResourceURN string
 	Remediation string
 	RuleID      string
-	HintCmd     string // optional — e.g. "cbx plan \"fix this\""
+	HintCmd     string // optional — a suggested follow-up command
 	ReportLink  string // optional — file:// URL or http link
 	Width       int    // 0 means TerminalWidth
 }

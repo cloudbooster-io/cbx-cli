@@ -6,6 +6,13 @@ import (
 	"testing"
 )
 
+// llmEnv mocks the keychain and skips live token validation so `cbx llm
+// api login` works hermetically in tests.
+var llmEnv = map[string]string{
+	"CBX_KEYCHAIN_MOCK":     "1",
+	"CBX_LLM_SKIP_VALIDATE": "1",
+}
+
 // TestConfigIsolationFromRunnerXDG reproduces the GitHub-runner condition
 // behind issue #13: the host environment sets XDG_CONFIG_HOME, which
 // config.Dir() prefers over $HOME. Before the helpers pinned the XDG vars

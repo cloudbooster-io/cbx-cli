@@ -1,4 +1,4 @@
-package plan
+package llm
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func TestCLIStreamer_HappyPath(t *testing.T) {
 		t.Fatalf("newCLIStreamer: %v", err)
 	}
 	var sb strings.Builder
-	if err := s.Stream(context.Background(), "plan this", func(tok string) { sb.WriteString(tok) }); err != nil {
+	if err := s.Stream(context.Background(), "analyse this", func(tok string) { sb.WriteString(tok) }); err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
 	if !strings.Contains(sb.String(), "ranked components here") {
@@ -106,7 +106,7 @@ func TestCLIStreamer_Codex_HappyPath(t *testing.T) {
 		t.Fatalf("newCLIStreamer(codex): %v", err)
 	}
 	var sb strings.Builder
-	if err := s.Stream(context.Background(), "plan this", func(tok string) { sb.WriteString(tok) }); err != nil {
+	if err := s.Stream(context.Background(), "analyse this", func(tok string) { sb.WriteString(tok) }); err != nil {
 		t.Fatalf("Stream: %v", err)
 	}
 	if !strings.Contains(sb.String(), "ranked components from codex") {
@@ -172,74 +172,6 @@ func TestNewCLIStreamer_UnknownExecutor(t *testing.T) {
 		t.Fatal("expected error for an unknown executor name")
 	}
 }
-
-// TestRunner_CLIExecutorDefault is the regression for the reported bug:
-// `cbx llm default claude-code` (no api provider configured, so an empty
-// Providers map) must let `cbx plan` run via the local CLI rather than
-// failing with "provider claude-code not configured".
-func TestRunner_CLIExecutorDefault(t *testing.T) {
-	restore := withFakeClaudeBinary(t, "**Refined components**\n", 0)
-	defer restore()
-
-	// Empty Providers map on purpose.
-	cfg := RunnerConfig{DefaultProvider: CLIExecutorClaudeCode}
-
-	runner := NewRunner(cfg, "", "", nil)
-	var streamed strings.Builder
-	prog := &captureProgress{onToken: func(tok string) { streamed.WriteString(tok) }}
-
-	plan, err := runner.Run(context.Background(), "S3 + Lambda image processor", prog)
-	if err != nil {
-		t.Fatalf("Run with CLI-executor default: %v", err)
-	}
-	if plan == nil {
-		t.Fatal("expected a plan, got nil")
-	}
-	if !strings.Contains(streamed.String(), "Refined components") {
-		t.Errorf("expected the fake CLI output to be streamed; got %q", streamed.String())
-	}
-}
-
-// TestRunner_CodexExecutorDefault mirrors TestRunner_CLIExecutorDefault for the
-// codex CLI executor: `cbx llm default codex` with no api provider configured
-// must run via the local `codex` binary.
-func TestRunner_CodexExecutorDefault(t *testing.T) {
-	restore := withFakeCodexBinary(t, "**Codex-refined components**\n", 0)
-	defer restore()
-
-	// Empty Providers map on purpose.
-	cfg := RunnerConfig{DefaultProvider: CLIExecutorCodex}
-
-	runner := NewRunner(cfg, "", "", nil)
-	var streamed strings.Builder
-	prog := &captureProgress{onToken: func(tok string) { streamed.WriteString(tok) }}
-
-	plan, err := runner.Run(context.Background(), "S3 + Lambda image processor", prog)
-	if err != nil {
-		t.Fatalf("Run with codex CLI-executor default: %v", err)
-	}
-	if plan == nil {
-		t.Fatal("expected a plan, got nil")
-	}
-	if !strings.Contains(streamed.String(), "Codex-refined components") {
-		t.Errorf("expected the fake codex output to be streamed; got %q", streamed.String())
-	}
-}
-
-// captureProgress is a minimal Progress that forwards tokens to a callback.
-type captureProgress struct {
-	onToken func(string)
-}
-
-func (c *captureProgress) PhaseStart(int, int, string) {}
-func (c *captureProgress) SetStatus(string, string)    {}
-func (c *captureProgress) Token(t string) {
-	if c.onToken != nil {
-		c.onToken(t)
-	}
-}
-func (c *captureProgress) Candidate(string, string) {}
-func (c *captureProgress) Commit()                  {}
 
 func TestCLIStreamer_ModelOverride_Args(t *testing.T) {
 	restore := withFakeClaudeBinary(t, "ok", 0)

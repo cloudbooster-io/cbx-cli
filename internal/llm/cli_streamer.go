@@ -1,4 +1,4 @@
-package plan
+package llm
 
 import (
 	"bytes"
@@ -10,23 +10,22 @@ import (
 )
 
 // CLIExecutorClaudeCode is the special-cased provider/default name that makes
-// cbx plan shell out to the local `claude` CLI (Claude Code) instead of going
-// through the HTTP LLMCaller. It is selected via `cbx llm default claude-code`
-// (or `cbx plan --llm claude-code`) and reuses the user's own Claude Code
-// authentication — cbx never sees a token. This mirrors the audit pipeline's
-// own `claude-code` provider (internal/audit), kept as a separate constant
-// here so core/plan stays importable without dragging in internal/audit.
+// cbx shell out to the local `claude` CLI (Claude Code) instead of going
+// through the HTTP Caller. It is selected via `cbx llm default claude-code`
+// and reuses the user's own Claude Code authentication — cbx never sees a
+// token. This mirrors the audit pipeline's own `claude-code` provider
+// (internal/audit), kept as a separate constant here so the two packages
+// stay decoupled.
 const CLIExecutorClaudeCode = "claude-code"
 
 // CLIExecutorCodex is the analogous name for the local OpenAI Codex CLI: it
-// makes cbx plan shell out to `codex exec`, selected via `cbx llm default codex`
-// (or `cbx plan --llm codex`), reusing the user's own Codex authentication.
-// Note the asymmetry with Claude (api `claude` vs cli `claude-code`): the codex
-// CLI executor shares its name with the `codex` HTTP api provider, matching the
-// `cliExecutors` registry in pkg/cmd/llm.go. That collision is harmless — the
-// HTTP `codex` provider has no working plan path anyway (core/plan's LLMCaller
-// only speaks claude/openai/ollama), so routing `codex` to the local CLI here
-// is strictly additive.
+// makes cbx shell out to `codex exec`, selected via `cbx llm default codex`,
+// reusing the user's own Codex authentication. Note the asymmetry with Claude
+// (api `claude` vs cli `claude-code`): the codex CLI executor shares its name
+// with the `codex` HTTP api provider, matching the `cliExecutors` registry in
+// pkg/cmd/llm.go. That collision is harmless — the HTTP Caller only speaks
+// claude/openai/ollama, so routing `codex` to the local CLI here is strictly
+// additive.
 const CLIExecutorCodex = "codex"
 
 // Executable names resolved from PATH. Variables so tests can swap in fakes
@@ -39,8 +38,8 @@ var (
 // IsCLIExecutor reports whether the given provider name resolves to a local
 // CLI executor rather than an HTTP API provider. claude-code and codex are the
 // wired executors (the two entries in `cbx llm cli list`). Exported so the CLI
-// composition root (pkg/cmd) can decide whether a CLI-only setup (no
-// `llm api login`) satisfies the plan precondition.
+// composition root (pkg/cmd) can route a CLI-only setup (no `llm api login`)
+// to the local binary.
 func IsCLIExecutor(provider string) bool {
 	switch provider {
 	case CLIExecutorClaudeCode, CLIExecutorCodex:
@@ -53,8 +52,7 @@ func IsCLIExecutor(provider string) bool {
 // cliStreamer shells out to a local LLM CLI binary in non-interactive print
 // mode and accumulates its stdout into a single onToken callback. There is no
 // token-level streaming — both `claude -p` and `codex exec` return the whole
-// completion at once — which is fine for the plan pipeline (Phase 2 output is
-// rendered as a block). Both binaries write the clean completion to stdout and
+// completion at once. Both binaries write the clean completion to stdout and
 // route diagnostics/progress to stderr, so reading stdout yields just the text.
 type cliStreamer struct {
 	binary string
@@ -160,7 +158,7 @@ const probePrompt = "Reply with the single word: ok"
 
 // ProbeCLIExecutor runs a minimal one-shot prompt through the given local
 // CLI executor — the same binary, non-interactive flags, and model pin the
-// real plan/audit invocation uses — and returns the trimmed response text.
+// real audit invocation uses — and returns the trimmed response text.
 // This is the "does prompting actually work" check that a --version probe
 // cannot provide: expired auth, a revoked/unknown model, or an exhausted
 // usage limit all pass --version and only surface on a real completion.

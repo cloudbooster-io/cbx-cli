@@ -2,9 +2,9 @@
 
 # `cbx`
 
-### Plan it before you build it. Audit it after you ship it.
+### Audit it after you ship it.
 
-**The CloudBooster CLI — architecture plans from plain English, and AWS audits<br>grounded in curated cloud expertise instead of generic advice.**
+**The CloudBooster CLI — AWS audits grounded in curated cloud expertise<br>instead of generic advice.**
 
 [![CI](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/cloudbooster-io/cbx-cli)](https://github.com/cloudbooster-io/cbx-cli/releases)
@@ -15,32 +15,6 @@
 </div>
 
 ---
-
-## Describe it. Get an architecture.
-
-```console
-$ cbx plan "static site with auth"
-```
-
-`cbx plan` turns an intent into `plan.md` — components, trade-offs, and a Mermaid
-diagram, ready to drop into a PR or design doc:
-
-```mermaid
-flowchart LR
-    U([Users]) --> CDN[CloudFront]
-    CDN --> S3[(S3 · static site)]
-    CDN --> API[API Gateway]
-    API --> FN[Lambda · auth]
-    FN --> DB[(DynamoDB · sessions)]
-```
-
-- **Bring your own LLM — no CloudBooster account needed.** Use an Anthropic or
-  OpenAI API key (`cbx llm api login claude|codex`), or a CLI you already have
-  installed — Claude Code or Codex CLI (`cbx llm cli list`).
-- **Headless or interactive.** One-shot from a script, or an in-terminal chat
-  to iterate on the plan.
-- **Your diagram, your format.** Mermaid embedded by default; `--diagram d2`
-  also emits a standalone `plan.d2`, `--html` adds a browser preview.
 
 ## Point it at AWS. Get grounded findings.
 
@@ -83,19 +57,15 @@ Every release is Cosign-signed and ships a Syft SBOM. Once installed,
 ## Quick start
 
 ```bash
-# 1. Pick a model for `cbx plan` — an API key, or a CLI you already have
-cbx llm api login claude        # Anthropic API key (BYO)
-cbx llm cli list                # …or detect Claude Code / Codex CLI on PATH
-
-# 2. Plan
-cbx plan "three-tier web app with a queue between api and workers"
-
-# 3. Audit (read-only; needs AWS credentials + `claude` on PATH)
+# Audit (read-only; needs AWS credentials + `claude` on PATH)
 cbx audit aws
+
+# Optional: pin the model Claude Code runs with
+cbx llm model claude-code claude-opus-4-8
 ```
 
 `cbx login` is optional — it unlocks CloudBooster account features, but
-planning works anonymously.
+auditing works anonymously.
 
 ## Built for scripting
 
@@ -135,7 +105,6 @@ network) alongside `pkg/auth`, `pkg/config`, and `pkg/output`.
 
 | Command | Description |
 |---------|-------------|
-| `cbx plan "<intent>"` | Generate an architecture plan |
 | `cbx audit aws [profile]` | Audit a live AWS account (read-only, grounded in CloudBooster's AWS knowledge) |
 | `cbx llm api login <claude\|codex>` | Store an API key for an LLM provider (bring your own key) |
 | `cbx llm cli list` | List local CLI executors (Claude Code, Codex CLI) detected on PATH |

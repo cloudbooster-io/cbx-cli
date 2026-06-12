@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/knowledge"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
@@ -20,7 +19,7 @@ import (
 	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 )
 
-// llmStreamer is the minimal subset of core/plan.LLMCaller that the analyzer
+// llmStreamer is the minimal subset of internal/llm.Caller that the analyzer
 // needs. The interface exists so unit tests can swap in a deterministic
 // stub without spinning up a real provider — see llm_analyzer_test.go.
 type llmStreamer interface {
@@ -156,20 +155,18 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	}
 
 	// Resolve the provider credential here at the audit composition root and
-	// inject it; core/plan.NewLLMCaller no longer reads the keychain itself.
-	// A keyring failure (including no stored token) is a constructor error —
-	// matching the unconfigured-provider posture above — rather than a blank
-	// token that would surface later as an opaque provider auth failure.
+	// inject it; llm.NewCaller doesn't read the keychain itself. A keyring
+	// failure (including no stored token) is a constructor error — matching
+	// the unconfigured-provider posture above — rather than a blank token
+	// that would surface later as an opaque provider auth failure.
 	llmToken, err := llm.GetToken(opts.LLMProvider)
 	if err != nil {
 		return nil, fmt.Errorf("llm analyzer: reading %q token from keyring: %w; run 'cbx llm api login %s' to store one", opts.LLMProvider, err, opts.LLMProvider)
 	}
 
-	// core/plan carries its own LLMProvider type (the subset of
-	// config.LLMProvider it actually reads) so the shared package stays
-	// decoupled from internal/config — convert explicitly here at the
-	// composition root.
-	planProv := plan.LLMProvider{
+	// llm.Provider is the subset of config.LLMProvider the caller actually
+	// reads — convert explicitly here at the composition root.
+	prov := llm.Provider{
 		Name:    provCfg.Name,
 		BaseURL: provCfg.BaseURL,
 		Model:   provCfg.Model,
@@ -177,7 +174,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 
 	return &llmAnalyzer{
 		provider:          opts.LLMProvider,
-		streamer:          plan.NewLLMCaller(planProv, llmToken),
+		streamer:          llm.NewCaller(prov, llmToken),
 		maxFiles:          opts.LLMMaxFiles,
 		maxBytesPerFile:   opts.LLMMaxBytesPerFile,
 		iacType:           iacType,
@@ -576,7 +573,7 @@ func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredReso
 }
 
 // buildLLMPrompt assembles the user-side prompt. System prompt is set
-// separately by callers that support it; LLMCaller in core/plan currently
+// separately by callers that support it; internal/llm.Caller currently
 // passes a single user message, so we inline the instructions.
 func buildLLMPrompt(iacType string, files []SourceFile) string {
 	var sb strings.Builder
