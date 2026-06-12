@@ -316,24 +316,24 @@ func TestAuthFlow(t *testing.T) {
 		}
 
 		// List api providers: empty
-		stdout, _, code := runCBXWithHome(t, homeDir, env, "llm", "api", "list")
+		stdout, stderr, code := runCBXWithHome(t, homeDir, env, "llm", "api", "list")
 		if code != 0 {
-			t.Fatalf("llm api list failed: %d", code)
+			t.Fatalf("llm api list failed: %d\nstderr:\n%s", code, stderr)
 		}
 		if !strings.Contains(stdout, "no providers configured") {
 			t.Fatalf("expected empty api list, got: %s", stdout)
 		}
 
 		// Login claude with fake token that passes format validation
-		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
+		_, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "login", "claude", "--token", "sk-ant-test123")
 		if code != 0 {
-			t.Fatalf("llm api login claude failed: %d", code)
+			t.Fatalf("llm api login claude failed: %d\nstderr:\n%s", code, stderr)
 		}
 
 		// List: shows claude
-		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
+		stdout, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
 		if code != 0 {
-			t.Fatalf("llm api list failed: %d", code)
+			t.Fatalf("llm api list failed: %d\nstderr:\n%s", code, stderr)
 		}
 		if !strings.Contains(stdout, "claude") {
 			t.Fatalf("expected claude in api list, got: %s", stdout)
@@ -343,21 +343,21 @@ func TestAuthFlow(t *testing.T) {
 		}
 
 		// Login codex
-		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "login", "codex", "--token", "sk-test456")
+		_, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "login", "codex", "--token", "sk-test456")
 		if code != 0 {
-			t.Fatalf("llm api login codex failed: %d", code)
+			t.Fatalf("llm api login codex failed: %d\nstderr:\n%s", code, stderr)
 		}
 
 		// Set default to codex
-		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "default", "codex")
+		_, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "default", "codex")
 		if code != 0 {
-			t.Fatalf("llm default codex failed: %d", code)
+			t.Fatalf("llm default codex failed: %d\nstderr:\n%s", code, stderr)
 		}
 
 		// List: codex is default
-		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
+		stdout, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
 		if code != 0 {
-			t.Fatalf("llm api list failed: %d", code)
+			t.Fatalf("llm api list failed: %d\nstderr:\n%s", code, stderr)
 		}
 		// Match "codex" appearing on a row containing "default" (chip rendering).
 		if !strings.Contains(stdout, "codex") || !strings.Contains(strings.ToLower(stdout), "default") {
@@ -365,15 +365,15 @@ func TestAuthFlow(t *testing.T) {
 		}
 
 		// Logout claude
-		_, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "logout", "claude")
+		_, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "logout", "claude")
 		if code != 0 {
-			t.Fatalf("llm api logout claude failed: %d", code)
+			t.Fatalf("llm api logout claude failed: %d\nstderr:\n%s", code, stderr)
 		}
 
 		// List: only codex
-		stdout, _, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
+		stdout, stderr, code = runCBXWithHome(t, homeDir, env, "llm", "api", "list")
 		if code != 0 {
-			t.Fatalf("llm api list failed: %d", code)
+			t.Fatalf("llm api list failed: %d\nstderr:\n%s", code, stderr)
 		}
 		if strings.Contains(stdout, "claude") {
 			t.Fatalf("expected claude removed from api list, got: %s", stdout)

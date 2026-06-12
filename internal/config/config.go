@@ -207,7 +207,10 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// Save persists the configuration to disk.
+// Save persists the configuration to disk. The write is atomic
+// (temp file + rename in the same directory): a truncate-in-place write
+// would let a concurrent Load in another cbx process observe a partially
+// written file and fail on invalid JSON.
 func Save(cfg *Config) error {
 	path := Path()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -217,7 +220,23 @@ func Save(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return nil

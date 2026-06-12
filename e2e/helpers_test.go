@@ -58,6 +58,25 @@ func buildBinary() (string, error) {
 	return binPath, nil
 }
 
+// isolatedEnv builds the child-process environment for a cbx invocation:
+// the host environment with HOME and the XDG base dirs pinned inside the
+// per-test home, plus any test-specific overrides. Pinning the XDG vars is
+// load-bearing: config.Dir() prefers $XDG_CONFIG_HOME over $HOME, and
+// GitHub-hosted runners set it — without the override every test process
+// would share the runner's real config dir (and race on config.json).
+// Duplicate keys are fine; os/exec uses the last occurrence.
+func isolatedEnv(home string, env map[string]string) []string {
+	full := append(os.Environ(),
+		"HOME="+home,
+		"XDG_CONFIG_HOME="+filepath.Join(home, ".config"),
+		"XDG_CACHE_HOME="+filepath.Join(home, ".cache"),
+	)
+	for k, v := range env {
+		full = append(full, fmt.Sprintf("%s=%s", k, v))
+	}
+	return full
+}
+
 // runCBX executes the cbx binary with an isolated HOME.
 func runCBX(t *testing.T, env map[string]string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
@@ -92,10 +111,7 @@ func runCBXWithHomeAndDir(t *testing.T, home, dir string, env map[string]string,
 		}
 	}
 
-	cmd.Env = append(os.Environ(), "HOME="+home)
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
+	cmd.Env = isolatedEnv(home, env)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -129,10 +145,7 @@ func runCBXInteractive(t *testing.T, home, dir string, env map[string]string, st
 		}
 	}
 
-	cmd.Env = append(os.Environ(), "HOME="+home)
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
+	cmd.Env = isolatedEnv(home, env)
 
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
