@@ -595,6 +595,25 @@ const htmlShellTemplate = `<!DOCTYPE html>
     --radius-lg: 1rem;
 
     --sidebar-w: 320px;
+
+    /* Blueprint diagram tokens — consumed by the .bp-* chrome below
+       AND by the inlined architecture SVG, which references them as
+       var(--bp-*, <light fallback>) from its embedded stylesheet (see
+       internal/audit/diagram_svg.go, svgThemeStyle). Light values here
+       must equal those fallbacks; keep all three theme blocks in sync. */
+    --bp-paper: #FAF7F0;
+    --bp-node: #FFFFFF;
+    --bp-ink: #1C1917;
+    --bp-subtle: #57534E;
+    --bp-muted: #78716C;
+    --bp-faint: #A8A29E;
+    --bp-accent: #C2410C;
+    --bp-red: #B91C1C;
+    --bp-slate: #64748B;
+    --bp-slate-strong: #475569;
+    --bp-teal: #0D9488;
+    --bp-lime: #65A30D;
+    --bp-notes-bg: rgba(255,255,255,0.55);
   }
   [data-theme="dark"] {
     --bg-page: #07080b;
@@ -622,6 +641,20 @@ const htmlShellTemplate = `<!DOCTYPE html>
     --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.5), 0 2px 4px -2px rgba(0,0,0,0.3);
     --shadow-lg: 0 12px 24px -8px rgba(0,0,0,0.55);
+
+    --bp-paper: #141210;
+    --bp-node: #1C1917;
+    --bp-ink: #E7E5E4;
+    --bp-subtle: #D6D3D1;
+    --bp-muted: #A8A29E;
+    --bp-faint: #57534E;
+    --bp-accent: #FB923C;
+    --bp-red: #F87171;
+    --bp-slate: #94A3B8;
+    --bp-slate-strong: #CBD5E1;
+    --bp-teal: #2DD4BF;
+    --bp-lime: #A3E635;
+    --bp-notes-bg: rgba(255,255,255,0.04);
   }
   /* Auto theme follows the OS preference when no explicit choice
      has been made. The toggle's third state ("auto") removes the
@@ -651,7 +684,33 @@ const htmlShellTemplate = `<!DOCTYPE html>
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
       --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.5), 0 2px 4px -2px rgba(0,0,0,0.3);
       --shadow-lg: 0 12px 24px -8px rgba(0,0,0,0.55);
+      --bp-paper: #141210;
+      --bp-node: #1C1917;
+      --bp-ink: #E7E5E4;
+      --bp-subtle: #D6D3D1;
+      --bp-muted: #A8A29E;
+      --bp-faint: #57534E;
+      --bp-accent: #FB923C;
+      --bp-red: #F87171;
+      --bp-slate: #94A3B8;
+      --bp-slate-strong: #CBD5E1;
+      --bp-teal: #2DD4BF;
+      --bp-lime: #A3E635;
+      --bp-notes-bg: rgba(255,255,255,0.04);
     }
+  }
+  /* The architecture SVG ships its own prefers-color-scheme block so
+     the standalone .svg artifact is dark-mode aware. Vars defined ON
+     the svg element beat the inherited ones above, so when the reader
+     forces LIGHT via the toggle while the OS is dark, this
+     higher-specificity rule re-asserts the light palette on the
+     element itself. (Forced dark needs no twin: the svg's own media
+     block only ever sets the same dark values.) */
+  [data-theme="light"] .cbx-arch {
+    --bp-paper: #FAF7F0; --bp-node: #FFFFFF; --bp-ink: #1C1917;
+    --bp-subtle: #57534E; --bp-muted: #78716C; --bp-faint: #A8A29E;
+    --bp-accent: #C2410C; --bp-red: #B91C1C; --bp-slate: #64748B;
+    --bp-slate-strong: #475569; --bp-teal: #0D9488; --bp-lime: #65A30D;
   }
 
   * { box-sizing: border-box; }
@@ -1184,18 +1243,18 @@ const htmlShellTemplate = `<!DOCTYPE html>
      The diagram-wrap inside takes whatever vertical space is left
      after the title chrome, and preserveAspectRatio="meet" scales
      the artwork to fit. */
-  .bp-section { background: #FAF7F0; border-radius: 0; padding: 0.85rem 1.1rem 0.65rem; }
+  .bp-section { background: var(--bp-paper); border-radius: 0; padding: 0.85rem 1.1rem 0.65rem; }
   .bp-section .bp-title { padding-bottom: 0.55rem; margin-bottom: 0.65rem; }
   .bp-section .bp-title-main { font-size: 17px; margin: 0.15rem 0 0.2rem; }
   .bp-section .bp-sheet-tag, .bp-section .bp-subline { font-size: 9.5px; }
   .bp-section .bp-toolbar { padding: 0.3rem 0.1rem 0.45rem; }
   .bp-section .bp-wrap {
-    background: #FAF7F0;
+    background: var(--bp-paper);
     border-radius: 0;
     box-shadow: none;
     line-height: 0;
-    border-top: 1px solid #1C1917;
-    border-bottom: 1px solid #1C1917;
+    border-top: 1px solid var(--bp-ink);
+    border-bottom: 1px solid var(--bp-ink);
     /* The whole section (title + toolbar + diagram) lands around
        45%% of the viewport because the diagram-wrap caps at 35vh.
        Calculation: title chrome ≈ 70-90px, toolbar ≈ 30px, and the
@@ -1217,14 +1276,14 @@ const htmlShellTemplate = `<!DOCTYPE html>
     gap: 0.75rem; padding: 0.4rem 0.1rem 0.55rem;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
   }
-  .bp-toolbar-hint { font-size: 10.5px; color: #78716C; letter-spacing: 0.02em; }
-  .bp-toolbar-hint strong { color: #1C1917; font-weight: 700; }
+  .bp-toolbar-hint { font-size: 10.5px; color: var(--bp-muted); letter-spacing: 0.02em; }
+  .bp-toolbar-hint strong { color: var(--bp-ink); font-weight: 700; }
   .bp-fs-btn {
     all: unset; cursor: pointer; padding: 4px 12px; font-size: 11px; font-weight: 700;
-    letter-spacing: 0.06em; background: #1C1917; color: #FAF7F0;
-    font-family: 'JetBrains Mono', ui-monospace, monospace; border: 1px solid #1C1917;
+    letter-spacing: 0.06em; background: var(--bp-ink); color: var(--bp-paper);
+    font-family: 'JetBrains Mono', ui-monospace, monospace; border: 1px solid var(--bp-ink);
   }
-  .bp-fs-btn:hover { background: #C2410C; border-color: #C2410C; }
+  .bp-fs-btn:hover { background: var(--bp-accent); border-color: var(--bp-accent); }
   /* Fullscreen modal */
   .bp-modal {
     display: none; position: fixed; inset: 0; background: rgba(28, 25, 23, 0.75);
@@ -1234,37 +1293,37 @@ const htmlShellTemplate = `<!DOCTYPE html>
   .bp-modal.open { display: flex; }
   .bp-modal-bar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 12px; background: #FAF7F0; border: 1.5px solid #1C1917; border-bottom: 0;
+    padding: 8px 12px; background: var(--bp-paper); border: 1.5px solid var(--bp-ink); border-bottom: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
   }
-  .bp-modal-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: #1C1917; }
+  .bp-modal-title { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; color: var(--bp-ink); }
   .bp-modal-close {
     all: unset; cursor: pointer; padding: 2px 10px; font-size: 14px; font-weight: 700;
-    color: #1C1917;
+    color: var(--bp-ink);
   }
-  .bp-modal-close:hover { color: #C2410C; }
+  .bp-modal-close:hover { color: var(--bp-accent); }
   .bp-modal-body {
-    flex: 1 1 auto; overflow: auto; background: #FAF7F0;
-    border: 1.5px solid #1C1917; line-height: 0;
+    flex: 1 1 auto; overflow: auto; background: var(--bp-paper);
+    border: 1.5px solid var(--bp-ink); line-height: 0;
   }
   .bp-modal-body > svg { display: block; min-width: 1400px; width: 100%%; height: auto; }
-  .bp-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.25rem; padding-bottom: 0.75rem; border-bottom: 1.5px solid #C2410C; margin-bottom: 1rem; }
-  .bp-title-left { min-width: 0; flex: 1 1 auto; font-family: 'JetBrains Mono', ui-monospace, monospace; color: #1C1917; }
-  .bp-sheet-tag { font-size: 10px; letter-spacing: 0.18em; color: #78716C; font-weight: 700; }
+  .bp-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 1.25rem; padding-bottom: 0.75rem; border-bottom: 1.5px solid var(--bp-accent); margin-bottom: 1rem; }
+  .bp-title-left { min-width: 0; flex: 1 1 auto; font-family: 'JetBrains Mono', ui-monospace, monospace; color: var(--bp-ink); }
+  .bp-sheet-tag { font-size: 10px; letter-spacing: 0.18em; color: var(--bp-muted); font-weight: 700; }
   .bp-title-main { margin: 0.2rem 0 0.25rem; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; font-family: 'JetBrains Mono', ui-monospace, monospace; line-height: 1.2; }
-  .bp-subline { font-size: 11px; color: #57534E; font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .bp-subline { font-size: 11px; color: var(--bp-subtle); font-family: 'JetBrains Mono', ui-monospace, monospace; }
   .bp-meta-row { display: flex; gap: 0.9rem; font-family: 'JetBrains Mono', ui-monospace, monospace; flex: 0 0 auto; flex-wrap: wrap; }
-  .bp-cell { border-left: 1px solid #A8A29E; padding-left: 0.625rem; min-width: 80px; }
-  .bp-cell-label { font-size: 9px; letter-spacing: 0.18em; color: #78716C; font-weight: 700; }
-  .bp-cell-value { font-size: 11px; font-weight: 600; color: #1C1917; margin-top: 2px; }
+  .bp-cell { border-left: 1px solid var(--bp-faint); padding-left: 0.625rem; min-width: 80px; }
+  .bp-cell-label { font-size: 9px; letter-spacing: 0.18em; color: var(--bp-muted); font-weight: 700; }
+  .bp-cell-value { font-size: 11px; font-weight: 600; color: var(--bp-ink); margin-top: 2px; }
   .bp-cell-mono .bp-cell-value { font-family: 'JetBrains Mono', ui-monospace, monospace; }
   .bp-cell-chips { display: inline-flex; gap: 6px; margin-top: 3px; }
   .bp-tag { color: #fff; padding: 1px 6px; font-size: 9px; font-weight: 800; font-family: 'JetBrains Mono', ui-monospace, monospace; letter-spacing: 0.04em; }
-  .bp-notes { margin-top: 1.25rem; padding: 0.9rem 1rem; border: 1.5px solid #1C1917; background: rgba(255,255,255,0.55); font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .bp-notes { margin-top: 1.25rem; padding: 0.9rem 1rem; border: 1.5px solid var(--bp-ink); background: var(--bp-notes-bg); font-family: 'JetBrains Mono', ui-monospace, monospace; }
   .bp-notes-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.6rem; }
-  .bp-notes-title { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; color: #1C1917; }
-  .bp-notes-hint { font-size: 10px; color: #78716C; letter-spacing: 0.06em; }
-  .bp-notes-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 28px; font-size: 10.5px; color: #1C1917; }
+  .bp-notes-title { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; color: var(--bp-ink); }
+  .bp-notes-hint { font-size: 10px; color: var(--bp-muted); letter-spacing: 0.06em; }
+  .bp-notes-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 28px; font-size: 10.5px; color: var(--bp-ink); }
   .bp-note { display: flex; gap: 8px; align-items: baseline; }
   .bp-note-key { color: #fff; padding: 1px 5px; font-size: 9.5px; font-weight: 800; font-family: 'JetBrains Mono', ui-monospace, monospace; min-width: 28px; text-align: center; display: inline-block; }
   .bp-note-txt { font-size: 10.5px; line-height: 1.35; }
@@ -1443,6 +1502,22 @@ const htmlShellTemplate = `<!DOCTYPE html>
       --sev-high-bg: #ffedd5; --sev-high-text: #9a3412; --sev-high-bar: #ea580c;
       --sev-warn-bg: #fef9c5; --sev-warn-text: #854d0e; --sev-warn-bar: #ca8a04;
       --sev-info-bg: #dbeafe; --sev-info-text: #1e40af; --sev-info-bar: #2563eb;
+      --bp-paper: #FAF7F0; --bp-node: #FFFFFF; --bp-ink: #1C1917;
+      --bp-subtle: #57534E; --bp-muted: #78716C; --bp-faint: #A8A29E;
+      --bp-accent: #C2410C; --bp-red: #B91C1C; --bp-slate: #64748B;
+      --bp-slate-strong: #475569; --bp-teal: #0D9488; --bp-lime: #65A30D;
+      --bp-notes-bg: rgba(255,255,255,0.55);
+    }
+    /* The architecture SVG defines its dark vars on itself under
+       prefers-color-scheme; element-own definitions beat the inherited
+       light values above, so re-assert light directly on the element.
+       (Browsers usually evaluate print as light anyway — this is the
+       belt to that suspender.) */
+    html .cbx-arch {
+      --bp-paper: #FAF7F0; --bp-node: #FFFFFF; --bp-ink: #1C1917;
+      --bp-subtle: #57534E; --bp-muted: #78716C; --bp-faint: #A8A29E;
+      --bp-accent: #C2410C; --bp-red: #B91C1C; --bp-slate: #64748B;
+      --bp-slate-strong: #475569; --bp-teal: #0D9488; --bp-lime: #65A30D;
     }
     body {
       background: #fff;

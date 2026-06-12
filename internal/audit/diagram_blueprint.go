@@ -217,9 +217,10 @@ func resolveResourceURN(ref string, byURN map[string]DiscoveredResource, idToURN
 // collapse into a small "+N" indicator.
 func renderResourceBox(r DiscoveredResource, x, y int, chips []string) string {
 	var b strings.Builder
-	// Card body
+	// Card body — .bp-node opts the white fill into theming (see
+	// svgThemeStyle; #FFFFFF is deliberately not remapped globally).
 	fmt.Fprintf(&b,
-		`<rect x="%d" y="%d" width="%d" height="%d" fill="#FFFFFF" stroke="#1C1917" stroke-width="0.9"/>`,
+		`<rect class="bp-node" x="%d" y="%d" width="%d" height="%d" fill="#FFFFFF" stroke="#1C1917" stroke-width="0.9"/>`,
 		x, y, boxW, boxH,
 	)
 	// AWS icon — 40px, left-aligned with 8px inset
@@ -259,8 +260,11 @@ func renderChipStack(rightX, y int, chips []string) string {
 	x := rightX - len(shown)*chipW + 2
 	for _, ck := range shown {
 		colour := severityChipColour(ck)
+		// .bp-chip keeps the pill out of svgThemeStyle's fill remapping —
+		// it must stay identical in both themes so it keeps matching the
+		// sidebar / NOTES pills, which use the same static palette.
 		fmt.Fprintf(&b,
-			`<rect x="%d" y="%d" width="20" height="12" fill="%s"/>`+
+			`<rect class="bp-chip" x="%d" y="%d" width="20" height="12" fill="%s"/>`+
 				`<text x="%d" y="%d" text-anchor="middle" font-size="8.5" font-weight="800" fill="#FFFFFF" font-family="'JetBrains Mono', ui-monospace, monospace">%s</text>`,
 			x, y, colour,
 			x+10, y+9, ck,

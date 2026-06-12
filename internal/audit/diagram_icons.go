@@ -172,9 +172,12 @@ func monogramFallback(x, y, size int, monogram, family string) string {
 		fontSize = 10
 	}
 	scale := float64(size) / 40.0
+	// .bp-tile keeps the badge out of svgThemeStyle's fill remapping —
+	// family colours are AWS brand tiles and render fine on both themes
+	// (the slate fallback shares its hex with a themed text colour).
 	return fmt.Sprintf(
 		`<g transform="translate(%d,%d) scale(%.4f)">`+
-			`<rect x="2" y="2" width="36" height="36" rx="6" fill="%s"/>`+
+			`<rect class="bp-tile" x="2" y="2" width="36" height="36" rx="6" fill="%s"/>`+
 			`<text x="20" y="%d" text-anchor="middle" font-family="Inter, sans-serif" font-size="%d" font-weight="700" fill="#FFFFFF" letter-spacing="0.02em">%s</text>`+
 			`</g>`,
 		x, y, scale, bg, 20+fontSize/3, fontSize, svgEscape(monogram),

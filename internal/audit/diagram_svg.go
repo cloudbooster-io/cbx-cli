@@ -14,7 +14,10 @@ import (
 // AWS-Architecture-Center palette on a light surface, real 2D
 // topology layout, no JavaScript, no external assets. The same SVG
 // renders identically in file:// HTML, in print preview, and as a
-// screenshot pasted into Twitter/LinkedIn.
+// screenshot pasted into Twitter/LinkedIn. An embedded stylesheet
+// (svgThemeStyle) additionally makes it dark-mode aware in CSS-capable
+// contexts — standalone via prefers-color-scheme, inlined in the HTML
+// report via the page's --bp-* tokens (toggle-aware).
 //
 // Layout: three vertical lanes inside an account header band:
 //
@@ -140,8 +143,9 @@ func BuildArchitectureSVG(resources []DiscoveredResource, components []group.Com
 	renderLLMConnections(&body, llmConns, byURN, pr)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" preserveAspectRatio="xMidYMin meet" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" role="img" aria-label="CloudBooster AWS architecture diagram">`,
+	fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" class="cbx-arch" viewBox="0 0 %d %d" preserveAspectRatio="xMidYMin meet" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" role="img" aria-label="CloudBooster AWS architecture diagram">`,
 		canvasWidth, canvasH)
+	sb.WriteString(svgThemeStyle)
 	sb.WriteString(svgDefs())
 	// Cream paper background + faint horizontal grid stripes — the
 	// Blueprint engineering-schematic aesthetic.
@@ -2020,7 +2024,7 @@ func renderEdgeLane(sb *strings.Builder, edges []DiscoveredResource, x, y, w int
 // minimal silhouette icon on the left to match the Blueprint design.
 func renderUsersBox(sb *strings.Builder, x, y int) {
 	fmt.Fprintf(sb,
-		`<rect x="%d" y="%d" width="%d" height="%d" fill="#FFFFFF" stroke="#1C1917" stroke-width="0.9"/>`,
+		`<rect class="bp-node" x="%d" y="%d" width="%d" height="%d" fill="#FFFFFF" stroke="#1C1917" stroke-width="0.9"/>`,
 		x, y, boxW, boxH,
 	)
 	// Square silhouette icon
@@ -2100,6 +2104,50 @@ func isHiddenBucket(title string) bool {
 // -----------------------------------------------------------------------------
 // Defs / watermark / helpers
 // -----------------------------------------------------------------------------
+
+// svgThemeStyle is the embedded stylesheet that makes the diagram
+// dark-mode aware without giving up portability:
+//
+//   - Every themable colour stays a presentation attribute (the light
+//     Blueprint palette) and is remapped here to a CSS var carrying the
+//     same light value as fallback. Renderers that ignore <style>
+//     (image rasterizers, markdown <img> pipelines) keep producing
+//     today's light sheet byte-for-byte.
+//   - Opened standalone in a browser, the prefers-color-scheme block
+//     below supplies the dark values.
+//   - Inlined in the HTML report, the page's --bp-* tokens (defined in
+//     render_aws_html.go for all three toggle states, plus a
+//     [data-theme="light"] .cbx-arch and an @media print override that
+//     beat the media query here) take precedence. Keep the var names
+//     and light values in sync with that file.
+//   - Severity chips (.bp-chip) and monogram tiles (.bp-tile) are
+//     excluded on purpose: chips must keep matching the sidebar/NOTES
+//     pills (which stay the same in both themes), tiles are AWS brand
+//     colours. Pure white (#FFFFFF) is never remapped globally — the
+//     two node-card rects opt in via the .bp-node class; chip/monogram
+//     text stays white over its saturated fill.
+const svgThemeStyle = `<style>
+.cbx-arch [fill="#FAF7F0"]{fill:var(--bp-paper,#FAF7F0)}
+.cbx-arch [fill="#1C1917"]{fill:var(--bp-ink,#1C1917)}
+.cbx-arch [fill="#57534E"]{fill:var(--bp-subtle,#57534E)}
+.cbx-arch [fill="#78716C"]:not(.bp-chip){fill:var(--bp-muted,#78716C)}
+.cbx-arch [fill="#A8A29E"]{fill:var(--bp-faint,#A8A29E)}
+.cbx-arch [fill="#B91C1C"]:not(.bp-chip){fill:var(--bp-red,#B91C1C)}
+.cbx-arch [fill="#C2410C"]:not(.bp-chip){fill:var(--bp-accent,#C2410C)}
+.cbx-arch [fill="#0D9488"]{fill:var(--bp-teal,#0D9488)}
+.cbx-arch [fill="#65A30D"]{fill:var(--bp-lime,#65A30D)}
+.cbx-arch [fill="#64748B"]:not(.bp-tile){fill:var(--bp-slate,#64748B)}
+.cbx-arch [fill="#475569"]{fill:var(--bp-slate-strong,#475569)}
+.cbx-arch [stroke="#1C1917"]{stroke:var(--bp-ink,#1C1917)}
+.cbx-arch [stroke="#78716C"]{stroke:var(--bp-muted,#78716C)}
+.cbx-arch [stroke="#A8A29E"]{stroke:var(--bp-faint,#A8A29E)}
+.cbx-arch [stroke="#B91C1C"]{stroke:var(--bp-red,#B91C1C)}
+.cbx-arch [stroke="#C2410C"]{stroke:var(--bp-accent,#C2410C)}
+.cbx-arch [stroke="#0D9488"]{stroke:var(--bp-teal,#0D9488)}
+.cbx-arch [stroke="#65A30D"]{stroke:var(--bp-lime,#65A30D)}
+.cbx-arch .bp-node{fill:var(--bp-node,#FFFFFF)}
+@media (prefers-color-scheme:dark){.cbx-arch{--bp-paper:#141210;--bp-node:#1C1917;--bp-ink:#E7E5E4;--bp-subtle:#D6D3D1;--bp-muted:#A8A29E;--bp-faint:#57534E;--bp-accent:#FB923C;--bp-red:#F87171;--bp-slate:#94A3B8;--bp-slate-strong:#CBD5E1;--bp-teal:#2DD4BF;--bp-lime:#A3E635}}
+</style>`
 
 func svgDefs() string {
 	return `<defs>
