@@ -120,9 +120,16 @@ func (c *cliStreamer) Stream(ctx context.Context, prompt string, onToken func(st
 	if err := cmd.Run(); err != nil {
 		// Surface stderr on exit-status errors so the user sees the real
 		// cause (auth expired, rate limit, …) rather than just "exit 1".
+		// `claude -p` reports many of those failures on STDOUT with an
+		// empty stderr (invalid API key, model access, usage limits), so
+		// fall back to stdout before giving up on a message.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = truncateForError(strings.TrimSpace(stdout.String()))
+			}
+			if msg != "" {
 				return fmt.Errorf("%s exited %d: %s", c.binary, exitErr.ExitCode(), msg)
 			}
 			return fmt.Errorf("%s exited %d", c.binary, exitErr.ExitCode())
@@ -132,4 +139,43 @@ func (c *cliStreamer) Stream(ctx context.Context, prompt string, onToken func(st
 
 	onToken(stdout.String())
 	return nil
+}
+
+// truncateForError caps a CLI's failure output at a size that still reads
+// as an error message — a non-zero exit can leave a partial completion on
+// stdout, and quoting all of it would bury the cause.
+func truncateForError(s string) string {
+	const max = 500
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// probePrompt is the minimal one-shot prompt ProbeCLIExecutor sends. The
+// response content is deliberately not validated — shims and unusual
+// models are fine — only that the executor exits 0 with a non-empty
+// completion.
+const probePrompt = "Reply with the single word: ok"
+
+// ProbeCLIExecutor runs a minimal one-shot prompt through the given local
+// CLI executor — the same binary, non-interactive flags, and model pin the
+// real plan/audit invocation uses — and returns the trimmed response text.
+// This is the "does prompting actually work" check that a --version probe
+// cannot provide: expired auth, a revoked/unknown model, or an exhausted
+// usage limit all pass --version and only surface on a real completion.
+func ProbeCLIExecutor(ctx context.Context, provider, model string) (string, error) {
+	s, err := newCLIStreamer(provider, model)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	if err := s.Stream(ctx, probePrompt, func(tok string) { sb.WriteString(tok) }); err != nil {
+		return "", err
+	}
+	resp := strings.TrimSpace(sb.String())
+	if resp == "" {
+		return "", fmt.Errorf("%s returned an empty completion for the probe prompt", provider)
+	}
+	return resp, nil
 }

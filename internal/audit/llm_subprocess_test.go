@@ -190,3 +190,80 @@ func TestClaudeCLIStreamer_ModelOverride(t *testing.T) {
 		t.Fatalf("model = %q, want claude-opus-4-8", s.model)
 	}
 }
+
+func TestClaudeCLIStreamer_NonZeroExit_FallsBackToStdout(t *testing.T) {
+	// `claude -p` reports auth/model/limit failures on STDOUT with an
+	// empty stderr — the error must carry that message, not a bare
+	// "exited 1".
+	restore := withFakeClaudeBinary(t, "Invalid API key · Please run /login", 1)
+	defer restore()
+
+	s, err := newClaudeCLIStreamer("")
+	if err != nil {
+		t.Fatalf("newClaudeCLIStreamer: %v", err)
+	}
+	streamErr := s.Stream(context.Background(), "x", func(string) {})
+	if streamErr == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	if !strings.Contains(streamErr.Error(), "Invalid API key") {
+		t.Errorf("expected stdout message in error; got %v", streamErr)
+	}
+	if !strings.Contains(streamErr.Error(), "exited 1") {
+		t.Errorf("expected exit code in error; got %v", streamErr)
+	}
+}
+
+func TestClaudeCLIStreamer_NonZeroExit_StderrStillWins(t *testing.T) {
+	// When both streams carry content, stderr is the diagnostic channel.
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncat > /dev/null\nprintf 'partial completion' \necho 'rate limited' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s, err := newClaudeCLIStreamer("")
+	if err != nil {
+		t.Fatalf("newClaudeCLIStreamer: %v", err)
+	}
+	streamErr := s.Stream(context.Background(), "x", func(string) {})
+	if streamErr == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	if !strings.Contains(streamErr.Error(), "rate limited") {
+		t.Errorf("stderr should win when present; got %v", streamErr)
+	}
+	if strings.Contains(streamErr.Error(), "partial completion") {
+		t.Errorf("stdout must not be mixed in when stderr has the message; got %v", streamErr)
+	}
+}
+
+func TestClaudeCLIStreamer_NonZeroExit_StdoutFallbackTruncated(t *testing.T) {
+	// A failed run can leave a partial completion on stdout; the fallback
+	// caps it so the error still reads as an error.
+	long := strings.Repeat("y", 600)
+	restore := withFakeClaudeBinary(t, long, 1)
+	defer restore()
+
+	s, err := newClaudeCLIStreamer("")
+	if err != nil {
+		t.Fatalf("newClaudeCLIStreamer: %v", err)
+	}
+	streamErr := s.Stream(context.Background(), "x", func(string) {})
+	if streamErr == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	// Assert on the message tail only — the prefix carries the binary's
+	// temp path, whose random segment could collide with the filler.
+	_, msg, found := strings.Cut(streamErr.Error(), "exited 1: ")
+	if !found {
+		t.Fatalf("unexpected error shape: %v", streamErr)
+	}
+	if got := strings.Count(msg, "y"); got != 500 {
+		t.Errorf("stdout fallback should cap at 500 chars, found %d", got)
+	}
+	if !strings.HasSuffix(msg, "…") {
+		t.Errorf("expected truncation marker; got %v", streamErr)
+	}
+}

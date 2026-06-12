@@ -95,7 +95,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 
 	if opts.LLMProvider == ClaudeCodeProvider {
 		if opts.CBKnowledge {
-			streamer, err := newGroundedClaudeStreamer()
+			streamer, err := newGroundedClaudeStreamer(opts.LLMModel)
 			if err != nil {
 				return nil, err
 			}

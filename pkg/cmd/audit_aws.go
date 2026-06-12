@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 	awsdisc "github.com/cloudbooster-io/cbx-cli/internal/audit/discover/aws"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/group"
@@ -211,6 +212,26 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				return rpErr
 			}
 
+			// LLM preflight: prove the claude CLI can actually serve a
+			// completion — same binary, flags, and model pin the grounded
+			// run uses — BEFORE any AWS spend. A --version check is not
+			// enough: expired auth, a revoked/unknown model, and exhausted
+			// usage limits only surface on a real `-p` invocation, and
+			// without this probe they'd burn the whole discovery pass and
+			// come back as a useless end-of-run LLM-ERROR finding.
+			// Skipped for --dry-run (no LLM runs there).
+			resolvedLLMModel := resolveAuditLLMModel(llmModel)
+			if !dryRun {
+				ui.SetPhase("verifying llm (claude probe)")
+				if perr := preflightAuditLLM(ctx, resolvedLLMModel); perr != nil {
+					ui.Done()
+					if output.JSON() {
+						_ = output.PrintJSON(nil, output.JSONError(perr))
+					}
+					return perr
+				}
+			}
+
 			discResult, err := awsdisc.Discover(ctx, discoverParams)
 			ui.Done()
 			if err != nil {
@@ -283,7 +304,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				AWSAccountPosture: discResult.AccountPosture,
 				MockScanners:      false,
 				LLMProvider:       audit.ClaudeCodeProvider,
-				LLMModel:          resolveAuditLLMModel(llmModel),
+				LLMModel:          resolvedLLMModel,
 				CBKnowledge:       true,
 				LLMMaxCost:        llmMaxCost,
 				Quiet:             quietFlag,
@@ -765,4 +786,23 @@ func resolveAuditLLMModel(flag string) string {
 		return p.Model
 	}
 	return ""
+}
+
+// preflightAuditLLM sends a minimal one-shot prompt through the claude
+// CLI with the resolved model pin and wraps any failure in an actionable
+// error. It gates `cbx audit aws` before discovery so a broken executor
+// (expired auth, inaccessible model, usage limit) aborts in seconds
+// instead of surfacing as an LLM-ERROR finding after the full AWS pass.
+func preflightAuditLLM(ctx context.Context, model string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, llmProbeTimeout)
+	defer cancel()
+	if _, err := coreplan.ProbeCLIExecutor(probeCtx, coreplan.CLIExecutorClaudeCode, model); err != nil {
+		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: "the claude CLI can't serve a prompt — audit aborted before AWS discovery",
+			Why:  err.Error(),
+			Fix:  "debug with `cbx llm cli test claude-code`; check Claude Code auth, usage limits, and the pinned model (`cbx llm model`, --llm-model)",
+			Code: "E_LLM_PREFLIGHT",
+		}))
+	}
+	return nil
 }

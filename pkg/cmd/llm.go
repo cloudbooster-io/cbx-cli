@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	coreplan "github.com/cloudbooster-io/cbx-cli/core/plan"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 	"github.com/cloudbooster-io/cbx-cli/internal/llm"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
@@ -627,7 +628,7 @@ cbx shells out to them — no token is stored on the cbx side.
 
 Use 'cbx llm cli list' to see which executors cbx knows about and
 which are detected on PATH. Use 'cbx llm cli test <name>' to verify
-the binary responds.`,
+the binary responds AND can serve a real prompt (auth, model, limits).`,
 		Run: func(cmd *cobra.Command, args []string) {
 			_ = cmd.Help()
 		},
@@ -686,8 +687,17 @@ func newLLMCLIListCmd() *cobra.Command {
 func newLLMCLITestCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "test <name>",
-		Short: "Run <binary> --version to confirm the executor is callable",
-		Example: `  # Verify Claude Code is installed and responding
+		Short: "Verify the executor works: --version, then a one-shot prompt",
+		Long: `Verify a local CLI executor end to end. Runs <binary> --version
+(installed and callable), then sends a minimal one-shot prompt through
+the same non-interactive invocation cbx uses for real work ('claude -p',
+'codex exec'), honoring any 'cbx llm model' pin.
+
+The prompt step is the part --version cannot cover: expired auth, a
+revoked or inaccessible model, and exhausted usage limits only surface
+on a real completion. 'cbx audit aws' runs this same probe before
+spending time on AWS discovery.`,
+		Example: `  # Verify Claude Code is installed, authenticated, and can serve a prompt
   cbx llm cli test claude-code`,
 		Args: RequireExactlyOneArg("executor name", "cbx llm cli test <name>   (e.g. claude-code, codex; see: cbx llm cli list)"),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -727,13 +737,75 @@ func newLLMCLITestCmd() *cobra.Command {
 					Code: "E_EXECUTOR_BROKEN",
 				})
 			}
-			if output.JSON() {
-				return output.PrintJSON(map[string]any{"executor": name, "ok": true, "path": bin, "version": versionLine}, nil)
+
+			// Prompt probe — the part --version can't cover. Same
+			// invocation shape, binary resolution, and model pin as a
+			// real plan/audit run (see coreplan.ProbeCLIExecutor).
+			model := pinnedExecutorModel(name)
+			if !output.JSON() && !output.IsQuiet() {
+				modelNote := ""
+				if model != "" {
+					modelNote = " (model " + model + ")"
+				}
+				fmt.Fprintf(os.Stderr, "%s\n",
+					output.Dim.Render(fmt.Sprintf("sending a one-shot probe prompt to %s%s — a few seconds…", name, modelNote)))
 			}
-			output.Successf("cli/%s OK (%s)\n  %s", name, bin, versionLine)
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), llmProbeTimeout)
+			defer probeCancel()
+			started := time.Now()
+			_, probeErr := coreplan.ProbeCLIExecutor(probeCtx, name, model)
+			elapsed := time.Since(started)
+			if probeErr != nil {
+				if output.JSON() {
+					_ = output.PrintJSON(map[string]any{
+						"executor": name, "ok": false, "path": bin, "version": versionLine,
+						"model": model, "probe_ok": false, "error": probeErr.Error(),
+					}, nil)
+				}
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("executor %s answers --version but failed the prompt probe", name),
+					Why:  probeErr.Error(),
+					Fix:  fmt.Sprintf("the binary runs but can't serve a completion — check the %s CLI's auth, usage limits, and the pinned model (`cbx llm model`)", e.Vendor),
+					Code: "E_EXECUTOR_PROBE_FAILED",
+				}))
+			}
+
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{
+					"executor": name, "ok": true, "path": bin, "version": versionLine,
+					"model": model, "probe_ok": true, "probe_seconds": elapsed.Seconds(),
+				}, nil)
+			}
+			probeLine := fmt.Sprintf("prompt probe OK in %.1fs", elapsed.Seconds())
+			if model != "" {
+				probeLine += " (model " + model + ")"
+			}
+			output.Successf("cli/%s OK (%s)\n  %s\n  %s", name, bin, versionLine, probeLine)
 			return nil
 		},
 	}
+}
+
+// llmProbeTimeout bounds the one-shot prompt probe in `cbx llm cli test`
+// and the `cbx audit aws` LLM preflight. Generous: a cold `claude -p`
+// run on a tiny prompt is normally well under 30s, but slow first-token
+// days shouldn't fail the check.
+const llmProbeTimeout = 90 * time.Second
+
+// pinnedExecutorModel returns the model the user pinned for a CLI
+// executor via `cbx llm model <name> <model>`, or "" when unpinned /
+// config is unreadable — matching how the plan pipeline resolves it
+// (internal/plan/pipeline.go), so the probe tests the model a real run
+// would use.
+func pinnedExecutorModel(name string) string {
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if p := cfg.LLM.Providers[name]; p.ModelPinned && p.Model != "" {
+		return p.Model
+	}
+	return ""
 }
 
 // --- top-level list + default ----------------------------------------------

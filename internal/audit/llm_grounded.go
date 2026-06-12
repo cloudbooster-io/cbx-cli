@@ -48,6 +48,12 @@ type GroundingEvent struct {
 type groundedClaudeStreamer struct {
 	binary string
 
+	// model, when non-empty, is appended as --model; empty means the
+	// CLI's own configured default. Carries Options.LLMModel (the
+	// --llm-model flag, falling back to the `cbx llm model claude-code`
+	// pin) into the grounded invocation.
+	model string
+
 	// trail is the deterministic grounding trail, set by InstallBundle
 	// before Stream runs. We seed it from the Go-side fetch rather than
 	// parsing LLM tool calls — that's the whole reason this rewrite
@@ -62,8 +68,9 @@ type groundedClaudeStreamer struct {
 // newGroundedClaudeStreamer resolves the local claude binary and
 // preflights the CB knowledge backend. The backend check is up-front
 // so the audit fails before discovery if grounding is going to be
-// unreachable.
-func newGroundedClaudeStreamer() (*groundedClaudeStreamer, error) {
+// unreachable. model, when non-empty, pins the claude model for the
+// grounded run (see the struct field).
+func newGroundedClaudeStreamer(model string) (*groundedClaudeStreamer, error) {
 	bin, err := exec.LookPath(claudeCodeBinary)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -76,7 +83,7 @@ func newGroundedClaudeStreamer() (*groundedClaudeStreamer, error) {
 		return nil, err
 	}
 
-	return &groundedClaudeStreamer{binary: bin}, nil
+	return &groundedClaudeStreamer{binary: bin, model: model}, nil
 }
 
 // resolvedCBAPIURL returns the CB knowledge backend URL the audit will
@@ -140,7 +147,11 @@ func (g *groundedClaudeStreamer) InstallBundle(bundle *GroundingBundle) {
 // the raw stdout is surfaced as the response and the cost stays 0
 // rather than failing the audit.
 func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onToken func(string)) error {
-	cmd := exec.CommandContext(ctx, g.binary, "-p", "--output-format", "stream-json", "--verbose")
+	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
+	if g.model != "" {
+		args = append(args, "--model", g.model)
+	}
+	cmd := exec.CommandContext(ctx, g.binary, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -150,10 +161,7 @@ func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onTo
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
-				return fmt.Errorf("%s exited %d: %s", g.binary, exitErr.ExitCode(), msg)
-			}
-			return fmt.Errorf("%s exited %d", g.binary, exitErr.ExitCode())
+			return claudeExitError(g.binary, exitErr, &stdout, &stderr)
 		}
 		return fmt.Errorf("running %s: %w", g.binary, runErr)
 	}

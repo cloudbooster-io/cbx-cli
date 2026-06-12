@@ -296,3 +296,74 @@ func TestCLIStreamer_NoModel_NoFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIStreamer_NonZeroExit_FallsBackToStdout(t *testing.T) {
+	// `claude -p` reports auth/model/limit failures on STDOUT with an
+	// empty stderr — the error must carry that message, not a bare
+	// "exited 1".
+	restore := withFakeClaudeBinary(t, "Invalid API key · Please run /login", 1)
+	defer restore()
+
+	s, err := newCLIStreamer(CLIExecutorClaudeCode, "")
+	if err != nil {
+		t.Fatalf("newCLIStreamer: %v", err)
+	}
+	streamErr := s.Stream(context.Background(), "x", func(string) {})
+	if streamErr == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	if !strings.Contains(streamErr.Error(), "Invalid API key") {
+		t.Errorf("expected stdout message in error; got %v", streamErr)
+	}
+}
+
+func TestProbeCLIExecutor_HappyPath(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "ok", 0)
+	defer restore()
+
+	resp, err := ProbeCLIExecutor(context.Background(), CLIExecutorClaudeCode, "")
+	if err != nil {
+		t.Fatalf("ProbeCLIExecutor: %v", err)
+	}
+	if resp != "ok" {
+		t.Errorf("resp = %q, want ok", resp)
+	}
+}
+
+func TestProbeCLIExecutor_EmptyCompletionIsError(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "", 0)
+	defer restore()
+
+	_, err := ProbeCLIExecutor(context.Background(), CLIExecutorClaudeCode, "")
+	if err == nil {
+		t.Fatal("expected error for empty completion")
+	}
+	if !strings.Contains(err.Error(), "empty completion") {
+		t.Errorf("expected empty-completion error; got %v", err)
+	}
+}
+
+func TestProbeCLIExecutor_AuthFailureCarriesCLIMessage(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "Invalid API key · Please run /login", 1)
+	defer restore()
+
+	_, err := ProbeCLIExecutor(context.Background(), CLIExecutorClaudeCode, "")
+	if err == nil {
+		t.Fatal("expected probe failure")
+	}
+	if !strings.Contains(err.Error(), "Invalid API key") {
+		t.Errorf("probe error should carry the CLI's own message; got %v", err)
+	}
+}
+
+func TestProbeCLIExecutor_MissingBinary(t *testing.T) {
+	t.Setenv("PATH", "")
+	orig := claudeCodeBinary
+	claudeCodeBinary = "claude-does-not-exist-xyz"
+	defer func() { claudeCodeBinary = orig }()
+
+	_, err := ProbeCLIExecutor(context.Background(), CLIExecutorClaudeCode, "")
+	if err == nil {
+		t.Fatal("expected error when binary is missing")
+	}
+}

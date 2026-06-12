@@ -60,19 +60,36 @@ func (c *claudeCLIStreamer) Stream(ctx context.Context, prompt string, onToken f
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		// exit-status errors carry the stderr message; surface it so the
-		// LLM-ERROR finding tells the user something useful (auth expired,
-		// rate limit, …) rather than just "exit 1".
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
-				return fmt.Errorf("%s exited %d: %s", c.binary, exitErr.ExitCode(), msg)
-			}
-			return fmt.Errorf("%s exited %d", c.binary, exitErr.ExitCode())
+			return claudeExitError(c.binary, exitErr, &stdout, &stderr)
 		}
 		return fmt.Errorf("invoking %s: %w", c.binary, err)
 	}
 
 	onToken(stdout.String())
 	return nil
+}
+
+// claudeExitError builds the error for a non-zero claude exit, carrying
+// the CLI's own failure message so the LLM-ERROR finding tells the user
+// something useful (auth expired, rate limit, …) rather than just
+// "exit 1". stderr wins when non-empty, but `claude -p` reports many
+// failures on STDOUT with an empty stderr (invalid API key, model
+// access, usage limits) — fall back to stdout before giving up.
+func claudeExitError(binary string, exitErr *exec.ExitError, stdout, stderr *bytes.Buffer) error {
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" {
+		msg = strings.TrimSpace(stdout.String())
+		// A non-zero exit can leave a partial completion on stdout;
+		// cap it so the message still reads as an error.
+		const max = 500
+		if len(msg) > max {
+			msg = msg[:max] + "…"
+		}
+	}
+	if msg != "" {
+		return fmt.Errorf("%s exited %d: %s", binary, exitErr.ExitCode(), msg)
+	}
+	return fmt.Errorf("%s exited %d", binary, exitErr.ExitCode())
 }

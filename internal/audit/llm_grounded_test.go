@@ -72,7 +72,7 @@ func TestGroundedStreamer_EchoesStdoutAsFinalText(t *testing.T) {
 	restore := withFakeClaudeText(t, fakeClaudeStreamJSON(t, `{"findings":[]}`, 0.01))
 	defer restore()
 
-	s, err := newGroundedClaudeStreamer()
+	s, err := newGroundedClaudeStreamer("")
 	if err != nil {
 		t.Fatalf("newGroundedClaudeStreamer: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestGroundedStreamer_InstallBundleSeedsTrail(t *testing.T) {
 	restore := withFakeClaudeText(t, fakeClaudeStreamJSON(t, `{"findings":[]}`, 0.01))
 	defer restore()
 
-	s, err := newGroundedClaudeStreamer()
+	s, err := newGroundedClaudeStreamer("")
 	if err != nil {
 		t.Fatalf("newGroundedClaudeStreamer: %v", err)
 	}
@@ -230,5 +230,90 @@ func TestGroundedStreamer_PlainTextFallback_CostStaysZero(t *testing.T) {
 	}
 	if got := s.TotalCostUSD(); got != 0 {
 		t.Errorf("TotalCostUSD = %v, want 0 on the plain-text fallback path", got)
+	}
+}
+
+// fakeClaudeArgsRecorderAt is fakeClaudeBinaryAt plus argv capture: the
+// script writes its arguments (one per line) to args.txt next to the
+// binary before echoing the response, so tests can assert the exact
+// flags Stream passes.
+func fakeClaudeArgsRecorderAt(t *testing.T, response string) (binPath, argsFile string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-binary trick is POSIX-only")
+	}
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args.txt")
+	script := "#!/bin/sh\ncat > /dev/null\nprintf '%s\\n' \"$@\" > '" + argsFile + "'\ncat <<'__CBX_EOF__'\n" + response + "\n__CBX_EOF__\n"
+	binPath = filepath.Join(dir, "claude")
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	return binPath, argsFile
+}
+
+func TestGroundedStreamer_ModelPin_PassesModelFlag(t *testing.T) {
+	bin, argsFile := fakeClaudeArgsRecorderAt(t, fakeClaudeStreamJSON(t, `{"findings":[]}`, 0))
+	s := &groundedClaudeStreamer{binary: bin, model: "claude-opus-4-8"}
+
+	if err := s.Stream(context.Background(), "prompt", func(string) {}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	found := false
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) && args[i+1] == "claude-opus-4-8" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected --model claude-opus-4-8 in claude argv, got %v", args)
+	}
+}
+
+func TestGroundedStreamer_NoModelPin_NoModelFlag(t *testing.T) {
+	bin, argsFile := fakeClaudeArgsRecorderAt(t, fakeClaudeStreamJSON(t, `{"findings":[]}`, 0))
+	s := &groundedClaudeStreamer{binary: bin}
+
+	if err := s.Stream(context.Background(), "prompt", func(string) {}); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+	if strings.Contains(string(raw), "--model") {
+		t.Errorf("no model pinned but --model passed: %q", string(raw))
+	}
+}
+
+func TestGroundedStreamer_NonZeroExit_FallsBackToStdout(t *testing.T) {
+	// `claude -p` reports auth/model/limit failures on STDOUT with an
+	// empty stderr; the streamer error must carry that message instead
+	// of a bare "exited 1".
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-binary trick is POSIX-only")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncat > /dev/null\nprintf '%s' 'Invalid API key · Please run /login'\nexit 1\n"
+	binPath := filepath.Join(dir, "claude")
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	s := &groundedClaudeStreamer{binary: binPath}
+
+	streamErr := s.Stream(context.Background(), "prompt", func(string) {})
+	if streamErr == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	if !strings.Contains(streamErr.Error(), "Invalid API key") {
+		t.Errorf("expected stdout message in error; got %v", streamErr)
+	}
+	if !strings.Contains(streamErr.Error(), "exited 1") {
+		t.Errorf("expected exit code in error; got %v", streamErr)
 	}
 }
