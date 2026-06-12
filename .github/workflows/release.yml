@@ -48,7 +48,7 @@ jobs:
           # Full clone: GoReleaser needs the whole tag history for the
           # changelog and refuses to release from a shallow checkout.
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@v3
