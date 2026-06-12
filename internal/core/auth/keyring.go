@@ -55,6 +55,13 @@ func NewKeyring() (Keyring, error) {
 				kr, err := keyring.Open(keyring.Config{
 					ServiceName:     serviceName,
 					AllowedBackends: []keyring.BackendType{p},
+					// macOS: trust the creating binary. Without this the
+					// keychain item is written with an EMPTY trusted-app ACL,
+					// so every data read — even by the binary that wrote it —
+					// triggers the Keychain authorization prompt. Applies at
+					// item creation; existing items keep their old ACL until
+					// rewritten (logout + login).
+					KeychainTrustApplication: true,
 				})
 				if err == nil {
 					return &osKeyring{kr: kr}, nil
@@ -89,6 +96,9 @@ func openBackend(name string) (Keyring, error) {
 		ServiceName:     serviceName,
 		AllowedBackends: []keyring.BackendType{bt},
 		FileDir:         dir,
+		// See NewKeyring: avoids the per-read macOS Keychain prompt for
+		// items this binary creates (no-op for non-keychain backends).
+		KeychainTrustApplication: true,
 	}
 	if bt == keyring.FileBackend {
 		// SECURITY (known limitation): the file backend encrypts stored

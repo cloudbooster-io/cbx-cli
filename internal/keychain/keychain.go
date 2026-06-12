@@ -143,6 +143,12 @@ func backendConfig(bt keyring.BackendType, dir string) keyring.Config {
 		ServiceName:     Service,
 		AllowedBackends: []keyring.BackendType{bt},
 		FileDir:         dir,
+		// macOS: trust the creating binary. Without this the keychain item
+		// is written with an EMPTY trusted-app ACL, so every data read —
+		// even by the binary that wrote it — triggers the Keychain
+		// authorization prompt. Applies at item creation; existing items
+		// keep their old ACL until rewritten (re-run `cbx llm api login`).
+		KeychainTrustApplication: true,
 	}
 	if bt == keyring.FileBackend {
 		// SECURITY (known limitation): the file backend encrypts stored
