@@ -140,8 +140,9 @@ Two flavours of provider:
          authentication (Claude Code, Codex CLI, …). No token is stored
          by cbx; the CLI handles auth.
 
-Use 'cbx llm list' for a combined view and 'cbx llm default <name>' to
-pick which provider plan/audit use by default.`,
+Use 'cbx llm list' for a combined view, 'cbx llm default <name>' to
+pick which provider plan/audit use by default, and 'cbx llm model' to
+see or pin the model each provider/executor runs with.`,
 		Run: func(cmd *cobra.Command, args []string) {
 			_ = cmd.Help()
 		},
@@ -151,8 +152,217 @@ pick which provider plan/audit use by default.`,
 		newLLMCLICmd(),
 		newLLMListCmd(),
 		newLLMDefaultCmd(),
+		newLLMModelCmd(),
 	)
 	return llmCmd
+}
+
+// --- model subcommand --------------------------------------------------------
+
+// modelSourceFor resolves the effective model for a provider/executor name and
+// reports where it comes from: "configured" (user override in config),
+// "default" (the api provider's registry default), or "cli default" (a CLI
+// executor with no override — the local CLI picks its own model).
+func modelSourceFor(cfg *config.Config, name string) (model, source string) {
+	if p, ok := cfg.LLM.Providers[name]; ok && p.Model != "" {
+		if p.ModelPinned {
+			return p.Model, "configured"
+		}
+		// Unpinned entries carry login-seeded defaults. For api providers
+		// that's still the effective model; for pure CLI executors the model
+		// is not passed to the binary unless pinned, so fall through to the
+		// executor's own default.
+		if _, isAPI := llm.Providers[name]; isAPI {
+			return p.Model, "default"
+		}
+	}
+	if reg, ok := llm.Providers[name]; ok {
+		return reg.Model, "default"
+	}
+	return "", "cli default"
+}
+
+// knownModelTarget reports whether name is something a model can be configured
+// for: an api provider in the registry or a known CLI executor.
+func knownModelTarget(name string) bool {
+	if _, ok := llm.Providers[name]; ok {
+		return true
+	}
+	_, ok := findExecutor(name)
+	return ok
+}
+
+// modelTargetNames returns every name `cbx llm model` can address, sorted,
+// de-duplicated (codex is both an api provider and a CLI executor — one slot).
+func modelTargetNames() []string {
+	seen := map[string]bool{}
+	var names []string
+	for name := range llm.Providers {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, e := range cliExecutors {
+		if !seen[e.Name] {
+			seen[e.Name] = true
+			names = append(names, e.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func newLLMModelCmd() *cobra.Command {
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "model [name] [model]",
+		Short: "Show or set the model a provider/executor uses",
+		Long: `Show or set the model used by an api provider or CLI executor.
+
+With no arguments, lists the effective model for every provider and
+executor. With a name, shows that one. With a name and a model, stores
+the model as that provider's override.
+
+For api providers (claude, codex) the model is sent with every HTTP
+request; when unset, cbx uses a current default (claude-sonnet-4-6 for
+claude). For CLI executors (claude-code, codex) cbx passes the model to
+the binary via --model; when unset, no flag is passed and the CLI's own
+configured default applies.
+
+Model IDs are not validated by cbx — use the provider's current names
+(e.g. claude-sonnet-4-6, claude-opus-4-8).`,
+		Example: `  # Show effective models for everything
+  cbx llm model
+
+  # Pin the Claude Code executor (audit + plan) to Opus
+  cbx llm model claude-code claude-opus-4-8
+
+  # Set the model for the claude api provider
+  cbx llm model claude claude-sonnet-4-6
+
+  # Revert to the default
+  cbx llm model claude-code --clear`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 2 {
+				return fmt.Errorf("too many arguments; expected [name] [model]")
+			}
+			if clear && len(args) != 1 {
+				return fmt.Errorf("--clear takes exactly one argument: the provider/executor name")
+			}
+			if len(args) == 2 && args[1] == "" {
+				return fmt.Errorf("model must not be empty; use --clear to revert to the default")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+
+			// List mode: no args.
+			if len(args) == 0 {
+				type row struct {
+					Name   string `json:"name"`
+					Model  string `json:"model"`
+					Source string `json:"source"`
+				}
+				var rows []row
+				for _, name := range modelTargetNames() {
+					m, src := modelSourceFor(cfg, name)
+					rows = append(rows, row{Name: name, Model: m, Source: src})
+				}
+				if output.JSON() {
+					return output.PrintJSON(map[string]any{"models": rows}, nil)
+				}
+				cardRows := make([]llmRow, 0, len(rows))
+				for _, r := range rows {
+					detail := r.Model
+					if detail == "" {
+						detail = "(CLI's own default)"
+					}
+					cardRows = append(cardRows, llmRow{
+						Kind: "api", Name: r.Name, Detail: detail + " · " + r.Source, OK: true,
+					})
+					if _, isCLI := findExecutor(r.Name); isCLI {
+						cardRows[len(cardRows)-1].Kind = "cli"
+					}
+				}
+				fmt.Fprint(cmd.OutOrStdout(),
+					renderLLMProvidersCard(cardRows, "models",
+						"run `cbx llm model <name> <model>` to set one"))
+				return nil
+			}
+
+			name := args[0]
+			if !knownModelTarget(name) {
+				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+					What: fmt.Sprintf("unknown provider or executor: %s", name),
+					Why:  fmt.Sprintf("cbx knows about: %s", strings.Join(modelTargetNames(), ", ")),
+					Fix:  "run `cbx llm model` to see every configurable name",
+					Code: "E_UNKNOWN_PROVIDER",
+				}))
+			}
+
+			// Get mode: one arg, no --clear.
+			if len(args) == 1 && !clear {
+				m, src := modelSourceFor(cfg, name)
+				if output.JSON() {
+					return output.PrintJSON(map[string]any{"provider": name, "model": m, "source": src}, nil)
+				}
+				if m == "" {
+					output.Infof("%s: no model pinned — the local CLI's own default applies", name)
+					return nil
+				}
+				output.Infof("%s: %s (%s)", name, m, src)
+				return nil
+			}
+
+			// Clear mode.
+			if clear {
+				if p, ok := cfg.LLM.Providers[name]; ok {
+					if p.AuthMode == config.AuthModeCLIExecutor {
+						// Entry existed only to carry the override.
+						delete(cfg.LLM.Providers, name)
+					} else {
+						p.Model = llm.Providers[name].Model
+						p.ModelPinned = false
+						cfg.LLM.Providers[name] = p
+					}
+					if err := config.Save(cfg); err != nil {
+						return err
+					}
+				}
+				m, src := modelSourceFor(cfg, name)
+				if output.JSON() {
+					return output.PrintJSON(map[string]any{"provider": name, "model": m, "source": src}, nil)
+				}
+				output.Successf("Model for %s reset to %s", name, map[bool]string{true: m, false: "the CLI's own default"}[m != ""])
+				return nil
+			}
+
+			// Set mode.
+			model := args[1]
+			p, ok := cfg.LLM.Providers[name]
+			if !ok {
+				p = config.LLMProvider{Name: name, AuthMode: config.AuthModeCLIExecutor}
+			}
+			p.Model = model
+			p.ModelPinned = true
+			cfg.LLM.Providers[name] = p
+			if err := config.Save(cfg); err != nil {
+				return err
+			}
+			if output.JSON() {
+				return output.PrintJSON(map[string]any{"provider": name, "model": model, "source": "configured"}, nil)
+			}
+			output.Successf("Model for %s set to %s", name, model)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clear, "clear", false, "Remove the override and revert to the default")
+	return cmd
 }
 
 // --- api subgroup -----------------------------------------------------------

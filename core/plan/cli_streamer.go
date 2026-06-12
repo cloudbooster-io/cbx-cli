@@ -62,9 +62,11 @@ type cliStreamer struct {
 }
 
 // newCLIStreamer resolves the local CLI binary and its non-interactive args for
-// the given executor name. Returns an actionable error if the binary is not on
-// PATH.
-func newCLIStreamer(provider string) (*cliStreamer, error) {
+// the given executor name. model, when non-empty, is the user's `cbx llm model`
+// override and is passed through to the binary via --model; when empty no flag
+// is passed and the CLI's own configured default applies. Returns an actionable
+// error if the binary is not on PATH.
+func newCLIStreamer(provider, model string) (*cliStreamer, error) {
 	switch provider {
 	case CLIExecutorClaudeCode:
 		bin, err := exec.LookPath(claudeCodeBinary)
@@ -76,7 +78,11 @@ func newCLIStreamer(provider string) (*cliStreamer, error) {
 		}
 		// --output-format text returns the completion verbatim without the
 		// SSE/JSON envelope.
-		return &cliStreamer{binary: bin, args: []string{"-p", "--output-format", "text"}}, nil
+		args := []string{"-p", "--output-format", "text"}
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		return &cliStreamer{binary: bin, args: args}, nil
 	case CLIExecutorCodex:
 		bin, err := exec.LookPath(codexBinary)
 		if err != nil {
@@ -90,7 +96,13 @@ func newCLIStreamer(provider string) (*cliStreamer, error) {
 		// sends its progress log / reasoning to stderr, so reading stdout gives
 		// clean text. --color never strips ANSI; --skip-git-repo-check lets it
 		// run outside a git working tree.
-		return &cliStreamer{binary: bin, args: []string{"exec", "--skip-git-repo-check", "--color", "never", "-"}}, nil
+		args := []string{"exec", "--skip-git-repo-check", "--color", "never"}
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		// The stdin marker must stay last.
+		args = append(args, "-")
+		return &cliStreamer{binary: bin, args: args}, nil
 	default:
 		return nil, fmt.Errorf("no CLI executor wired for %q (supported: %q, %q)", provider, CLIExecutorClaudeCode, CLIExecutorCodex)
 	}

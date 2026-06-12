@@ -34,6 +34,7 @@ func newAuditAWSCmd() *cobra.Command {
 		awsConcurrency  int
 		diagnose        bool
 		llmMaxCost      float64
+		llmModel        string
 		dryRun          bool
 		noTUI           bool
 		strict          bool
@@ -289,6 +290,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				AWSAccountPosture: discResult.AccountPosture,
 				MockScanners:      false,
 				LLMProvider:       audit.ClaudeCodeProvider,
+				LLMModel:          resolveAuditLLMModel(llmModel),
 				CBKnowledge:       true,
 				LLMMaxCost:        llmMaxCost,
 				Quiet:             quietFlag,
@@ -437,6 +439,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
+	cmd.Flags().StringVar(&llmModel, "llm-model", "", "Model the claude CLI runs the grounded audit with (e.g. claude-opus-4-8); empty uses the 'cbx llm model claude-code' config, then the CLI's own default")
 	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a stderr warning is printed when claude's reported total_cost_usd exceeds the cap (never part of the report). 0 disables the cap")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
@@ -756,4 +759,21 @@ func renderDiagnose(w *os.File, errs []*awsdisc.PermissionError, callerARN strin
 	fmt.Fprintln(w, "  }")
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Caller: %s\n", callerARN)
+}
+
+// resolveAuditLLMModel picks the model for the grounded audit's claude CLI:
+// the --llm-model flag wins, then the per-executor override stored by
+// `cbx llm model claude-code <model>`, then "" (the CLI's own default).
+func resolveAuditLLMModel(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if p := cfg.LLM.Providers[audit.ClaudeCodeProvider]; p.ModelPinned {
+		return p.Model
+	}
+	return ""
 }

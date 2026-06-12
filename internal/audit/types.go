@@ -247,6 +247,12 @@ type Options struct {
 	// document accordingly.
 	LLMProvider string
 
+	// LLMModel, when non-empty, pins the model the LLM provider uses (passed
+	// to the claude CLI as --model). Empty means the CLI's own configured
+	// default. Set from `cbx llm model claude-code <model>` config or the
+	// --llm-model flag.
+	LLMModel string
+
 	// LLMMaxFiles caps the number of source files sent to the LLM. Zero
 	// means "use the default" (defaultLLMMaxFiles).
 	LLMMaxFiles int

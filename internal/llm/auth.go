@@ -18,17 +18,18 @@ type Provider struct {
 	Model   string
 }
 
-// Supported providers.
+// Supported providers. Model is the default the provider starts with after
+// `cbx llm api login`; users override it per provider with `cbx llm model`.
 var Providers = map[string]Provider{
 	"claude": {
 		Name:    "claude",
 		BaseURL: "https://api.anthropic.com",
-		Model:   "claude-sonnet-4-20250514",
+		Model:   "claude-sonnet-4-6",
 	},
 	"codex": {
 		Name:    "codex",
 		BaseURL: "https://api.openai.com",
-		Model:   "gpt-4o",
+		Model:   "gpt-5",
 	},
 }
 

@@ -114,7 +114,10 @@ func (r *Runner) Run(ctx context.Context, intent string, progress Progress) (*Pl
 	// components rather than aborting the run.
 	var stream func(string) error
 	if cliExecutor {
-		cli, err := newCLIStreamer(provider)
+		// CLI executors may still carry a per-executor model override in the
+		// provider map (written by `cbx llm model`); zero-value lookup yields
+		// "" → the CLI's own default.
+		cli, err := newCLIStreamer(provider, r.cfg.Providers[provider].Model)
 		if err != nil {
 			stream = func(string) error { return err }
 		} else {

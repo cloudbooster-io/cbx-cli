@@ -52,7 +52,15 @@ func GetProvider(session *Session, cfg *config.Config) string {
 func RunnerConfigFromConfig(cfg *config.Config) coreplan.RunnerConfig {
 	providers := make(map[string]coreplan.LLMProvider, len(cfg.LLM.Providers))
 	for name, p := range cfg.LLM.Providers {
-		providers[name] = coreplan.LLMProvider{Name: p.Name, BaseURL: p.BaseURL, Model: p.Model}
+		model := p.Model
+		if coreplan.IsCLIExecutor(name) && !p.ModelPinned {
+			// The "codex" config slot is shared between the api provider and
+			// the CLI executor; an api login seeds Model with the HTTP
+			// default, which must not leak into the local CLI's argv. Only a
+			// deliberate `cbx llm model` pin rides through to --model.
+			model = ""
+		}
+		providers[name] = coreplan.LLMProvider{Name: p.Name, BaseURL: p.BaseURL, Model: model}
 	}
 	return coreplan.RunnerConfig{
 		APIURL:          cfg.APIURL,

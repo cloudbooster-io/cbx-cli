@@ -149,3 +149,28 @@ func TestDir_LegacyAndNewBothExistPrefersNew(t *testing.T) {
 		t.Fatalf("expected no nudge when new dir exists, got %d", nudgeCalls)
 	}
 }
+
+func TestLoad_MigratesRetiredClaudeModel(t *testing.T) {
+	t.Setenv("CBX_CONFIG_DIR", t.TempDir())
+
+	cfg := &Config{
+		LLM: LLMConfig{Providers: map[string]LLMProvider{
+			"claude": {Name: "claude", Model: "claude-sonnet-4-20250514", AuthMode: AuthModeAPIKey},
+			"codex":  {Name: "codex", Model: "gpt-5", AuthMode: AuthModeAPIKey},
+		}},
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m := got.LLM.Providers["claude"].Model; m != "claude-sonnet-4-6" {
+		t.Errorf("retired claude model not migrated: got %q, want claude-sonnet-4-6", m)
+	}
+	if m := got.LLM.Providers["codex"].Model; m != "gpt-5" {
+		t.Errorf("non-retired model must be untouched: got %q", m)
+	}
+}

@@ -26,9 +26,15 @@ var claudeCodeBinary = "claude"
 // fine for the audit analyzer (the parser only consumes the joined output).
 type claudeCLIStreamer struct {
 	binary string
+	// model, when non-empty, is appended as --model; empty means the
+	// CLI's own configured default.
+	model string
 }
 
-func newClaudeCLIStreamer() (*claudeCLIStreamer, error) {
+// newClaudeCLIStreamer resolves the claude binary. model, when non-empty, is
+// the user's model override (`cbx llm model claude-code …` or --llm-model) and
+// is passed to the CLI via --model; when empty the CLI's own default applies.
+func newClaudeCLIStreamer(model string) (*claudeCLIStreamer, error) {
 	bin, err := exec.LookPath(claudeCodeBinary)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -36,14 +42,18 @@ func newClaudeCLIStreamer() (*claudeCLIStreamer, error) {
 			ClaudeCodeProvider,
 		)
 	}
-	return &claudeCLIStreamer{binary: bin}, nil
+	return &claudeCLIStreamer{binary: bin, model: model}, nil
 }
 
 // Stream satisfies the llmStreamer interface. Prompt is fed via stdin so we
 // don't have to escape it for argv; --output-format text returns the model's
 // completion verbatim without the SSE wrapper that --output-format json adds.
 func (c *claudeCLIStreamer) Stream(ctx context.Context, prompt string, onToken func(string)) error {
-	cmd := exec.CommandContext(ctx, c.binary, "-p", "--output-format", "text")
+	args := []string{"-p", "--output-format", "text"}
+	if c.model != "" {
+		args = append(args, "--model", c.model)
+	}
+	cmd := exec.CommandContext(ctx, c.binary, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

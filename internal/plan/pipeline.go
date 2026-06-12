@@ -104,7 +104,13 @@ func (p *Pipeline) run(ctx context.Context, intent string) {
 	// a "local CLI" label instead of an empty model field. They're BYO by
 	// definition (the user's own subscription pays; cbx never sees a token).
 	if coreplan.IsCLIExecutor(provider) {
-		p.sendStatus(fmt.Sprintf("%s | local CLI", provider), "BYO LLM — cost not tracked")
+		label := fmt.Sprintf("%s | local CLI", provider)
+		if e := p.cfg.LLM.Providers[provider]; e.ModelPinned && e.Model != "" {
+			// A `cbx llm model` override is pinned — show it instead of the
+			// anonymous "local CLI picks the model" default.
+			label = fmt.Sprintf("%s | local CLI · %s", provider, e.Model)
+		}
+		p.sendStatus(label, "BYO LLM — cost not tracked")
 		return
 	}
 

@@ -14,8 +14,10 @@ import (
 // DefaultClaudeBaseURL is the production Anthropic API endpoint.
 const DefaultClaudeBaseURL = "https://api.anthropic.com"
 
-// DefaultClaudeModel is the default Claude model identifier.
-const DefaultClaudeModel = "claude-sonnet-4-20250514"
+// DefaultClaudeModel is the default Claude model identifier. Kept on the
+// dateless alias so it tracks Anthropic's current Sonnet revision; the
+// previous pinned ID (claude-sonnet-4-20250514) retires 2026-06-15.
+const DefaultClaudeModel = "claude-sonnet-4-6"
 
 // ClaudeClient streams completions from the Anthropic Messages API.
 type ClaudeClient struct {

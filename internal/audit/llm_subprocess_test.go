@@ -72,7 +72,7 @@ func TestClaudeCLIStreamer_HappyPath(t *testing.T) {
 	restore := withFakeClaudeBinary(t, `{"findings":[{"title":"From Claude Code","severity":"high","resource":"r1"}]}`, 0)
 	defer restore()
 
-	s, err := newClaudeCLIStreamer()
+	s, err := newClaudeCLIStreamer("")
 	if err != nil {
 		t.Fatalf("newClaudeCLIStreamer: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestClaudeCLIStreamer_NonZeroExitSurfacesStderr(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	s, err := newClaudeCLIStreamer()
+	s, err := newClaudeCLIStreamer("")
 	if err != nil {
 		t.Fatalf("newClaudeCLIStreamer: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestNewClaudeCLIStreamer_MissingBinary(t *testing.T) {
 	claudeCodeBinary = "claude-does-not-exist-xyz"
 	defer func() { claudeCodeBinary = orig }()
 
-	_, err := newClaudeCLIStreamer()
+	_, err := newClaudeCLIStreamer("")
 	if err == nil {
 		t.Fatal("expected error when claude binary is missing")
 	}
@@ -175,5 +175,18 @@ func TestClaudeCodeProviderEndToEnd(t *testing.T) {
 	}
 	if findings[0].Severity != SeverityHigh {
 		t.Errorf("severity = %q, want %q", findings[0].Severity, SeverityHigh)
+	}
+}
+
+func TestClaudeCLIStreamer_ModelOverride(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "[]", 0)
+	defer restore()
+
+	s, err := newClaudeCLIStreamer("claude-opus-4-8")
+	if err != nil {
+		t.Fatalf("newClaudeCLIStreamer: %v", err)
+	}
+	if s.model != "claude-opus-4-8" {
+		t.Fatalf("model = %q, want claude-opus-4-8", s.model)
 	}
 }

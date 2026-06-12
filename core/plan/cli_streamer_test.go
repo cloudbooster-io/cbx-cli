@@ -84,7 +84,7 @@ func TestCLIStreamer_HappyPath(t *testing.T) {
 	restore := withFakeClaudeBinary(t, "ranked components here", 0)
 	defer restore()
 
-	s, err := newCLIStreamer(CLIExecutorClaudeCode)
+	s, err := newCLIStreamer(CLIExecutorClaudeCode, "")
 	if err != nil {
 		t.Fatalf("newCLIStreamer: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestCLIStreamer_Codex_HappyPath(t *testing.T) {
 	restore := withFakeCodexBinary(t, "ranked components from codex", 0)
 	defer restore()
 
-	s, err := newCLIStreamer(CLIExecutorCodex)
+	s, err := newCLIStreamer(CLIExecutorCodex, "")
 	if err != nil {
 		t.Fatalf("newCLIStreamer(codex): %v", err)
 	}
@@ -128,7 +128,7 @@ func TestCLIStreamer_NonZeroExitSurfacesStderr(t *testing.T) {
 	claudeCodeBinary = "claude"
 	defer func() { claudeCodeBinary = orig }()
 
-	s, err := newCLIStreamer(CLIExecutorClaudeCode)
+	s, err := newCLIStreamer(CLIExecutorClaudeCode, "")
 	if err != nil {
 		t.Fatalf("newCLIStreamer: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestNewCLIStreamer_MissingBinary(t *testing.T) {
 	claudeCodeBinary = "claude-does-not-exist-xyz"
 	defer func() { claudeCodeBinary = orig }()
 
-	if _, err := newCLIStreamer(CLIExecutorClaudeCode); err == nil {
+	if _, err := newCLIStreamer(CLIExecutorClaudeCode, ""); err == nil {
 		t.Fatal("expected error when claude binary is missing")
 	} else if !strings.Contains(err.Error(), "requires the 'claude' CLI on PATH") {
 		t.Errorf("error should hint at install path; got %v", err)
@@ -160,7 +160,7 @@ func TestNewCLIStreamer_Codex_MissingBinary(t *testing.T) {
 	codexBinary = "codex-does-not-exist-xyz"
 	defer func() { codexBinary = orig }()
 
-	if _, err := newCLIStreamer(CLIExecutorCodex); err == nil {
+	if _, err := newCLIStreamer(CLIExecutorCodex, ""); err == nil {
 		t.Fatal("expected error when codex binary is missing")
 	} else if !strings.Contains(err.Error(), "requires the 'codex' CLI on PATH") {
 		t.Errorf("error should hint at install path; got %v", err)
@@ -168,7 +168,7 @@ func TestNewCLIStreamer_Codex_MissingBinary(t *testing.T) {
 }
 
 func TestNewCLIStreamer_UnknownExecutor(t *testing.T) {
-	if _, err := newCLIStreamer("not-an-executor"); err == nil {
+	if _, err := newCLIStreamer("not-an-executor", ""); err == nil {
 		t.Fatal("expected error for an unknown executor name")
 	}
 }
@@ -240,3 +240,59 @@ func (c *captureProgress) Token(t string) {
 }
 func (c *captureProgress) Candidate(string, string) {}
 func (c *captureProgress) Commit()                  {}
+
+func TestCLIStreamer_ModelOverride_Args(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "ok", 0)
+	defer restore()
+
+	s, err := newCLIStreamer(CLIExecutorClaudeCode, "claude-opus-4-8")
+	if err != nil {
+		t.Fatalf("newCLIStreamer: %v", err)
+	}
+	want := []string{"-p", "--output-format", "text", "--model", "claude-opus-4-8"}
+	if len(s.args) != len(want) {
+		t.Fatalf("args = %v, want %v", s.args, want)
+	}
+	for i := range want {
+		if s.args[i] != want[i] {
+			t.Fatalf("args = %v, want %v", s.args, want)
+		}
+	}
+}
+
+func TestCLIStreamer_Codex_ModelOverride_StdinMarkerStaysLast(t *testing.T) {
+	restore := withFakeCodexBinary(t, "ok", 0)
+	defer restore()
+
+	s, err := newCLIStreamer(CLIExecutorCodex, "gpt-5-codex")
+	if err != nil {
+		t.Fatalf("newCLIStreamer(codex): %v", err)
+	}
+	if got := s.args[len(s.args)-1]; got != "-" {
+		t.Fatalf("stdin marker must stay last, got args %v", s.args)
+	}
+	foundModel := false
+	for i, a := range s.args {
+		if a == "--model" && i+1 < len(s.args) && s.args[i+1] == "gpt-5-codex" {
+			foundModel = true
+		}
+	}
+	if !foundModel {
+		t.Fatalf("expected --model gpt-5-codex in args, got %v", s.args)
+	}
+}
+
+func TestCLIStreamer_NoModel_NoFlag(t *testing.T) {
+	restore := withFakeClaudeBinary(t, "ok", 0)
+	defer restore()
+
+	s, err := newCLIStreamer(CLIExecutorClaudeCode, "")
+	if err != nil {
+		t.Fatalf("newCLIStreamer: %v", err)
+	}
+	for _, a := range s.args {
+		if a == "--model" {
+			t.Fatalf("no model configured but --model passed: %v", s.args)
+		}
+	}
+}

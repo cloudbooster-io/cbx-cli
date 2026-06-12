@@ -58,7 +58,12 @@ type LLMProvider struct {
 	Name     string `json:"name"`
 	BaseURL  string `json:"base_url,omitempty"`
 	Model    string `json:"model,omitempty"`
-	LoggedIn bool   `json:"logged_in"`
+	// ModelPinned is true when Model was deliberately set via `cbx llm
+	// model` (vs seeded by a login default). Load-bearing for names that
+	// are both an api provider and a CLI executor (codex): only a pinned
+	// model is passed to the local CLI as --model.
+	ModelPinned bool `json:"model_pinned,omitempty"`
+	LoggedIn    bool `json:"logged_in"`
 
 	// AuthMode records how the provider authenticates. Default ("") and
 	// "api-key" both mean a token stored in the OS keychain. "claude-code-cli"
@@ -70,6 +75,11 @@ type LLMProvider struct {
 const (
 	AuthModeAPIKey        = "api-key"
 	AuthModeClaudeCodeCLI = "claude-code-cli"
+	// AuthModeCLIExecutor marks an entry that exists only to carry
+	// per-executor settings (currently the model override set via
+	// `cbx llm model`) for a local CLI executor. No token is stored;
+	// the CLI owns its own auth.
+	AuthModeCLIExecutor = "cli-executor"
 )
 
 // legacyNudgeOnce ensures we only emit the "move ~/.cbx to ~/.config/cbx"
@@ -198,6 +208,7 @@ func Load() (*Config, error) {
 	if cfg.LLM.Providers == nil {
 		cfg.LLM.Providers = make(map[string]LLMProvider)
 	}
+	migrateRetiredModels(&cfg)
 	if cfg.APIURL == "" {
 		cfg.APIURL = defaultAPIURL
 	}
@@ -205,6 +216,27 @@ func Load() (*Config, error) {
 		cfg.APIURL = envURL
 	}
 	return &cfg, nil
+}
+
+// retiredModelReplacements maps model IDs that the upstream provider has
+// retired (requests 404) to their current replacement. Applied in-memory on
+// every Load so a stale stored model never reaches an API call; the stored
+// file is rewritten on the next Save. These entries were written by `cbx llm
+// api login` defaults of earlier cbx versions, not chosen by the user.
+var retiredModelReplacements = map[string]string{
+	// Claude Sonnet 4 retires 2026-06-15.
+	"claude-sonnet-4-20250514": "claude-sonnet-4-6",
+}
+
+// migrateRetiredModels swaps retired model IDs in the provider map for their
+// current replacements.
+func migrateRetiredModels(cfg *Config) {
+	for name, p := range cfg.LLM.Providers {
+		if repl, ok := retiredModelReplacements[p.Model]; ok {
+			p.Model = repl
+			cfg.LLM.Providers[name] = p
+		}
+	}
 }
 
 // Save persists the configuration to disk. The write is atomic

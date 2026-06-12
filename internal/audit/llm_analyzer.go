@@ -128,7 +128,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 				rulesProv:         rulesProv,
 			}, nil
 		}
-		streamer, err := newClaudeCLIStreamer()
+		streamer, err := newClaudeCLIStreamer(opts.LLMModel)
 		if err != nil {
 			return nil, err
 		}

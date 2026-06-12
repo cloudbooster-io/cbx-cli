@@ -141,6 +141,7 @@ network) alongside `pkg/auth`, `pkg/config`, and `pkg/output`.
 | `cbx llm cli list` | List local CLI executors (Claude Code, Codex CLI) detected on PATH |
 | `cbx llm list` | Show all configured API providers and CLI executors |
 | `cbx llm default <name>` | Set the default LLM provider |
+| `cbx llm model [name] [model]` | Show or pin the model a provider/executor uses (`--clear` reverts) |
 | `cbx login` / `cbx logout` / `cbx status` | CloudBooster account session |
 | `cbx doctor` | Check installation health |
 | `cbx upgrade` | Upgrade cbx to the latest release |
