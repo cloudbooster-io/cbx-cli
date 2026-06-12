@@ -54,22 +54,22 @@ func TestDoctor(t *testing.T) {
 	env := map[string]string{"CB_API_URL": mockAPI.URL}
 
 	t.Run("doctor_plain", func(t *testing.T) {
-		stdout, _, code := runCBX(t, env, "doctor")
+		stdout, stderr, code := runCBX(t, env, "doctor")
 		// Doctor may exit non-zero when some checks fail in the test environment.
 		_ = code
 		if !strings.Contains(stdout, "cbx version") {
-			t.Fatalf("expected cbx version check, got: %s", stdout)
+			t.Fatalf("expected cbx version check, got: %s\nstderr:\n%s", stdout, stderr)
 		}
 		if !strings.Contains(stdout, "API connectivity") {
-			t.Fatalf("expected API connectivity check, got: %s", stdout)
+			t.Fatalf("expected API connectivity check, got: %s\nstderr:\n%s", stdout, stderr)
 		}
 		if !strings.Contains(stdout, mockAPI.URL) {
-			t.Fatalf("expected doctor output to mention mock API URL %s, got: %s", mockAPI.URL, stdout)
+			t.Fatalf("expected doctor output to mention mock API URL %s, got: %s\nstderr:\n%s", mockAPI.URL, stdout, stderr)
 		}
 	})
 
 	t.Run("doctor_json", func(t *testing.T) {
-		stdout, _, code := runCBX(t, env, "doctor", "--json")
+		stdout, stderr, code := runCBX(t, env, "doctor", "--json")
 		_ = code
 		var envelope struct {
 			Data struct {
@@ -82,7 +82,7 @@ func TestDoctor(t *testing.T) {
 			} `json:"data"`
 		}
 		if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
-			t.Fatalf("expected valid JSON: %v\noutput: %s", err, stdout)
+			t.Fatalf("expected valid JSON: %v\noutput: %s\nstderr:\n%s", err, stdout, stderr)
 		}
 		report := envelope.Data
 		if len(report.Checks) == 0 {
