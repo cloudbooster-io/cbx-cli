@@ -113,12 +113,13 @@ func TestLLMAnalyzer_Grounded_CostCapWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanSource: %v", err)
 	}
-	// 1 grounded + cost-cap warning = 2.
-	if len(findings) != 2 {
-		t.Fatalf("expected 2 findings, got %d: %+v", len(findings), findings)
+	// Exceeding the cap is stderr-only diagnostics: the report must not
+	// leak run cost, so no LLM-CB-COST-CAP finding is appended.
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding (cost cap must not add one), got %d: %+v", len(findings), findings)
 	}
-	if findings[1].RuleID != "LLM-CB-COST-CAP" {
-		t.Errorf("expected LLM-CB-COST-CAP, got %q", findings[1].RuleID)
+	if findings[0].RuleID != "LLM-CB-003" {
+		t.Errorf("expected the grounded finding LLM-CB-003, got %q", findings[0].RuleID)
 	}
 }
 

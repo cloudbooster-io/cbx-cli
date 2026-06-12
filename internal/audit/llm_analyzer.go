@@ -355,8 +355,8 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 }
 
 // postProcessGrounded threads the grounding trail (if the streamer surfaces
-// one) into each Finding.CBSource, soft-warns ungrounded findings, and emits
-// a cost-cap warning when the run exceeded --llm-max-cost. Returns the
+// one) into each Finding.CBSource, soft-warns ungrounded findings, and prints
+// a stderr-only warning when the run exceeded --llm-max-cost. Returns the
 // possibly-augmented finding slice. Never drops findings — soft-warn only,
 // per the §6 open-question recommendation for v1.
 func (l *llmAnalyzer) postProcessGrounded(findings []Finding) []Finding {
@@ -406,20 +406,14 @@ func (l *llmAnalyzer) postProcessGrounded(findings []Finding) []Finding {
 		})
 	}
 
+	// Cost-cap breaches are operator diagnostics, not report content:
+	// reports are shared artifacts and must not leak what the run cost.
+	// Stderr-only, so the terminal user still sees it.
 	if cost := trailer.TotalCostUSD(); l.maxCostUSD > 0 && cost > l.maxCostUSD {
 		fmt.Fprintf(os.Stderr,
-			"WARN: grounded audit cost $%.2f exceeded --llm-max-cost $%s; partial findings preserved.\n",
+			"WARN: grounded audit cost $%.2f exceeded --llm-max-cost $%s; the run completed and findings are intact. Raise the cap or narrow the scope to spend less.\n",
 			cost, formatCostCap(l.maxCostUSD),
 		)
-		findings = append(findings, Finding{
-			RuleID:      "LLM-CB-COST-CAP",
-			Title:       fmt.Sprintf("Audit cost $%.2f exceeded cap $%s", cost, formatCostCap(l.maxCostUSD)),
-			Description: "The grounded audit's reported total_cost_usd exceeded --llm-max-cost. The run completed and findings are preserved, but rerun with a higher cap or scoped --source if you expect more turns.",
-			Severity:    SeverityInfo,
-			Resource:    l.providerForRuleID,
-			Service:     "LLM",
-			Remediation: "Increase --llm-max-cost, or narrow --source to fewer files.",
-		})
 	}
 
 	return findings

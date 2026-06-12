@@ -1584,12 +1584,26 @@ const htmlShellTemplate = `<!DOCTYPE html>
        collapsed JS-driven elements so they don't bleed into the
        printed page. */
     .bp-toolbar, .bp-modal { display: none !important; }
-    .diagram-wrap {
+    .diagram-wrap, .bp-section .bp-wrap {
       background: #fff;
       box-shadow: none;
       max-height: none !important;
-      overflow: visible;
+      overflow: visible !important;
     }
+    /* Print-fit the schematic. The screen rules pin a 1280px min-width
+       and a 35vh letterbox (built for scroll-and-pan); min-width beats
+       max-width in CSS, so on an A4 page (~690px printable) the SVG
+       overflowed right and the fixed height left dead space below.
+       On paper the SVG must instead scale to page width — the root
+       viewBox keeps the aspect ratio. */
+    .diagram-wrap > svg, .bp-section .bp-wrap > svg {
+      min-width: 0 !important;
+      width: 100%% !important;
+      max-width: 100%% !important;
+      height: auto !important;
+      max-height: none !important;
+    }
+    .bp-section { break-inside: avoid; page-break-inside: avoid; }
     /* Keep the first severity heading attached to its first card so
        the printed page doesn't end with an orphan "Critical Findings"
        title. The default break-before: auto already lets the heading
