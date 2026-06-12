@@ -46,6 +46,7 @@ cbx audit aws prod --region us-east-1 --region us-west-2
 | Platform | |
 |---|---|
 | **macOS** | `brew tap cloudbooster-io/tap && brew install --cask cbx-cli` |
+| **Linux / macOS script** | `curl -sSL https://install.cloudbooster.io/cbx \| sh` — checksum-verified, installs to `/usr/local/bin` or `~/.local/bin`, no implicit sudo |
 | **Debian / Ubuntu** | `sudo dpkg -i cbx-cli_*_linux_amd64.deb` — from [Releases](https://github.com/cloudbooster-io/cbx-cli/releases) |
 | **Fedora / RHEL** | `sudo rpm -i cbx-cli_*_linux_amd64.rpm` — from [Releases](https://github.com/cloudbooster-io/cbx-cli/releases) |
 | **Windows** | `scoop bucket add cloudbooster https://github.com/cloudbooster-io/scoop-bucket && scoop install cbx-cli` |
