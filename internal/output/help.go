@@ -19,10 +19,16 @@ const helpTemplate = `{{with .Long}}{{ . | trim }}
 {{if .HasExample}}{{section "Examples"}}
 {{.Example}}
 
-{{end}}{{if .HasAvailableSubCommands}}{{section "Commands"}}{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+{{end}}{{if .HasAvailableSubCommands}}{{if .Groups}}{{range $g := .Groups}}{{section $g.Title}}{{range $.Commands}}{{if (and (eq .GroupID $g.ID) (or .IsAvailableCommand (eq .Name "help")))}}
   {{cmdName (rpad .Name .NamePadding)}} {{dim .Short}}{{end}}{{end}}
 
-{{end}}{{if .HasAvailableLocalFlags}}{{section "Flags"}}
+{{end}}{{if not .AllChildCommandsHaveGroup}}{{section "Additional commands"}}{{range .Commands}}{{if (and (eq .GroupID "") (or .IsAvailableCommand (eq .Name "help")))}}
+  {{cmdName (rpad .Name .NamePadding)}} {{dim .Short}}{{end}}{{end}}
+
+{{end}}{{else}}{{section "Commands"}}{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  {{cmdName (rpad .Name .NamePadding)}} {{dim .Short}}{{end}}{{end}}
+
+{{end}}{{end}}{{if .HasAvailableLocalFlags}}{{section "Flags"}}
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
 
 {{end}}{{if .HasAvailableInheritedFlags}}{{section "Global flags"}}

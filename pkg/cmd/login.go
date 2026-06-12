@@ -154,35 +154,32 @@ func runStatus(cmd *cobra.Command) error {
 		// (wrapped in *url.Error by net/http) — not as a 401 response.
 		var retrieveErr *oauth2.RetrieveError
 		if errors.As(err, &retrieveErr) {
-			if output.JSON() {
-				_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
-				return fmt.Errorf("authentication expired")
-			}
-			return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			return output.NewError(output.ErrorDetail{
 				What: "your session has expired",
 				Why:  "the authentication token is no longer valid",
 				Fix:  "run `cbx login` to re-authenticate",
 				Code: "E_AUTH_EXPIRED",
-			}))
+			})
 		}
 		return fmt.Errorf("checking status: %w", err)
 	}
 
 	if resp.StatusCode() == http.StatusUnauthorized {
-		if output.JSON() {
-			_ = output.PrintJSON(nil, output.JSONErrorf("authentication expired: run `cbx login`"))
-			return fmt.Errorf("authentication expired")
-		}
-		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+		return output.NewError(output.ErrorDetail{
 			What: "your session has expired",
 			Why:  "the server returned HTTP 401 Unauthorized",
 			Fix:  "run `cbx login` to re-authenticate",
 			Code: "E_AUTH_EXPIRED",
-		}))
+		})
 	}
 
 	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("server returned HTTP %d", resp.StatusCode())
+		return output.NewError(output.ErrorDetail{
+			What: fmt.Sprintf("could not determine auth status (HTTP %d)", resp.StatusCode()),
+			Why:  fmt.Sprintf("%s answered the status request with an unexpected response — the stored login may belong to a different API host", cfg.APIURL),
+			Fix:  "check `cbx config get api_url` points at the server you logged in to, or re-run `cbx login`",
+			Code: "E_STATUS_HTTP",
+		})
 	}
 
 	// Reload token from keyring in case AuthenticatedClient silently refreshed it.

@@ -39,9 +39,17 @@ var executedCommand string
 // attached. The cbx binary reaches it through Execute; it is exported so
 // downstream consumers embedding the CLI can mount the command tree (or
 // individual subcommands) inside their own cobra root.
+// Help-group IDs for the root command (see AddGroup in NewRootCmd).
+const (
+	groupCore    = "core"
+	groupAccount = "account"
+	groupSetup   = "setup"
+	groupMaint   = "maintenance"
+)
+
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "cbx",
+		Use:   "cbx <command>",
 		Short: "CloudBooster CLI — plan, audit, and manage cloud infrastructure",
 		Long: `cbx is the CloudBooster CLI for planning cloud infrastructure,
 auditing existing deployments, and interacting with the CloudBooster platform.
@@ -66,19 +74,19 @@ Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx
 			case "", "json":
 				// ok
 			case "yaml", "table":
-				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+				return output.NewError(output.ErrorDetail{
 					What: fmt.Sprintf("output format %q is not yet supported", outputFormat),
 					Why:  "only json (and the human-readable default) are implemented today",
 					Fix:  "pass --output json or omit the flag for human-readable output",
 					Code: "E_UNSUPPORTED_FORMAT",
-				}))
+				})
 			default:
-				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+				return output.NewError(output.ErrorDetail{
 					What: fmt.Sprintf("output format %q is not recognized", outputFormat),
 					Why:  "supported formats: json (and the human-readable default)",
 					Fix:  "pass --output json or omit the flag for human-readable output",
 					Code: "E_UNSUPPORTED_FORMAT",
-				}))
+				})
 			}
 			output.SetFormat(outputFormat)
 
@@ -110,22 +118,29 @@ Run cbx --help for the command list, cbx <cmd> --help for any subcommand, or cbx
 
 	output.InstallHelpTemplate(root)
 
-	root.AddCommand(
-		newVersionCmd(),
-		newDoctorCmd(),
-		newLoginCmd(),
-		newLogoutCmd(),
-		newStatusCmd(),
-		newAuthCmd(),
-		newLLMCmd(),
-		newKnowledgeCmd(),
-		newPlanCmd(),
-		newAuditCmd(),
-		newUpgradeCmd(),
-		newEnvCmd(),
-		newConfigCmd(),
-		newTelemetryCmd(),
+	// Grouped help: the product verbs first, then account, then setup,
+	// then maintenance plumbing. Hidden commands and anything without a
+	// GroupID fall under "Additional commands".
+	root.AddGroup(
+		&cobra.Group{ID: groupCore, Title: "Core commands"},
+		&cobra.Group{ID: groupAccount, Title: "Account"},
+		&cobra.Group{ID: groupSetup, Title: "Setup & configuration"},
+		&cobra.Group{ID: groupMaint, Title: "Maintenance"},
 	)
+
+	withGroup := func(g string, cmds ...*cobra.Command) {
+		for _, c := range cmds {
+			c.GroupID = g
+			root.AddCommand(c)
+		}
+	}
+	withGroup(groupCore, newPlanCmd(), newAuditCmd())
+	withGroup(groupAccount, newLoginCmd(), newLogoutCmd(), newStatusCmd(), newAuthCmd())
+	withGroup(groupSetup, newLLMCmd(), newConfigCmd(), newTelemetryCmd())
+	withGroup(groupMaint, newDoctorCmd(), newUpgradeCmd(), newVersionCmd())
+	root.AddCommand(newKnowledgeCmd(), newEnvCmd())
+	root.SetHelpCommandGroupID(groupMaint)
+	root.SetCompletionCommandGroupID(groupMaint)
 
 	return root
 }

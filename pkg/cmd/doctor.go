@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit"
 	"github.com/cloudbooster-io/cbx-cli/internal/config"
 	"github.com/cloudbooster-io/cbx-cli/internal/output"
 	"github.com/cloudbooster-io/cbx-cli/internal/update"
@@ -60,7 +61,9 @@ func newDoctorCmd() *cobra.Command {
 					if err := output.PrintJSON(report, output.JSONErrorf("some health checks failed")); err != nil {
 						return err
 					}
-					return fmt.Errorf("some health checks failed")
+					// The card/envelope already said everything; exit 1
+					// without re-printing through the central error path.
+					return &audit.ExitCodeError{Code: 1}
 				}
 				return output.PrintJSON(report, nil)
 			}
@@ -68,7 +71,7 @@ func newDoctorCmd() *cobra.Command {
 			fmt.Print(renderDoctorCard(checks, allOK))
 
 			if !allOK {
-				return fmt.Errorf("some health checks failed")
+				return &audit.ExitCodeError{Code: 1}
 			}
 			return nil
 		},
@@ -209,22 +212,32 @@ func checkAPIConnectivity(apiURL string) (bool, string) {
 }
 
 func checkLLMAuth(cfg *config.Config) (bool, string) {
-	if len(cfg.LLM.Providers) == 0 {
-		return false, "no LLM providers configured"
-	}
+	// Two independent ways to satisfy the LLM requirement: an api provider
+	// with a stored key, or a local CLI executor on PATH (Claude Code /
+	// Codex own their own auth — nothing to store on the cbx side).
+	// Settings-only entries (model pins, AuthModeCLIExecutor) are not auth.
 	var loggedIn []string
-	var missing []string
 	for name, p := range cfg.LLM.Providers {
 		if p.LoggedIn {
 			loggedIn = append(loggedIn, name)
-		} else {
-			missing = append(missing, name)
 		}
 	}
-	if len(missing) > 0 {
-		return false, fmt.Sprintf("providers missing auth: %v", missing)
+	var executors []string
+	for _, e := range cliExecutors {
+		if _, err := exec.LookPath(e.Binary); err == nil {
+			executors = append(executors, e.Name)
+		}
 	}
-	return true, fmt.Sprintf("%d provider(s) configured", len(loggedIn))
+	switch {
+	case len(loggedIn) > 0 && len(executors) > 0:
+		return true, fmt.Sprintf("api: %s · cli: %s", strings.Join(loggedIn, ", "), strings.Join(executors, ", "))
+	case len(loggedIn) > 0:
+		return true, fmt.Sprintf("api key stored: %s", strings.Join(loggedIn, ", "))
+	case len(executors) > 0:
+		return true, fmt.Sprintf("cli executor on PATH: %s", strings.Join(executors, ", "))
+	default:
+		return false, "no api key stored and no CLI executor on PATH — run `cbx llm api login claude` or install Claude Code"
+	}
 }
 
 // checkClaudeBinary verifies the `claude` (Claude Code) CLI is on PATH.

@@ -62,12 +62,12 @@ side by side.`,
 			}
 
 			if !planLLMSatisfied(cfg, llmProvider) {
-				return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+				return output.NewError(output.ErrorDetail{
 					What: "no LLM provider configured",
 					Why:  "cbx plan needs a model to generate the plan",
 					Fix:  "run `cbx llm api login claude` (API key) or `cbx llm cli list` (use Claude Code / Codex CLI)",
 					Code: "E_NO_LLM",
-				}))
+				})
 			}
 
 			dir := outputDir
@@ -92,13 +92,22 @@ side by side.`,
 				return tok
 			}
 
-			isHeadless := noTUI || output.JSON() || (intent != "" && !isatty.IsTerminal(os.Stdout.Fd()))
+			// Headless whenever the user asked for it OR there is no real
+			// terminal on either end: launching the Bubble Tea TUI into a
+			// pipe/redirect hangs the caller and emits raw escape codes.
+			// CBX_FORCE_TUI=1 overrides the TTY detection for callers that
+			// deliberately script the REPL over pipes (the e2e suite does).
+			forceTUI := config.Env("FORCE_TUI") == "1"
+			isHeadless := noTUI || output.JSON() ||
+				(!forceTUI && (!isatty.IsTerminal(os.Stdout.Fd()) || !isatty.IsTerminal(os.Stdin.Fd())))
 			if isHeadless {
 				if intent == "" {
-					if output.JSON() {
-						_ = output.PrintJSON(nil, output.JSONErrorf("intent required in non-interactive mode"))
-					}
-					return fmt.Errorf("intent required in non-interactive mode")
+					return output.NewError(output.ErrorDetail{
+						What: "intent required in non-interactive mode",
+						Why:  "the interactive plan REPL needs a terminal, and stdin/stdout is not one (or --no-tui/--output json was set)",
+						Fix:  "pass the intent positionally: cbx plan \"three-tier web app on AWS\"",
+						Code: "E_NO_TTY",
+					})
 				}
 				return runOneShot(cfg, intent, dir, diagramFormat, htmlPreview, noOpen, previewPort, llmProvider, variants, token, llmToken)
 			}
@@ -156,16 +165,18 @@ func (p *headlessProgress) Commit() {}
 
 func runOneShot(cfg *config.Config, intent, dir, diagramFormat string, htmlPreview, noOpen bool, previewPort int, llmProvider string, variants int, token string, llmToken func(provider string) string) error {
 	if variants < 1 {
-		if output.JSON() {
-			_ = output.PrintJSON(nil, output.JSONErrorf("variants must be at least 1"))
-		}
-		return fmt.Errorf("variants must be at least 1")
+		return output.NewError(output.ErrorDetail{
+			What: "variants must be at least 1",
+			Fix:  "pass --variants 1 or --variants 2",
+			Code: "E_BAD_VARIANTS",
+		})
 	}
 	if variants > 2 {
-		if output.JSON() {
-			_ = output.PrintJSON(nil, output.JSONErrorf("free tier capped at 2 variants"))
-		}
-		return fmt.Errorf("free tier capped at 2 variants")
+		return output.NewError(output.ErrorDetail{
+			What: "free tier capped at 2 variants",
+			Fix:  "pass --variants 2 or fewer",
+			Code: "E_BAD_VARIANTS",
+		})
 	}
 
 	runner := coreplan.NewRunner(plan.RunnerConfigFromConfig(cfg), llmProvider, token, llmToken)

@@ -73,3 +73,23 @@ func RenderErrorCompact(e ErrorDetail) string {
 	parts = append(parts, e.What)
 	return strings.Join(parts, " ")
 }
+
+// DetailError carries a structured ErrorDetail through the error return
+// path so the composition root can render it per output mode: the human
+// card on a terminal, the JSON Envelope under --output json. Error()
+// returns the rendered card so any pre-existing %s formatting of the
+// error keeps producing the styled block.
+type DetailError struct {
+	Detail ErrorDetail
+}
+
+func (e *DetailError) Error() string {
+	return RenderError(e.Detail)
+}
+
+// NewError wraps an ErrorDetail in a DetailError. Prefer this over
+// fmt.Errorf("%s", RenderError(...)) — it keeps the structure available
+// for the JSON error envelope.
+func NewError(detail ErrorDetail) error {
+	return &DetailError{Detail: detail}
+}

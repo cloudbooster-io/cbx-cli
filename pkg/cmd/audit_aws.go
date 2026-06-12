@@ -208,21 +208,14 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			audit.SetEngineVersion(Version)
 			_, rulePackProv, rpErr := audit.ResolveRulePack(ctx, rulepackVersion)
 			if rpErr != nil {
-				if output.JSON() {
-					_ = output.PrintJSON(nil, output.JSONError(rpErr))
-				}
 				return rpErr
 			}
 
 			discResult, err := awsdisc.Discover(ctx, discoverParams)
 			ui.Done()
 			if err != nil {
-				// Keep the --json contract: machine consumers get an
-				// Envelope{Error} on stdout even when discovery dies
-				// before any findings exist (same pattern as plan.go).
-				if output.JSON() {
-					_ = output.PrintJSON(nil, output.JSONError(err))
-				}
+				// The --json Envelope{Error} is emitted centrally by
+				// ExitCode — returning is enough to keep the contract.
 				return err
 			}
 
@@ -331,12 +324,8 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				groundingSpinner.Stop()
 			}
 			if runErr != nil && result == nil {
-				// Same --json envelope guarantee as the discovery error
-				// path above: a pipeline-level failure with no partial
-				// result still produces machine-readable output.
-				if output.JSON() {
-					_ = output.PrintJSON(nil, output.JSONError(runErr))
-				}
+				// Pipeline-level failure with no partial result: the --json
+				// Envelope{Error} is emitted centrally by ExitCode.
 				return runErr
 			}
 

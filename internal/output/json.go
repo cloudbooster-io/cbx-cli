@@ -17,6 +17,8 @@ type Envelope struct {
 type ErrDetail struct {
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
+	Why     string `json:"why,omitempty"`
+	Fix     string `json:"fix,omitempty"`
 }
 
 // WriteJSON writes data wrapped in a standard Envelope to w.

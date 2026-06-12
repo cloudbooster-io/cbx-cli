@@ -129,8 +129,18 @@ func runCBXWithHomeAndDir(t *testing.T, home, dir string, env map[string]string,
 }
 
 // runCBXInteractive runs cbx with piped stdin for interactive testing.
+// CBX_FORCE_TUI overrides plan's TTY detection — these tests deliberately
+// drive the Bubble Tea REPL over pipes, which headless routing would
+// otherwise (correctly, for real users) refuse.
 func runCBXInteractive(t *testing.T, home, dir string, env map[string]string, stdinLines []string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
+
+	if env == nil {
+		env = map[string]string{}
+	}
+	if _, ok := env["CBX_FORCE_TUI"]; !ok {
+		env["CBX_FORCE_TUI"] = "1"
+	}
 
 	cmd := exec.Command(binaryPath, args...)
 	if dir != "" {

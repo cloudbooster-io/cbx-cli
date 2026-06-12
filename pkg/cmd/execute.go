@@ -24,7 +24,7 @@ import (
 // computed any. Errors that don't match either pattern fall through
 // unchanged.
 func beautifyCobraError(root *cobra.Command, err error) error {
-	if err == nil || output.JSON() {
+	if err == nil {
 		return err
 	}
 	msg := err.Error()
@@ -37,21 +37,21 @@ func beautifyCobraError(root *cobra.Command, err error) error {
 		if len(suggestions) > 0 {
 			fix = "did you mean: " + strings.Join(suggestions, ", ") + "? (or run `cbx --help`)"
 		}
-		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+		return output.NewError(output.ErrorDetail{
 			What: fmt.Sprintf("%s is not a cbx command", quote(name)),
 			Why:  "no command, alias, or subcommand matches that name",
 			Fix:  fix,
 			Code: "E_UNKNOWN_COMMAND",
-		}))
+		})
 	}
 	// "unknown flag: --bogus" / "unknown shorthand flag: 'x' in -x"
 	if strings.HasPrefix(msg, "unknown flag:") || strings.HasPrefix(msg, "unknown shorthand flag:") {
-		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+		return output.NewError(output.ErrorDetail{
 			What: msg,
 			Why:  "cbx didn't recognise that flag for the command you ran",
 			Fix:  "run the command with --help to see its flags (e.g. `cbx audit aws --help`)",
 			Code: "E_UNKNOWN_FLAG",
-		}))
+		})
 	}
 	return err
 }
@@ -174,6 +174,24 @@ func ExitCode(err error) int {
 	var exitErr *audit.ExitCodeError
 	if errors.As(err, &exitErr) {
 		return exitErr.Code
+	}
+	// Under --output json the error must land in the Envelope on stdout —
+	// machine consumers never see the styled card. Structured errors carry
+	// their what/why/fix/code through; plain errors become a bare message.
+	if output.JSON() {
+		var detailErr *output.DetailError
+		if errors.As(err, &detailErr) {
+			d := detailErr.Detail
+			_ = output.PrintJSON(nil, &output.ErrDetail{
+				Code:    d.Code,
+				Message: d.What,
+				Why:     d.Why,
+				Fix:     d.Fix,
+			})
+		} else {
+			_ = output.PrintJSON(nil, output.JSONError(err))
+		}
+		return 1
 	}
 	fmt.Fprintln(os.Stderr, err)
 	return 1

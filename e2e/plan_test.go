@@ -210,3 +210,22 @@ func TestPlanEndToEnd(t *testing.T) {
 		}
 	})
 }
+
+// A piped `cbx plan` with no intent must refuse headlessly instead of
+// launching the Bubble Tea TUI into the pipe (which hangs the caller).
+func TestPlanPipedNoIntentRefusesTUI(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	loginClaude(t, homeDir, tmpDir)
+
+	stdout, stderr, code := runCBXWithHomeAndDir(t, homeDir, tmpDir, llmEnv, "plan")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit, got 0\nstdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "E_NO_TTY") {
+		t.Fatalf("expected E_NO_TTY guidance on stderr, got:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "\x1b[?1049h") {
+		t.Fatal("alternate-screen escape leaked — TUI was launched into a pipe")
+	}
+}

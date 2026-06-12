@@ -1,6 +1,7 @@
 package output
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +94,19 @@ func TestErrorGolden(t *testing.T) {
 	}
 	if got != string(wantBytes) {
 		t.Fatalf("error golden mismatch.\nGOT:\n%s\n\nWANT:\n%s", got, string(wantBytes))
+	}
+}
+
+func TestDetailError_CarriesStructure(t *testing.T) {
+	err := NewError(ErrorDetail{What: "boom", Why: "because", Fix: "do X", Code: "E_BOOM"})
+	var detailErr *DetailError
+	if !errors.As(err, &detailErr) {
+		t.Fatal("NewError must be extractable via errors.As")
+	}
+	if detailErr.Detail.Code != "E_BOOM" || detailErr.Detail.Fix != "do X" {
+		t.Fatalf("detail lost: %+v", detailErr.Detail)
+	}
+	if !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("Error() must render the human card, got %q", err.Error())
 	}
 }
