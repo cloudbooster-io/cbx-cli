@@ -1,10 +1,5 @@
-# Canonical release path — replaces the GitLab `release` + `smoke-brew` jobs
-# (the repo is migrating off GitLab CI).
-#
-# IMPORTANT — until the migration completes and .gitlab-ci.yml's `release`
-# job is removed, do NOT let a tag reach both forges: GoReleaser would
-# publish twice (the second run fails on the already-existing GitHub
-# Release, but only after re-pushing the cask/scoop manifests).
+# Canonical release path — replaced the GitLab `release` + `smoke-brew` jobs
+# when the repo migrated off GitLab CI (2026-06; the GitLab repo is archived).
 #
 # Cross-repo publishing (this repo's Release + cask/scoop manifests in
 # homebrew-tap/scoop-bucket) authenticates via the org-owned GitHub App

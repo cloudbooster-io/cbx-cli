@@ -1,177 +1,174 @@
-# cbx-cli
+<div align="center">
 
+# `cbx`
+
+### Plan it before you build it. Audit it after you ship it.
+
+**The CloudBooster CLI — architecture plans from plain English, and AWS audits<br>grounded in curated cloud expertise instead of generic advice.**
+
+[![CI](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/cloudbooster-io/cbx-cli)](https://github.com/cloudbooster-io/cbx-cli/releases)
 [![Go Reference](https://pkg.go.dev/badge/github.com/cloudbooster-io/cbx-cli.svg)](https://pkg.go.dev/github.com/cloudbooster-io/cbx-cli)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/cloudbooster-io/cbx-cli)](https://goreportcard.com/report/github.com/cloudbooster-io/cbx-cli)
+[![License](https://img.shields.io/github/license/cloudbooster-io/cbx-cli)](LICENSE)
 
-`cbx` is the CloudBooster CLI — plan and audit cloud infrastructure from your terminal.
+</div>
 
-- **`cbx plan`** turns a natural-language intent into an architecture plan: a `plan.md` with an embedded Mermaid diagram (D2 optional). Bring your own LLM — an Anthropic or OpenAI API key, or a local Claude Code / Codex CLI. No CloudBooster account required.
-- **`cbx audit aws`** audits a live AWS account **read-only** via the AWS SDK, grounds every finding in CloudBooster's curated AWS knowledge, and writes a markdown report with severity-mapped exit codes for CI.
+---
 
-`cbx-cli` is the open-source (Apache-2.0) edition of CloudBooster's tooling. It is also designed to be embedded as a Go library — see [Using as a library](#using-as-a-library).
+## Describe it. Get an architecture.
 
-## Installation
+```console
+$ cbx plan "static site with auth"
+```
 
-**macOS** — Homebrew (cask):
+`cbx plan` turns an intent into `plan.md` — components, trade-offs, and a Mermaid
+diagram, ready to drop into a PR or design doc:
+
+```mermaid
+flowchart LR
+    U([Users]) --> CDN[CloudFront]
+    CDN --> S3[(S3 · static site)]
+    CDN --> API[API Gateway]
+    API --> FN[Lambda · auth]
+    FN --> DB[(DynamoDB · sessions)]
+```
+
+- **Bring your own LLM — no CloudBooster account needed.** Use an Anthropic or
+  OpenAI API key (`cbx llm api login claude|codex`), or a CLI you already have
+  installed — Claude Code or Codex CLI (`cbx llm cli list`).
+- **Headless or interactive.** One-shot from a script, or an in-terminal chat
+  to iterate on the plan.
+- **Your diagram, your format.** Mermaid embedded by default; `--diagram d2`
+  also emits a standalone `plan.d2`, `--html` adds a browser preview.
+
+## Point it at AWS. Get grounded findings.
+
+```console
+$ cbx audit aws prod --region eu-central-1
+
+  HIGH     S3 bucket "data-prod" has no public-access block
+  WARNING  CloudTrail "main" has log file validation disabled
+  WARNING  IAM user "deploy-bot" has a console password but no MFA
+  INFO     2 unattached Elastic IPs accruing charges
+                                            (output abridged)
+```
+
+`cbx audit aws` reads a live account through the AWS SDK — **strictly
+read-only** — and grounds every finding in CloudBooster's curated AWS
+knowledge base, analyzed with [Claude Code](https://github.com/anthropics/claude-code)
+(`claude` must be on your `PATH`). You get findings that cite *why* something
+matters, written to a markdown report.
+
+Audit the default profile, a named one, or several regions at once:
 
 ```bash
-brew tap cloudbooster-io/tap
-brew install --cask cbx-cli
+cbx audit aws
+cbx audit aws prod --region us-east-1 --region us-west-2
 ```
 
-**Linux** — `.deb` / `.rpm` from [GitHub Releases](https://github.com/cloudbooster-io/cbx-cli/releases):
+## Install
 
-```bash
-sudo dpkg -i cbx-cli_*_linux_amd64.deb   # Debian / Ubuntu
-sudo rpm  -i cbx-cli_*_linux_amd64.rpm   # Fedora / RHEL
-```
+| Platform | |
+|---|---|
+| **macOS** | `brew tap cloudbooster-io/tap && brew install --cask cbx-cli` |
+| **Debian / Ubuntu** | `sudo dpkg -i cbx-cli_*_linux_amd64.deb` — from [Releases](https://github.com/cloudbooster-io/cbx-cli/releases) |
+| **Fedora / RHEL** | `sudo rpm -i cbx-cli_*_linux_amd64.rpm` — from [Releases](https://github.com/cloudbooster-io/cbx-cli/releases) |
+| **Windows** | `scoop bucket add cloudbooster https://github.com/cloudbooster-io/scoop-bucket && scoop install cbx-cli` |
+| **Anything else** | grab an archive from [GitHub Releases](https://github.com/cloudbooster-io/cbx-cli/releases) |
 
-**Windows** — Scoop:
-
-```powershell
-scoop bucket add cloudbooster https://github.com/cloudbooster-io/scoop-bucket
-scoop install cbx-cli
-```
-
-**From source** (Go 1.25+):
-
-```bash
-go install github.com/cloudbooster-io/cbx-cli/cmd/cbx@latest
-```
-
-Pre-built archives for any platform are on the [releases page](https://github.com/cloudbooster-io/cbx-cli/releases). Release checksums are signed with keyless [Cosign](https://github.com/sigstore/cosign) and every release ships a Syft SBOM. Once installed, `cbx upgrade` updates in place and `cbx doctor` checks installation health.
+Every release is Cosign-signed and ships a Syft SBOM. Once installed,
+`cbx upgrade` keeps you current and `cbx doctor` checks your setup.
 
 ## Quick start
 
 ```bash
-# (optional) Log in to CloudBooster — not required for `cbx plan`
-cbx login
+# 1. Pick a model for `cbx plan` — an API key, or a CLI you already have
+cbx llm api login claude        # Anthropic API key (BYO)
+cbx llm cli list                # …or detect Claude Code / Codex CLI on PATH
 
-# Configure a model for `cbx plan` (pick one):
-cbx llm api login claude     # Anthropic API key (bring your own)
-cbx llm cli list             # or a local CLI — Claude Code / Codex — no API key needed
+# 2. Plan
+cbx plan "three-tier web app with a queue between api and workers"
 
-# Generate an architecture plan
-cbx plan "static site with auth"
-
-# Audit a live AWS account (read-only)
+# 3. Audit (read-only; needs AWS credentials + `claude` on PATH)
 cbx audit aws
 ```
 
-## Auditing AWS
+`cbx login` is optional — it unlocks CloudBooster account features, but
+planning works anonymously.
 
-`cbx audit aws` discovers resources across an account via the Cloud Control API (plus native per-service fallbacks), enriches them with read-only describe calls, fetches CloudBooster's curated AWS knowledge for the discovered resource types, and runs Claude Code locally (`claude -p`) to ground each finding in that knowledge. The result is a markdown report (`<accountID>_audit_report.md`), an interactive findings TUI on a terminal, and structured JSON on stdout with `-o json`.
+## Built for scripting
 
-You need:
-
-- **AWS credentials with read access** — the default SDK credential chain, a named profile, or `--credentials-file`. A least-privilege read-only IAM policy is provided in [`docs/cbx-audit-aws-iam.json`](docs/cbx-audit-aws-iam.json); the AWS-managed `ReadOnlyAccess` policy is a valid superset. The audit never mutates anything and deliberately avoids data-plane reads (no `s3:GetObject`, no `secretsmanager:GetSecretValue`).
-- **Claude Code on PATH** — the grounded analysis runs through your local `claude` install, so LLM usage is billed to you, not CloudBooster. Cap a run's spend with `--llm-max-cost` (default $2.00).
-
-```bash
-# Default profile, its configured region
-cbx audit aws
-
-# Named profile across specific regions (repeatable; 'all' fans out across every enabled region)
-cbx audit aws prod --region us-east-1 --region us-west-2
-
-# Paste an AWS console URL — the region is parsed from the hostname
-cbx audit aws https://us-east-1.console.aws.amazon.com/console/home
-```
-
-Useful flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--region <r>` | Region to audit (repeatable; `all` = every enabled region) |
-| `--dry-run` | Print the audit plan (regions, resource types, estimated calls) and exit without touching AWS or the LLM |
-| `--diagnose` | Emit every denied API call plus a recommended IAM policy patch |
-| `--llm-max-cost <usd>` | Cost ceiling for the grounded analysis (0 disables) |
-| `--strict` | Also gate the exit code on discovery-integrity warnings (CI) |
-| `--no-tui` | Skip the interactive findings TUI (implied by `--json`, `--quiet`, non-TTY) |
-
-The exit code reflects the most severe finding, so the audit drops straight into CI:
+Every command takes `-o json` (a stable `{data, error}` envelope), `-q/--quiet`,
+and `--no-color`. Audit exit codes encode the worst finding, man-page style:
 
 | Exit code | Meaning |
-|-----------|---------|
-| `0` | No findings |
-| `1` | Worst finding is *info* (also used for runtime errors) |
-| `2` | Worst finding is *warning* |
-| `3` | Worst finding is *high* or *critical* |
-
-## Planning
-
-`cbx plan "<intent>"` opens an interactive chat TUI by default; `--no-tui` runs one-shot. It writes `plan.md` with an embedded Mermaid diagram to the output dir (`--output-dir`). Plan is **BYO-LLM**: configure a provider once with `cbx llm api login claude|codex` (API key, stored in the OS keyring) or use a local executor that's already on PATH (`cbx llm cli list` shows what was detected); pick the default with `cbx llm default <name>`.
+|:---:|---|
+| `0` | clean — no findings |
+| `1` | worst finding: **info** |
+| `2` | worst finding: **warning** |
+| `3` | worst finding: **high / critical** |
 
 ```bash
-cbx plan "three-tier web app with a Postgres backend"
-cbx plan "static site with auth" --diagram d2      # also emit a standalone plan.d2
-cbx plan "event-driven ingest pipeline" --html      # serve an HTML preview locally
-cbx plan "static site with auth" --variants 3       # generate alternatives
+# CI gate: tolerate info/warning, fail the pipeline on high or critical
+cbx audit aws -o json -q || [ $? -lt 3 ]
 ```
 
-## Commands
+## Use it as a Go library
+
+`pkg/` is a semver-stable public API — `cbx` is built to be embedded:
+
+```go
+import (
+    "github.com/cloudbooster-io/cbx-cli/pkg/audit" // programmatic audits, Pulumi/Terraform state parsing
+    "github.com/cloudbooster-io/cbx-cli/pkg/cmd"   // embed the full CLI in your own tool
+)
+```
+
+`pkg/audit` also exposes a fully offline path (state-file parsing, no LLM, no
+network) alongside `pkg/auth`, `pkg/config`, and `pkg/output`.
+
+<details>
+<summary><b>Full command reference</b></summary>
+
+<br>
 
 | Command | Description |
 |---------|-------------|
-| `cbx plan "<intent>"` | Generate an architecture plan from a natural-language intent |
-| `cbx audit aws [profile\|console-url]` | Audit a live AWS account (read-only, grounded in CloudBooster's AWS knowledge) |
+| `cbx plan "<intent>"` | Generate an architecture plan |
+| `cbx audit aws [profile]` | Audit a live AWS account (read-only, grounded in CloudBooster's AWS knowledge) |
 | `cbx llm api login <claude\|codex>` | Store an API key for an LLM provider (bring your own key) |
 | `cbx llm cli list` | List local CLI executors (Claude Code, Codex CLI) detected on PATH |
 | `cbx llm list` | Show all configured API providers and CLI executors |
 | `cbx llm default <name>` | Set the default LLM provider |
-| `cbx login` / `cbx logout` / `cbx status` | Manage the CloudBooster session |
-| `cbx config get\|set\|list` | Read and write persistent cbx settings |
-| `cbx telemetry status\|enable\|disable` | Manage anonymous error reports and usage metrics |
+| `cbx login` / `cbx logout` / `cbx status` | CloudBooster account session |
 | `cbx doctor` | Check installation health |
 | `cbx upgrade` | Upgrade cbx to the latest release |
-| `cbx version` | Print version |
 | `cbx completion` | Generate shell completion |
+| `cbx version` | Print version |
 
-Run `cbx --help` (or `cbx <command> --help`) for the full command set, including `cbx auth` and `cbx env`.
+Run `cbx --help` (or `cbx <command> --help`) for the full set, including
+`cbx auth`, `cbx config`, `cbx env`, and `cbx telemetry`.
 
-### Global flags & environment
-
-- `-o json` — machine-readable output; every payload is wrapped in a stable `{"data": ..., "error": ...}` envelope.
-- `-q, --quiet` — suppress non-error output; `--no-color` — disable styling.
-- `CBX_NO_UPDATE_CHECK=1` (or `CI=true`) — disable the background update check.
-
-## Using as a library
-
-The `pkg/` tree is the public, semver-stable surface — `pkg/cmd`, `pkg/auth`, `pkg/audit`, `pkg/config`, `pkg/output`. `cmd/cbx/main.go` is deliberately tiny: all command wiring lives in `pkg/cmd`, so downstream tools can embed the whole CLI or just the audit pipeline:
-
-```go
-import "github.com/cloudbooster-io/cbx-cli/pkg/cmd"
-
-func main() {
-	err := cmd.Execute()
-	os.Exit(cmd.ExitCode(err))
-}
-```
-
-`pkg/audit` exposes the state-file parsers (Terraform / Pulumi) and the finding-provider pipeline for building non-LLM audits; that path is fully offline — zero network calls.
+</details>
 
 ## Development
 
-Requires Go 1.25+.
+Go 1.25+ and `make` are all you need:
 
 ```bash
-make build              # → bin/cbx
-make test               # unit tests + local e2e
-make test-e2e           # e2e tests only
-make vet && make lint   # go vet + golangci-lint
-make codegen-check      # verify the generated API client is in sync (CI gate)
-
-# Run a single test
-go test ./internal/audit -run TestParsePulumiState
+make build      # → bin/cbx
+make test       # unit + local e2e
+make vet lint   # static checks
 ```
 
-> `make test-e2e-staging` targets CloudBooster's internal staging API and is maintainer-only; everything else runs for everyone.
+(`make test-e2e-staging` targets CloudBooster's internal staging API and is
+maintainer-only.) Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Contributing
+---
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, please follow [SECURITY.md](SECURITY.md).
+<div align="center">
 
-## License
+Apache-2.0 · [Changelog](CHANGELOG.md) · [Security policy](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
 
-[Apache-2.0](LICENSE)
+</div>
