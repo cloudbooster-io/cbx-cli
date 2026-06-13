@@ -65,6 +65,53 @@ func TestResolveAuditExecutor(t *testing.T) {
 	}
 }
 
+// TestResolveAuditExecutor_HonorsConfigDefault pins the fix for the gap
+// where `cbx audit aws` ignored `cbx llm default`: an empty --llm-executor
+// (flag not set) must fall back to the configured default when it names a
+// grounded-capable CLI executor, and to claude-code otherwise.
+func TestResolveAuditExecutor_HonorsConfigDefault(t *testing.T) {
+	cases := []struct {
+		name       string
+		configDflt string
+		wantExec   string
+	}{
+		{"unset default falls back to claude-code", "", audit.ClaudeCodeProvider},
+		{"codex default is honored", audit.CodexProvider, audit.CodexProvider},
+		{"claude-code default is honored", audit.ClaudeCodeProvider, audit.ClaudeCodeProvider},
+		{"api-provider default the grounded loop can't drive falls back", "claude", audit.ClaudeCodeProvider},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CBX_CONFIG_DIR", t.TempDir())
+			cfg, err := config.Load()
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			cfg.LLM.Default = tc.configDflt
+			if err := config.Save(cfg); err != nil {
+				t.Fatalf("save config: %v", err)
+			}
+			// Empty flag = "--llm-executor not passed" → consult config.
+			got, err := resolveAuditExecutor("")
+			if err != nil {
+				t.Fatalf("resolveAuditExecutor(\"\"): %v", err)
+			}
+			if got != tc.wantExec {
+				t.Errorf("with cbx llm default %q, audit executor = %q, want %q", tc.configDflt, got, tc.wantExec)
+			}
+		})
+	}
+
+	// An explicit flag always wins over the configured default.
+	t.Setenv("CBX_CONFIG_DIR", t.TempDir())
+	cfg, _ := config.Load()
+	cfg.LLM.Default = audit.CodexProvider
+	_ = config.Save(cfg)
+	if got, _ := resolveAuditExecutor(audit.ClaudeCodeProvider); got != audit.ClaudeCodeProvider {
+		t.Errorf("explicit --llm-executor claude-code should win over codex default; got %q", got)
+	}
+}
+
 func TestExecutorBinaryName(t *testing.T) {
 	if got := executorBinaryName(audit.CodexProvider); got != "codex" {
 		t.Errorf("executorBinaryName(codex) = %q, want codex", got)

@@ -236,7 +236,9 @@ per-run cost.`,
 			// Skipped for --dry-run (no LLM runs there).
 			resolvedLLMModel := resolveAuditLLMModel(llmModel, executor)
 			if !dryRun {
-				ui.SetPhase(fmt.Sprintf("verifying llm (%s probe)", executorBinaryName(executor)))
+				// The probe is load-bearing (it aborts a broken executor
+				// before any AWS spend) but not headline-worthy — keep it
+				// off the phase banner; a failure still surfaces loudly.
 				if perr := preflightAuditLLM(ctx, executor, resolvedLLMModel); perr != nil {
 					ui.Done()
 					if output.JSON() {
@@ -471,7 +473,7 @@ per-run cost.`,
 
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
-	cmd.Flags().StringVar(&llmExecutor, "llm-executor", "claude-code", "Local CLI that runs the grounded audit: claude-code (default) or codex. Each must own its own auth and be on PATH. codex reports no per-run cost, so --llm-max-cost is unenforced there.")
+	cmd.Flags().StringVar(&llmExecutor, "llm-executor", "", "Local CLI that runs the grounded audit: claude-code or codex. Default follows `cbx llm default` when it names one of those, else claude-code. Each must own its own auth and be on PATH. codex reports no per-run cost, so --llm-max-cost is unenforced there.")
 	cmd.Flags().StringVar(&llmModel, "llm-model", "", "Model the selected --llm-executor runs the grounded audit with (e.g. claude-opus-4-8, gpt-5-codex); empty uses the 'cbx llm model <executor>' config, then the CLI's own default")
 	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a stderr warning is printed when the run's reported total_cost_usd exceeds the cap (never part of the report). Enforced only for --llm-executor claude-code (codex exec reports no cost). 0 disables the cap")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
@@ -802,21 +804,46 @@ func renderDiagnose(w *os.File, errs []*awsdisc.PermissionError, callerARN strin
 	fmt.Fprintf(w, "Caller: %s\n", callerARN)
 }
 
-// resolveAuditExecutor validates the --llm-executor value and maps it to
-// the audit provider constant (which equals the llm.CLIExecutor* probe name
-// and the `cbx llm model` config key — all three share the string). An
-// unknown value is a usage error surfaced before any AWS/LLM work.
-func resolveAuditExecutor(name string) (string, error) {
-	switch name {
+// resolveAuditExecutor maps the --llm-executor flag to the audit provider
+// constant (which equals the llm.CLIExecutor* probe name and the
+// `cbx llm model` config key — all three share the string). An empty flag
+// means "not set on the command line": fall back to the configured
+// `cbx llm default` when it names a grounded-audit-capable CLI executor,
+// else claude-code. An explicit but unknown value is a usage error
+// surfaced before any AWS/LLM work.
+func resolveAuditExecutor(flag string) (string, error) {
+	if flag == "" {
+		return auditExecutorFromConfig(), nil
+	}
+	switch flag {
 	case audit.ClaudeCodeProvider, audit.CodexProvider:
-		return name, nil
+		return flag, nil
 	default:
 		return "", fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
-			What: fmt.Sprintf("unknown --llm-executor %q", name),
+			What: fmt.Sprintf("unknown --llm-executor %q", flag),
 			Why:  "the grounded audit runs through a local CLI; only claude-code and codex are wired",
-			Fix:  "pass --llm-executor claude-code (default) or --llm-executor codex",
+			Fix:  "pass --llm-executor claude-code or --llm-executor codex, or set one as the default with `cbx llm default`",
 			Code: "E_LLM_EXECUTOR",
 		}))
+	}
+}
+
+// auditExecutorFromConfig honors `cbx llm default` for the grounded audit:
+// the default is used only when it names a CLI executor the grounded path
+// can drive (claude-code or codex). An unset default — or one pointing at
+// an api provider, which the grounded no-MCP loop can't use — falls back
+// to claude-code. A config read error is non-fatal here: the preflight
+// probe still validates whatever executor we land on before any AWS spend.
+func auditExecutorFromConfig() string {
+	cfg, err := config.Load()
+	if err != nil {
+		return audit.ClaudeCodeProvider
+	}
+	switch cfg.LLM.Default {
+	case audit.ClaudeCodeProvider, audit.CodexProvider:
+		return cfg.LLM.Default
+	default:
+		return audit.ClaudeCodeProvider
 	}
 }
 
