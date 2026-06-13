@@ -218,3 +218,9 @@ var RDSPrimitiveFor = audit.RDSPrimitiveFor
 // ClaudeCodeProvider is the provider string accepted by --llm in both
 // source and AWS modes when grounding is desired.
 const ClaudeCodeProvider = audit.ClaudeCodeProvider
+
+// CodexProvider is the analogous provider string for the local OpenAI
+// Codex CLI (`codex exec`). Like ClaudeCodeProvider it drives the grounded
+// audit path; codex surfaces no per-run cost, so --llm-max-cost is
+// unenforced for it.
+const CodexProvider = audit.CodexProvider

@@ -36,6 +36,7 @@ func newAuditAWSCmd() *cobra.Command {
 		diagnose        bool
 		llmMaxCost      float64
 		llmModel        string
+		llmExecutor     string
 		dryRun          bool
 		noTUI           bool
 		strict          bool
@@ -79,9 +80,14 @@ This is not optional: the audit fetches the relevant CB knowledge (AWS
 primitives, best practices, and composition guidance) directly over
 CloudBooster's knowledge API, then inlines it into the prompt alongside
 the discovered resources (plus cb_describer_* enrichment from the
-per-service describers) and runs Claude Code (` + "`claude -p`" + `) to match
-each finding to that grounding. Claude Code must be on PATH. Use
---llm-max-cost to cap the per-run cost (USD; default 2.00).`,
+per-service describers) and runs a local LLM CLI to match each finding to
+that grounding.
+
+The CLI is chosen with --llm-executor: claude-code (default, ` + "`claude -p`" + `)
+or codex (` + "`codex exec`" + `). The selected binary must own its own auth and
+be on PATH. Use --llm-max-cost to cap the per-run cost (USD; default
+2.00) — note this is enforced only for claude-code; codex exec reports no
+per-run cost.`,
 		Example: `  # Audit the default AWS profile in its configured region
   cbx audit aws
 
@@ -98,6 +104,13 @@ each finding to that grounding. Claude Code must be on PATH. Use
   cbx audit aws --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Resolve the grounded-audit executor up front so an unknown
+			// --llm-executor value fails before any AWS/LLM work.
+			executor, execErr := resolveAuditExecutor(llmExecutor)
+			if execErr != nil {
+				return execErr
+			}
+
 			profile := os.Getenv("AWS_PROFILE")
 			var urlRegion string
 			if len(args) == 1 {
@@ -221,10 +234,10 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			// without this probe they'd burn the whole discovery pass and
 			// come back as a useless end-of-run LLM-ERROR finding.
 			// Skipped for --dry-run (no LLM runs there).
-			resolvedLLMModel := resolveAuditLLMModel(llmModel)
+			resolvedLLMModel := resolveAuditLLMModel(llmModel, executor)
 			if !dryRun {
-				ui.SetPhase("verifying llm (claude probe)")
-				if perr := preflightAuditLLM(ctx, resolvedLLMModel); perr != nil {
+				ui.SetPhase(fmt.Sprintf("verifying llm (%s probe)", executorBinaryName(executor)))
+				if perr := preflightAuditLLM(ctx, executor, resolvedLLMModel); perr != nil {
 					ui.Done()
 					if output.JSON() {
 						_ = output.PrintJSON(nil, output.JSONError(perr))
@@ -247,7 +260,7 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			// the user gets the same region/account picture they'd see
 			// in a real run.
 			if dryRun {
-				return renderDryRun(outputFormat, discResult, rulePackProv)
+				return renderDryRun(outputFormat, discResult, rulePackProv, executor)
 			}
 
 			// Discovery header card — what we just learned about the
@@ -304,12 +317,20 @@ each finding to that grounding. Claude Code must be on PATH. Use
 				AWSAccountID:      discResult.Identity.AccountID,
 				AWSAccountPosture: discResult.AccountPosture,
 				MockScanners:      false,
-				LLMProvider:       audit.ClaudeCodeProvider,
+				LLMProvider:       executor,
 				LLMModel:          resolvedLLMModel,
 				CBKnowledge:       true,
 				LLMMaxCost:        llmMaxCost,
 				Quiet:             quietFlag,
 				OutputFormat:      outputFormat,
+			}
+
+			// Codex surfaces no per-run cost, so --llm-max-cost is inert
+			// for it (groundedCodexStreamer.TotalCostUSD always returns 0).
+			// Say so explicitly rather than letting the flag look effective.
+			if executor == audit.CodexProvider && llmMaxCost > 0 && !quietFlag && outputFormat == "" {
+				fmt.Fprintln(os.Stderr, output.Dim.Render(
+					"  note: --llm-max-cost is not enforced for the codex executor (codex exec reports no per-run cost)"))
 			}
 
 			// RunFromResources collapses the previous bespoke flow
@@ -450,8 +471,9 @@ each finding to that grounding. Claude Code must be on PATH. Use
 
 	cmd.Flags().IntVar(&awsConcurrency, "aws-concurrency", 4, "Max concurrent AWS API calls per service")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "Emit per-call IAM permission errors and a recommended IAM policy patch")
-	cmd.Flags().StringVar(&llmModel, "llm-model", "", "Model the claude CLI runs the grounded audit with (e.g. claude-opus-4-8); empty uses the 'cbx llm model claude-code' config, then the CLI's own default")
-	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a stderr warning is printed when claude's reported total_cost_usd exceeds the cap (never part of the report). 0 disables the cap")
+	cmd.Flags().StringVar(&llmExecutor, "llm-executor", "claude-code", "Local CLI that runs the grounded audit: claude-code (default) or codex. Each must own its own auth and be on PATH. codex reports no per-run cost, so --llm-max-cost is unenforced there.")
+	cmd.Flags().StringVar(&llmModel, "llm-model", "", "Model the selected --llm-executor runs the grounded audit with (e.g. claude-opus-4-8, gpt-5-codex); empty uses the 'cbx llm model <executor>' config, then the CLI's own default")
+	cmd.Flags().Float64Var(&llmMaxCost, "llm-max-cost", 2.0, "USD ceiling for a single grounded audit; a stderr warning is printed when the run's reported total_cost_usd exceeds the cap (never part of the report). Enforced only for --llm-executor claude-code (codex exec reports no cost). 0 disables the cap")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the audit plan (regions, CFN types, est events, dependency checks) and exit without firing CloudControl or LLM calls")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive findings TUI — print the static report and exit. Implied by --json, --quiet, and non-TTY.")
 	cmd.Flags().BoolVar(&strict, "strict", false, "Gate the exit code on discovery-integrity warnings too. By default they're advisory — a flaky CloudControl re-list won't fail an otherwise-clean audit; --strict restores the non-zero exit so CI fails on a possibly-incomplete discovery.")
@@ -561,7 +583,12 @@ func isLikelyAWSRegion(s string) bool {
 // has already run with ScoutOnly=true so we have the resolved regions
 // and an accurate event-count estimate, but no CloudControl traffic
 // fired and no LLM was invoked.
-func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, rulePack rulesbundle.Provenance) error {
+func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, rulePack rulesbundle.Provenance, executor string) error {
+	execBin := executorBinaryName(executor)
+	_, execErr := exec.LookPath(execBin)
+	execOK := execErr == nil
+	// Keep the legacy claude-specific field for back-compat with any
+	// machine consumer scripted against it; add the executor-aware fields.
 	_, claudeErr := exec.LookPath("claude")
 	claudeOK := claudeErr == nil
 	cfnCount := awsdisc.DiscoverableTypeCount()
@@ -573,6 +600,8 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, rulePack rule
 			"regions":                    dr.Regions,
 			"cfn_type_count":             cfnCount,
 			"cloudtrail_events_estimate": dr.EventCount,
+			"llm_executor":               executor,
+			"executor_cli_available":     execOK,
 			"claude_cli_available":       claudeOK,
 			"rulepack":                   rulePack,
 		}
@@ -589,7 +618,8 @@ func renderDryRun(outputFormat string, dr *awsdisc.DiscoverResult, rulePack rule
 	fmt.Fprintln(os.Stderr, "  regions:           "+strings.Join(dr.Regions, ", "))
 	fmt.Fprintf(os.Stderr, "  CFN types queried: %d\n", cfnCount)
 	fmt.Fprintf(os.Stderr, "  est CloudTrail Read events: ~%d\n", dr.EventCount)
-	fmt.Fprintf(os.Stderr, "  claude CLI on PATH: %v\n", claudeOK)
+	fmt.Fprintf(os.Stderr, "  llm executor:      %s\n", executor)
+	fmt.Fprintf(os.Stderr, "  %s CLI on PATH: %v\n", execBin, execOK)
 	rulesLine := fmt.Sprintf("pack v%d (schema %d, source %s)", rulePack.PackVersion, rulePack.SchemaVersion, rulePack.Source)
 	if rulePack.Stale || rulePack.Degraded {
 		rulesLine += " — DEGRADED/STALE"
@@ -772,10 +802,38 @@ func renderDiagnose(w *os.File, errs []*awsdisc.PermissionError, callerARN strin
 	fmt.Fprintf(w, "Caller: %s\n", callerARN)
 }
 
-// resolveAuditLLMModel picks the model for the grounded audit's claude CLI:
-// the --llm-model flag wins, then the per-executor override stored by
-// `cbx llm model claude-code <model>`, then "" (the CLI's own default).
-func resolveAuditLLMModel(flag string) string {
+// resolveAuditExecutor validates the --llm-executor value and maps it to
+// the audit provider constant (which equals the llm.CLIExecutor* probe name
+// and the `cbx llm model` config key — all three share the string). An
+// unknown value is a usage error surfaced before any AWS/LLM work.
+func resolveAuditExecutor(name string) (string, error) {
+	switch name {
+	case audit.ClaudeCodeProvider, audit.CodexProvider:
+		return name, nil
+	default:
+		return "", fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
+			What: fmt.Sprintf("unknown --llm-executor %q", name),
+			Why:  "the grounded audit runs through a local CLI; only claude-code and codex are wired",
+			Fix:  "pass --llm-executor claude-code (default) or --llm-executor codex",
+			Code: "E_LLM_EXECUTOR",
+		}))
+	}
+}
+
+// executorBinaryName returns the on-PATH binary name for an executor
+// provider, for user-facing messages and PATH checks.
+func executorBinaryName(executor string) string {
+	if executor == audit.CodexProvider {
+		return "codex"
+	}
+	return "claude"
+}
+
+// resolveAuditLLMModel picks the model for the grounded audit's selected
+// CLI executor: the --llm-model flag wins, then the per-executor override
+// stored by `cbx llm model <executor> <model>`, then "" (the CLI's own
+// default).
+func resolveAuditLLMModel(flag, executor string) string {
 	if flag != "" {
 		return flag
 	}
@@ -783,25 +841,27 @@ func resolveAuditLLMModel(flag string) string {
 	if err != nil {
 		return ""
 	}
-	if p := cfg.LLM.Providers[audit.ClaudeCodeProvider]; p.ModelPinned {
+	if p := cfg.LLM.Providers[executor]; p.ModelPinned {
 		return p.Model
 	}
 	return ""
 }
 
-// preflightAuditLLM sends a minimal one-shot prompt through the claude
-// CLI with the resolved model pin and wraps any failure in an actionable
-// error. It gates `cbx audit aws` before discovery so a broken executor
-// (expired auth, inaccessible model, usage limit) aborts in seconds
-// instead of surfacing as an LLM-ERROR finding after the full AWS pass.
-func preflightAuditLLM(ctx context.Context, model string) error {
+// preflightAuditLLM sends a minimal one-shot prompt through the selected
+// CLI executor with the resolved model pin and wraps any failure in an
+// actionable error. It gates `cbx audit aws` before discovery so a broken
+// executor (expired auth, inaccessible model, usage limit) aborts in
+// seconds instead of surfacing as an LLM-ERROR finding after the full AWS
+// pass. The audit provider constant equals the llm.CLIExecutor* probe name,
+// so it's passed straight through.
+func preflightAuditLLM(ctx context.Context, executor, model string) error {
 	probeCtx, cancel := context.WithTimeout(ctx, llmProbeTimeout)
 	defer cancel()
-	if _, err := llm.ProbeCLIExecutor(probeCtx, llm.CLIExecutorClaudeCode, model); err != nil {
+	if _, err := llm.ProbeCLIExecutor(probeCtx, executor, model); err != nil {
 		return fmt.Errorf("%s", output.RenderError(output.ErrorDetail{
-			What: "the claude CLI can't serve a prompt — audit aborted before AWS discovery",
+			What: fmt.Sprintf("the %s CLI can't serve a prompt — audit aborted before AWS discovery", executorBinaryName(executor)),
 			Why:  err.Error(),
-			Fix:  "debug with `cbx llm cli test claude-code`; check Claude Code auth, usage limits, and the pinned model (`cbx llm model`, --llm-model)",
+			Fix:  fmt.Sprintf("debug with `cbx llm cli test %s`; check the CLI's auth, usage limits, and the pinned model (`cbx llm model`, --llm-model)", executor),
 			Code: "E_LLM_PREFLIGHT",
 		}))
 	}

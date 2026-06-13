@@ -161,7 +161,7 @@ func (g *groundedClaudeStreamer) Stream(ctx context.Context, prompt string, onTo
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
-			return claudeExitError(g.binary, exitErr, &stdout, &stderr)
+			return cliExitError(g.binary, exitErr, &stdout, &stderr)
 		}
 		return fmt.Errorf("running %s: %w", g.binary, runErr)
 	}

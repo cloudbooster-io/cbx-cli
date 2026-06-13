@@ -84,18 +84,22 @@ func (l *llmAnalyzer) LastConnections() []LLMConnection {
 // provider. Returns an error when the provider isn't configured — caller
 // should surface that to the user as "run cbx llm api login <provider> first".
 //
-// The special provider name ClaudeCodeProvider ("claude-code") sidesteps
-// cbx's own credential handling entirely: it shells out to the `claude`
-// CLI which authenticates as Claude Code itself. No `cbx llm api login`
-// required, no token stored by cbx.
+// The CLI-executor provider names ClaudeCodeProvider ("claude-code") and
+// CodexProvider ("codex") sidestep cbx's own credential handling entirely:
+// they shell out to the local `claude` / `codex` CLI which authenticates as
+// itself. No `cbx llm api login` required, no token stored by cbx. Both
+// support the grounded `cbx audit aws` path; codex differs only in that it
+// surfaces no per-run cost (--llm-max-cost is unenforced — see
+// groundedCodexStreamer.TotalCostUSD).
 func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 	if opts.LLMProvider == "" {
 		return nil, fmt.Errorf("llm analyzer: empty provider")
 	}
 
-	if opts.LLMProvider == ClaudeCodeProvider {
+	if isCLIExecutorProvider(opts.LLMProvider) {
+		label := ruleIDLabelFor(opts.LLMProvider)
 		if opts.CBKnowledge {
-			streamer, err := newGroundedClaudeStreamer(opts.LLMModel)
+			streamer, err := newGroundedCLIStreamer(opts.LLMProvider, opts.LLMModel)
 			if err != nil {
 				return nil, err
 			}
@@ -114,14 +118,15 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			// emitted). The CLI default is 2.00 (set in audit_aws.go).
 			// Library callers wiring Options directly take the field as
 			// the literal cap; if they want the historical "use the
-			// default" behavior they can pass 2.00 explicitly.
+			// default" behavior they can pass 2.00 explicitly. Codex
+			// reports no cost, so the cap is inert there regardless.
 			return &llmAnalyzer{
 				provider:          opts.LLMProvider,
 				streamer:          streamer,
 				maxFiles:          opts.LLMMaxFiles,
 				maxBytesPerFile:   opts.LLMMaxBytesPerFile,
 				iacType:           iacType,
-				providerForRuleID: "claudecode",
+				providerForRuleID: label,
 				cbKnowledge:       true,
 				maxCostUSD:        opts.LLMMaxCost,
 				posture:           opts.AWSAccountPosture,
@@ -129,7 +134,7 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 				rulesProv:         rulesProv,
 			}, nil
 		}
-		streamer, err := newClaudeCLIStreamer(opts.LLMModel)
+		streamer, err := newCLIExecutorStreamer(opts.LLMProvider, opts.LLMModel)
 		if err != nil {
 			return nil, err
 		}
@@ -139,12 +144,12 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			maxFiles:          opts.LLMMaxFiles,
 			maxBytesPerFile:   opts.LLMMaxBytesPerFile,
 			iacType:           iacType,
-			providerForRuleID: "claudecode",
+			providerForRuleID: label,
 		}, nil
 	}
 
 	if opts.CBKnowledge {
-		return nil, fmt.Errorf("--cb-knowledge requires --llm %s (other providers don't have an MCP tool-call loop)", ClaudeCodeProvider)
+		return nil, fmt.Errorf("--cb-knowledge requires --llm %s or %s (other providers don't have a grounded executor path)", ClaudeCodeProvider, CodexProvider)
 	}
 
 	cfg, err := config.Load()

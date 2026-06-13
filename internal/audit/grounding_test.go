@@ -29,6 +29,12 @@ func fakeKnowledgeHandler() http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/health":
+			// The grounded streamer constructors (newGroundedClaudeStreamer
+			// / newGroundedCodexStreamer) preflight the backend via /health
+			// before discovery; answer 2xx so tests that go through those
+			// constructors don't abort.
+			w.WriteHeader(http.StatusOK)
 		case strings.HasPrefix(r.URL.Path, "/v1/knowledge/aws/primitives/"):
 			typeID := strings.TrimPrefix(r.URL.Path, "/v1/knowledge/aws/primitives/")
 			_, _ = w.Write([]byte(envelope(map[string]interface{}{
