@@ -3,22 +3,25 @@ package audit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle/rulesbundletest"
 )
 
 // TestGroundedPromptGolden pins the fully-assembled grounded prompt for
-// the kitchen-sink fixture byte-for-byte. Together with the embedded
-// rulepack's content_sha256 self-check and TestEmbeddedBundleSHA, this
-// is the permanent successor of the P0 dual-builder byte-identity test
-// (the legacy inline-literal builder was deleted once that test proved
-// the extraction byte-identical — see the refactor commit).
+// the kitchen-sink fixture byte-for-byte — built against the SYNTHETIC
+// rulesbundletest pack, so what it locks is the ASSEMBLY: section
+// order, separators, the rulepack render (groups, sub-items,
+// cross-refs), and every compiled-in serializer (posture, knowledge
+// bundle, resource table incl. truncation, source files). It is
+// deliberately content-free: production rule prose is server-owned and
+// its contract is exercised by the e2e_staging tier, not here.
 //
-// The prose IS the recall: an unexplained diff here is a recall
-// regression, not a cosmetic change. Deliberate prompt changes must
-// regenerate the golden (CBX_UPDATE_GOLDEN=1 go test ./internal/audit
-// -run TestGroundedPromptGolden) and are fixtures-sweep-gated.
+// An unexplained diff here means the prompt builder changed shape.
+// Deliberate assembly changes must regenerate the golden:
+//
+//	CBX_UPDATE_GOLDEN=1 go test ./internal/audit -run TestGroundedPromptGolden
 func TestGroundedPromptGolden(t *testing.T) {
 	var fx groundedPromptFixture
 	for _, f := range groundedPromptFixtures() {
@@ -30,7 +33,7 @@ func TestGroundedPromptGolden(t *testing.T) {
 		t.Fatal("kitchen-sink fixture missing from groundedPromptFixtures")
 	}
 
-	got := buildGroundedPrompt(IaCTypeTerraform, fx.files, fx.resources, fx.bundle, fx.posture, rulesbundle.Embedded())
+	got := buildGroundedPrompt(IaCTypeTerraform, fx.files, fx.resources, fx.bundle, fx.posture, rulesbundletest.Pack(t))
 
 	path := filepath.Join("testdata", "grounded_prompt_kitchen_sink.golden")
 	if os.Getenv("CBX_UPDATE_GOLDEN") == "1" {
@@ -40,13 +43,16 @@ func TestGroundedPromptGolden(t *testing.T) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read golden (CBX_UPDATE_GOLDEN=1 regenerates): %v", err)
+		t.Fatalf("read golden: %v\nRegenerate: CBX_UPDATE_GOLDEN=1 go test ./internal/audit -run TestGroundedPromptGolden", err)
+	}
+	if strings.HasPrefix(string(want), "REGENERATE:") {
+		t.Fatal("golden is a placeholder, not a recorded prompt.\nRegenerate: CBX_UPDATE_GOLDEN=1 go test ./internal/audit -run TestGroundedPromptGolden")
 	}
 	if got == string(want) {
 		return
 	}
 	i := firstByteDiff(got, string(want))
-	t.Fatalf("assembled grounded prompt diverged from golden at byte %d (got %d bytes, want %d):\ngolden:  %q\ncurrent: %q\nIf this change is deliberate: regenerate with CBX_UPDATE_GOLDEN=1 and treat it as sweep-gated.",
+	t.Fatalf("assembled grounded prompt diverged from golden at byte %d (got %d bytes, want %d):\ngolden:  %q\ncurrent: %q\nIf this assembly change is deliberate: regenerate with CBX_UPDATE_GOLDEN=1.",
 		i, len(got), len(want), contextWindow(string(want), i), contextWindow(got, i))
 }
 

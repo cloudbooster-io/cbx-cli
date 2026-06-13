@@ -3,20 +3,19 @@
 // that buildGroundedPrompt inlines into the grounded LLM prompt,
 // wrapped in a versioned, validated JSON envelope.
 //
-// P0 of the local-knowledge-registry refactor: the pack is a mechanical,
-// byte-for-byte extraction of the former inline Go string literals
-// (internal/audit/llm_analyzer.go:604–680, 705–710 at main@1eacc58) and
-// ships exclusively as a go:embed artifact (see embed.go). Later phases
-// add network fetch, on-disk caching, and signature verification — none
-// of that lives here yet.
+// The pack is API-distributed: the registry (platform-app's
+// GET /v1/knowledge/aws/rulepack) is the sole content source, resolved
+// through the override → network → cache ladder in resolve.go. No copy
+// of the production pack lives in this repo — unit tests run against
+// the synthetic fixture pack in rulesbundletest, and the served pack's
+// contract is exercised by the e2e_staging tier.
 //
 // Governing principle (plan §B.1): the prose IS the recall. The
 // machine-readable fields on Rule (severity, selectors, requires_fields,
 // refs, cross_refs, tags) are metadata for validation/provenance/CI
 // only — they do not filter the prompt and do not gate findings. Render
-// reproduces the original sb.WriteString stream byte-identically; the
-// embedded-artifact SHA test and the prompt golden test pin that
-// property forever.
+// reproduces the pack's canonical byte stream exactly; the prompt
+// golden test pins that property.
 package rulesbundle
 
 import (
@@ -50,7 +49,8 @@ type Section string
 
 const (
 	// SectionBaselineRules is the "Reasoning rules" item 1 block:
-	// intro line + 47 rule bullets (with sub-items) + outro line
+	// intro line + the pack's rule bullets (with sub-items, count is
+	// server-owned) + outro line
 	// (llm_analyzer.go:604–675).
 	SectionBaselineRules Section = "baseline_rules"
 	// SectionOrthogonality is the "DO NOT MERGE ORTHOGONAL ISSUES"
@@ -290,8 +290,8 @@ func (p *RulePack) Validate() error {
 
 // Render returns the canonical prompt text for one section,
 // byte-identical to the sb.WriteString stream the prose was extracted
-// from. The pack must have passed Validate (Parse and Embedded
-// guarantee this); rendering an unknown section panics — sections are
+// from. The pack must have passed Validate (Parse guarantees this);
+// rendering an unknown section panics — sections are
 // compile-time constants, so that is a programmer error, and an empty
 // string fallback would silently gut the prompt's recall.
 func (p *RulePack) Render(section Section) string {

@@ -11,14 +11,17 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// Resolve implements the rulepack failure ladder (plan §B.3):
+// Resolve implements the rulepack failure ladder (plan §B.3; API-only
+// — the embedded copy was removed, the registry is the sole content
+// source):
 //
-//	override file → network (ETag-revalidated) → on-disk cache → embedded
+//	override file → network (ETag-revalidated) → on-disk cache
 //
 // The ladder never yields an empty ruleset — a rule-less grounded
 // prompt would still produce plausible findings ("the list is NOT
 // exhaustive"), which is the false-green failure mode the registry
-// design exists to prevent. Resolve returns an error ONLY for
+// design exists to prevent. When every rung comes up empty, Resolve
+// returns ErrNoRulePack rather than degrading further. The other
 // abort-class conditions where running anyway would be wrong:
 //
 //   - an explicit CBX_AUDIT_RULES_FILE override that cannot be loaded
@@ -29,9 +32,9 @@ import (
 //     ("upgrade cbx", plan §B.4 — the pack may reference describer
 //     fields this engine never emits).
 //
-// Everything else degrades down the ladder and is reported in
-// Provenance, which callers surface in the report header, --json,
-// .state.json, and the LLM-CB-RULES-* meta-findings.
+// Transient failures with a usable cache degrade onto it and are
+// reported in Provenance, which callers surface in the report header,
+// --json, .state.json, and the LLM-CB-RULES-* meta-findings.
 
 // ErrNotModified mirrors the knowledge client's 304 sentinel without
 // importing it — rulesbundle stays dependency-free of the HTTP layer.
@@ -39,11 +42,17 @@ import (
 var ErrNotModified = errors.New("rulesbundle: not modified")
 
 // ErrNotAuthored mirrors the knowledge client's 404 sentinel: the
-// rulepack endpoint is not deployed (expected before P2 ships) or the
-// pinned version does not exist. Falls down the ladder quietly —
-// landing on the embedded copy byte-identically is what makes the CLI
-// shippable before the server.
+// registry does not have what was asked for (unknown channel/schema,
+// or a pinned version it doesn't hold). Falls to the on-disk cache;
+// with no usable cache the ladder exhausts into ErrNoRulePack.
 var ErrNotAuthored = errors.New("rulesbundle: not authored")
+
+// ErrNoRulePack reports that every rung of the ladder came up empty:
+// no override file, no (or failed) network fetch, no usable cache.
+// The pack is API-distributed with no embedded floor, so this is
+// abort-class — the grounded audit must not run without a validated
+// pack.
+var ErrNoRulePack = errors.New("rulesbundle: no rule pack available")
 
 // FetchFunc fetches the artifact bytes for (channel, etag, pin). It is
 // the seam between this package and the HTTP client: return
@@ -58,7 +67,8 @@ type FetchFunc func(ctx context.Context, channel, etag string, pin int) (raw []b
 const defaultGraceWindow = 7 * 24 * time.Hour
 
 // ResolveOptions configures one resolution. Zero value = stable
-// channel, latest version, no network, embedded fallback.
+// channel, latest version, no network — which can resolve only via
+// an override file or a previously populated cache.
 type ResolveOptions struct {
 	// Channel selects the pack channel; "" means "stable".
 	Channel string
@@ -82,7 +92,7 @@ type ResolveOptions struct {
 // audit output names it so a sweep verdict is always scoped to an
 // exact pack (an unscoped verdict is unscoreable).
 type Provenance struct {
-	// Source is the ladder rung: "network", "cache", "embedded", "file".
+	// Source is the ladder rung: "network", "cache", "file".
 	Source string `json:"source"`
 	// Channel is the pack channel requested ("" only for file source).
 	Channel string `json:"channel,omitempty"`
@@ -94,13 +104,13 @@ type Provenance struct {
 	PinnedVersion int `json:"pinned_version,omitempty"`
 	// FetchedAt is when the served bytes were last confirmed current
 	// against the registry (network fetch or 304 revalidation), RFC3339.
-	// Empty for file/embedded sources.
+	// Empty for the file source.
 	FetchedAt string `json:"fetched_at,omitempty"`
 	// Stale marks a cache older than the grace window.
 	Stale bool `json:"stale,omitempty"`
 	// Degraded marks that a network fetch was attempted and failed
-	// transiently (NOT a 404 — a missing endpoint is the expected
-	// pre-deployment state, not degradation).
+	// transiently (NOT a 404 — an unknown channel/version is a
+	// deterministic registry answer, not degradation).
 	Degraded bool `json:"degraded,omitempty"`
 	// FetchError carries the stringified network failure when Degraded
 	// (or the 404 note when the ladder fell through one).
@@ -178,7 +188,12 @@ func Resolve(ctx context.Context, opts ResolveOptions) (*RulePack, Provenance, e
 			return pack, prov, nil
 
 		case errors.Is(err, ErrNotModified):
-			if cacheOK {
+			// The pin guard mirrors rung 2: the ETag gate above already
+			// withholds the ETag on a pin mismatch (so a conforming
+			// fetcher never 304s here), but a FetchFunc that ignores the
+			// etag argument must not be able to smuggle the wrong
+			// version past the pin.
+			if cacheOK && (opts.PinVersion == 0 || cachedMeta.PackVersion == opts.PinVersion) {
 				if err := checkEngine(opts.EngineVersion, cachedPack, "cached pack"); err != nil {
 					return nil, Provenance{}, err
 				}
@@ -188,8 +203,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) (*RulePack, Provenance, e
 				prov.FetchedAt = now.UTC().Format(time.RFC3339)
 				return cachedPack, prov, nil
 			}
-			// 304 against a cache that vanished mid-run: refetch
-			// unconditionally once, then fall through on failure.
+			// 304 against a cache that vanished mid-run (or one that
+			// cannot satisfy the pin): refetch unconditionally once,
+			// then fall through on failure.
 			raw, newETag, err = opts.Fetch(ctx, channel, "", opts.PinVersion)
 			if err == nil {
 				if pack, perr := Parse(raw); perr == nil && (opts.PinVersion == 0 || pack.Manifest.PackVersion == opts.PinVersion) {
@@ -206,8 +222,9 @@ func Resolve(ctx context.Context, opts ResolveOptions) (*RulePack, Provenance, e
 			degraded, fetchError = true, "304 revalidation with no readable cache"
 
 		case errors.Is(err, ErrNotAuthored):
-			// Expected pre-P2 (endpoint not deployed) or a pinned version
-			// the registry doesn't have. Not degradation; note it.
+			// Deterministic registry miss (unknown channel/schema, or a
+			// pinned version it doesn't hold). Not degradation; note it
+			// and fall to the cache.
 			fetchError = err.Error()
 
 		default:
@@ -216,6 +233,7 @@ func Resolve(ctx context.Context, opts ResolveOptions) (*RulePack, Provenance, e
 	}
 
 	// Rung 2 — on-disk cache.
+	cacheNote := "no usable cache"
 	if pack, meta, ok := loadCachedPack(channel); ok {
 		if opts.PinVersion == 0 || meta.PackVersion == opts.PinVersion {
 			if err := checkEngine(opts.EngineVersion, pack, "cached pack"); err != nil {
@@ -228,21 +246,28 @@ func Resolve(ctx context.Context, opts ResolveOptions) (*RulePack, Provenance, e
 			prov.FetchError = fetchError
 			return pack, prov, nil
 		}
+		cacheNote = fmt.Sprintf("cache holds pack_version %d", meta.PackVersion)
 	}
 
-	// Rung 3 — embedded last-known-good. Never fails validation (build
-	// invariant), always satisfies the engine (it shipped with it).
-	pack := Embedded()
-	if err := checkPin(opts.PinVersion, pack, "embedded pack"); err != nil {
-		if fetchError != "" {
-			return nil, Provenance{}, fmt.Errorf("%w (network: %s)", err, fetchError)
-		}
-		return nil, Provenance{}, err
+	// Ladder exhausted. The pack is API-distributed and nothing local
+	// can serve it — running anyway is the false-green failure mode, so
+	// abort with each rung's reason and the way out.
+	artifactPath, _ := cachePaths(channel)
+	var why []string
+	if opts.PinVersion > 0 {
+		why = append(why, fmt.Sprintf("pinned pack_version %d unsatisfied", opts.PinVersion))
 	}
-	prov := provenanceFor("embedded", channel, pack, opts.PinVersion)
-	prov.Degraded = degraded
-	prov.FetchError = fetchError
-	return pack, prov, nil
+	switch {
+	case opts.Fetch == nil:
+		why = append(why, "network rung disabled in this construction")
+	case fetchError != "":
+		why = append(why, "registry: "+fetchError)
+	default:
+		why = append(why, "registry fetch returned no pack")
+	}
+	why = append(why, fmt.Sprintf("%s (%s)", cacheNote, artifactPath))
+	return nil, Provenance{}, fmt.Errorf("%w for channel %q: %s — retry when the registry is reachable (one online `cbx audit aws` run populates the cache), or set CBX_AUDIT_RULES_FILE to a local pack file",
+		ErrNoRulePack, channel, strings.Join(why, "; "))
 }
 
 func provenanceFor(source, channel string, pack *RulePack, pin int) Provenance {

@@ -53,10 +53,11 @@ type llmAnalyzer struct {
 	// rules is the resolved rule pack that grounds the prompt's policy
 	// sections (see rulepack_resolve.go); rulesProv records which rung
 	// of the resolve ladder served it, surfaced post-scan as the
-	// LLM-CB-RULES-* meta-findings. Nil rules fall back to the embedded
-	// pack in buildPrompt (zero-value analyzers in tests / direct
-	// library construction); zero-value rulesProv suppresses the
-	// provenance findings for the same reason.
+	// LLM-CB-RULES-* meta-findings. The pack is API-distributed with no
+	// embedded floor, so rules must be non-nil for grounded prompts —
+	// buildPrompt panics otherwise. Zero-value rulesProv suppresses the
+	// provenance findings (direct constructions have no ladder state to
+	// report).
 	rules     *rulesbundle.RulePack
 	rulesProv rulesbundle.Provenance
 
@@ -101,9 +102,10 @@ func newLLMAnalyzer(opts Options, iacType string) (*llmAnalyzer, error) {
 			// Rule pack: the CLI preflight (pkg/cmd/audit_aws.go) already
 			// resolved + memoized it pre-discovery; this returns the memo.
 			// Library callers without that preflight resolve here WITHOUT
-			// the network rung (override file → cache → embedded) — see
-			// rulepack_resolve.go. Failure is abort-class (broken override
-			// / unsatisfiable pin), matching the streamer-preflight posture.
+			// the network rung (override file → cache only — the pack is
+			// API-distributed, no embedded floor) — see rulepack_resolve.go.
+			// Failure is abort-class (broken override / unsatisfiable pin /
+			// ladder exhausted), matching the streamer-preflight posture.
 			rules, rulesProv, err := currentRulePack(context.Background())
 			if err != nil {
 				return nil, err
@@ -560,14 +562,16 @@ func (l *llmAnalyzer) appendKnowledgePartialFinding(findings []Finding, bundle *
 // that explicitly).
 func (l *llmAnalyzer) buildPrompt(files []SourceFile, resources []DiscoveredResource, bundle *GroundingBundle, posture *AccountPosture) string {
 	if l.cbKnowledge {
-		rules := l.rules
-		if rules == nil {
-			// Zero-value analyzers (tests, direct library construction)
-			// ground on the embedded pack — same bytes the resolve
-			// ladder's last rung serves.
-			rules = rulesbundle.Embedded()
+		if l.rules == nil {
+			// newLLMAnalyzer always resolves a pack (and errors when it
+			// can't); a nil pack here is a direct construction that
+			// skipped resolution. The pack is API-distributed with no
+			// embedded floor, so there is nothing to fall back to —
+			// failing loud beats silently gutting the prompt's policy
+			// sections (the false-green failure mode).
+			panic("audit: grounded analyzer constructed without a rule pack (use newLLMAnalyzer, or set rules explicitly)")
 		}
-		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture, rules)
+		return buildGroundedPrompt(l.iacType, files, resources, bundle, posture, l.rules)
 	}
 	return buildLLMPrompt(l.iacType, files)
 }
@@ -607,12 +611,12 @@ func buildLLMPrompt(iacType string, files []SourceFile) string {
 // frozen knowledge bundle and emit findings.
 //
 // The policy prose — the baseline rule bullets, the no-merge-orthogonal
-// block, and the severity rubric — comes from the rules pack (P0 of the
-// local-knowledge-registry refactor: always rulesbundle.Embedded(), a
-// byte-for-byte extraction of the former inline literals). rules must
-// be non-nil and validated; Render reproduces the original byte stream
-// exactly, pinned by the prompt golden test and the embedded-artifact
-// SHA test.
+// block, and the severity rubric — comes from the resolved rules pack
+// (API-distributed via /v1/knowledge/aws/rulepack, resolved through the
+// override → network → cache ladder; see rulepack_resolve.go). rules
+// must be non-nil and validated; Render reproduces the pack's canonical
+// byte stream exactly, pinned by the prompt golden test against the
+// synthetic fixture pack.
 //
 // Determinism is load-bearing: this function must produce byte-identical
 // output for identical inputs across runs. That means:

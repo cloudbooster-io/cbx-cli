@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle/rulesbundletest"
 )
 
 // fakeStreamer feeds a pre-canned response one chunk at a time so the
@@ -281,6 +283,7 @@ func TestScanResources_EmitsTruncationFinding(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	resources := syntheticResources(defaultLLMMaxPromptResources + 7)
 
@@ -312,6 +315,7 @@ func TestScanResources_NoTruncationFindingUnderCap(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	findings, err := a.ScanResources(context.Background(), syntheticResources(3))
 	if err != nil {
@@ -355,6 +359,7 @@ func TestScanResources_EmitsKnowledgePartialFinding(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	resources := append(syntheticResources(3), flakyPrimitiveResource())
 
@@ -403,6 +408,7 @@ func TestScanResources_PartialAndTruncationCoexist(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	resources := append(syntheticResources(defaultLLMMaxPromptResources+2), flakyPrimitiveResource())
 
@@ -436,6 +442,7 @@ func TestScanResources_KnowledgeAuthErrorAborts(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	findings, err := a.ScanResources(context.Background(), syntheticResources(2))
 	if err != nil {

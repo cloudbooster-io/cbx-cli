@@ -3,17 +3,15 @@ package audit
 import (
 	"strings"
 	"testing"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestWriteAccountPosture_RendersRootCredentialCounters asserts the
 // root-account credential facts derived from iam:GetAccountSummary land in
 // the posture render as bare booleans — true for a present root access key,
 // false for disabled root MFA — mirroring the IAM password-policy line. The
-// firing/severity decision lives in the grounded-prompt rule
-// (TestBuildGroundedPrompt_HasRootCredentialRule below); here we only prove
-// the data reaches the prompt with the exact `> 0` reading.
+// firing/severity decision lives in the API-distributed rule pack (its
+// content is exercised by the e2e_staging tier, not unit tests); here we
+// only prove the data reaches the prompt with the exact `> 0` reading.
 func TestWriteAccountPosture_RendersRootCredentialCounters(t *testing.T) {
 	posture := &AccountPosture{
 		IAMSummary: map[string]int32{
@@ -82,26 +80,6 @@ func TestWriteAccountPosture_OmitsRootCredentialsWhenCounterAbsent(t *testing.T)
 	} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("posture render leaked %q for an account whose summary lacked the counter — absent must mean unknown, not compliant:\n%s", unwanted, out)
-		}
-	}
-}
-
-// TestBuildGroundedPrompt_HasRootCredentialRule guards the load-bearing
-// firing bullet: without it the root-credential facts render into the
-// posture block but never become findings (the inline render is data-only,
-// exactly as for the IAM password policy / GuardDuty / Config facts). It
-// also pins the CRITICAL/HIGH severity split a rebase against the parallel
-// IAM rule-family branches could otherwise drop.
-func TestBuildGroundedPrompt_HasRootCredentialRule(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"Root account access keys present",
-		"Root account MFA enabled",
-		"FSBP IAM.4",
-		"FSBP IAM.9",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing root-credential rule text %q", want)
 		}
 	}
 }

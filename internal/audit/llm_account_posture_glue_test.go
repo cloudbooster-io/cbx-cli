@@ -3,8 +3,6 @@ package audit
 import (
 	"strings"
 	"testing"
-
-	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
 
 // TestWriteAccountPosture_RendersGlueCatalogPolicy asserts the Glue
@@ -58,29 +56,5 @@ func TestWriteAccountPosture_OmitsGlueWhenNoPolicies(t *testing.T) {
 	writeAccountPosture(&sb, posture)
 	if strings.Contains(sb.String(), "Glue Data Catalog resource policy") {
 		t.Errorf("Glue block rendered for an account with no catalog policies:\n%s", sb.String())
-	}
-}
-
-// TestBuildGroundedPrompt_HasGlueAndAthenaRules guards the baseline
-// rule text so a rebase against the other rule-family branches can't
-// silently drop the Athena workgroup (enforce/encryption) or Glue
-// Data Catalog wildcard-principal guidance from rule #1.
-func TestBuildGroundedPrompt_HasGlueAndAthenaRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeCloudFormation, nil, nil, nil, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"AWS::Athena::WorkGroup",
-		"EnforceWorkGroupConfiguration",
-		"EncryptionConfiguration",
-		// The `primary`-workgroup carve-out must key on the describer
-		// flag (computed deterministically in Go), not on the literal
-		// name — otherwise the LLM is left re-deciding "is this the
-		// default" and the false positive returns.
-		"cb_describer_is_default_workgroup",
-		"Glue Data Catalog exposure",
-		"grants_wildcard_principal=true",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing rule text %q", want)
-		}
 	}
 }

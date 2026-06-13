@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle/rulesbundletest"
 )
 
 func TestScanResources_BuildsAWSModePrompt_NoSourceFiles(t *testing.T) {
@@ -14,6 +15,7 @@ func TestScanResources_BuildsAWSModePrompt_NoSourceFiles(t *testing.T) {
 	a := newTestAnalyzer(stream)
 	a.iacType = IaCTypeCloudFormation
 	a.cbKnowledge = true
+	a.rules = rulesbundletest.Pack(t)
 
 	resources := []DiscoveredResource{
 		{
@@ -83,7 +85,7 @@ func TestScanResources_GroundedPathRunsPostProcessing(t *testing.T) {
 		response: `{"findings":[{"rule_id":"LLM-CB-001","title":"empty PAB","severity":"high","resource":"aws://us-east-1/AWS::S3::Bucket/x","service":"S3","remediation":"Enable PAB"}]}`,
 		cost:     0.05,
 	}
-	a := newGroundedTestAnalyzer(stream, 2.0)
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
 	a.iacType = IaCTypeCloudFormation
 
 	findings, err := a.ScanResources(context.Background(), []DiscoveredResource{

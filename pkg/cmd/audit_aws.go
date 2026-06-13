@@ -199,9 +199,10 @@ each finding to that grounding. Claude Code must be on PATH. Use
 			ctx := context.Background()
 
 			// Rulepack preflight (P1): resolve the audit rule pack BEFORE
-			// any AWS spend. A registry outage degrades down the resolve
-			// ladder (cache → embedded) without failing the run — the
-			// abort cases are an unsatisfiable --rulepack-version pin, a
+			// any AWS spend. The pack is API-distributed with no embedded
+			// copy — a registry outage degrades onto the on-disk cache
+			// without failing the run, but a cold cache offline aborts
+			// here, as do an unsatisfiable --rulepack-version pin, a
 			// broken CBX_AUDIT_RULES_FILE override, and a pack requiring a
 			// newer engine ("run `cbx upgrade`"), all conditions where
 			// burning discovery calls first would be waste. The result is

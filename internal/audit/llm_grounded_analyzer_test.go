@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle/rulesbundletest"
 )
 
 // fakeGroundedStreamer is a test double that satisfies both llmStreamer and
@@ -27,7 +27,7 @@ func (f *fakeGroundedStreamer) Stream(_ context.Context, _ string, onToken func(
 func (f *fakeGroundedStreamer) GroundingTrail() []GroundingEvent { return f.trail }
 func (f *fakeGroundedStreamer) TotalCostUSD() float64            { return f.cost }
 
-func newGroundedTestAnalyzer(s llmStreamer, maxCost float64) *llmAnalyzer {
+func newGroundedTestAnalyzer(tb testing.TB, s llmStreamer, maxCost float64) *llmAnalyzer {
 	return &llmAnalyzer{
 		provider:          ClaudeCodeProvider,
 		streamer:          s,
@@ -36,7 +36,11 @@ func newGroundedTestAnalyzer(s llmStreamer, maxCost float64) *llmAnalyzer {
 		iacType:           IaCTypeTerraform,
 		providerForRuleID: "claudecode",
 		cbKnowledge:       true,
-		maxCostUSD:        maxCost,
+		// buildPrompt panics on a grounded analyzer without a pack (the
+		// pack is API-distributed, no embedded floor) — direct test
+		// constructions inject the synthetic one.
+		rules:      rulesbundletest.Pack(tb),
+		maxCostUSD: maxCost,
 	}
 }
 
@@ -51,7 +55,7 @@ func TestLLMAnalyzer_Grounded_ParsesCBSourceField(t *testing.T) {
 		response: `{"findings":[{"rule_id":"LLM-CB-001","title":"S3 public ACL","severity":"high","resource":"aws_s3_bucket.x","service":"S3","remediation":"Disable","cb_source":{"tool":"aws_lookup_primitive","key":"aws:s3/bucket@v1","snippet":"Private bucket; CloudFront OAC."}}]}`,
 		cost:     0.10,
 	}
-	a := newGroundedTestAnalyzer(stream, 2.0)
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
 
 	findings, err := a.ScanSource(context.Background(), dir)
 	if err != nil {
@@ -81,7 +85,7 @@ func TestLLMAnalyzer_Grounded_SoftWarnsUngrounded(t *testing.T) {
 		response: `{"findings":[{"rule_id":"LLM-CB-002","title":"Generic","severity":"warning","resource":"aws_s3_bucket.x","service":"S3"}]}`,
 		cost:     0.10,
 	}
-	a := newGroundedTestAnalyzer(stream, 2.0)
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
 
 	findings, err := a.ScanSource(context.Background(), dir)
 	if err != nil {
@@ -107,7 +111,7 @@ func TestLLMAnalyzer_Grounded_CostCapWarning(t *testing.T) {
 		response: `{"findings":[{"rule_id":"LLM-CB-003","title":"Grounded","severity":"high","resource":"r","cb_source":{"tool":"aws_lookup_primitive","key":"aws:s3/bucket@v1"}}]}`,
 		cost:     5.0,
 	}
-	a := newGroundedTestAnalyzer(stream, 2.0)
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
 
 	findings, err := a.ScanSource(context.Background(), dir)
 	if err != nil {
@@ -145,7 +149,7 @@ func TestLLMAnalyzer_Grounded_BackfillsSnippetFromTrail(t *testing.T) {
 			},
 		},
 	}
-	a := newGroundedTestAnalyzer(stream, 2.0)
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
 
 	findings, err := a.ScanSource(context.Background(), dir)
 	if err != nil {
@@ -175,7 +179,7 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 			{Workload: "static-site", Missing: true},
 		},
 	}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle, nil, rulesbundle.Embedded())
+	prompt := buildGroundedPrompt(IaCTypeTerraform, files, resources, bundle, nil, rulesbundletest.Pack(t))
 	for _, want := range []string{
 		"CB KNOWLEDGE BUNDLE",
 		"aws_lookup_primitive",
@@ -187,50 +191,6 @@ func TestBuildGroundedPrompt_ListsWorkloadsAndPrimitives(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
-		}
-	}
-}
-
-// TestBuildGroundedPrompt_S3HygieneBaselineRules is a WIRING CHECK only: it
-// confirms the S3-hygiene baseline rules (and their describer-field hooks +
-// the intent-scoping FP guard) are present in the prompt text. It does NOT
-// validate that the findings actually fire or that the FP control bucket
-// stays clean — that is LLM behavior, validated by the deferred live e2e run.
-func TestBuildGroundedPrompt_S3HygieneBaselineRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"cb_describer_versioning_enabled",
-		"cb_describer_sse_is_kms",
-		"cb_describer_mfa_delete_enabled",
-		"cb_describer_lifecycle_present",
-		"cb_describer_access_logging_enabled",
-		"cb_describer_access_logging_target_bucket",
-		"cb_describer_object_lock_enabled",
-		"INTENT-SCOPED", // the FP guard must be stated, not implied
-		"never describe the bucket as unencrypted",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing S3-hygiene wiring %q", want)
-		}
-	}
-}
-
-// TestBuildGroundedPrompt_RDSBackupRetentionBaselineRule is a WIRING CHECK: it
-// confirms the replica-aware RDS backup-retention bullet (and its two carve-out
-// describer hooks) is present in the prompt text. Whether the finding fires is
-// LLM behavior, validated by the deferred live run.
-func TestBuildGroundedPrompt_RDSBackupRetentionBaselineRule(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"cb_describer_backup_retention_days <= 1",
-		"cb_describer_is_read_replica",
-		"cb_describer_is_cluster_member",
-		"read replicas legitimately run retention 0", // the replica carve-out rationale
-		"Multi-AZ DB cluster members",                // the cluster-member carve-out covers Multi-AZ DB clusters
-		"UNKNOWN and do NOT flag",                    // absence polarity must be explicit
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing RDS backup-retention wiring %q", want)
 		}
 	}
 }
@@ -254,7 +214,7 @@ func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
 			"cb_describer_backup_retention_days": float64(0),
 		},
 	}}
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil, rulesbundle.Embedded())
+	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, resources, &GroundingBundle{}, nil, rulesbundletest.Pack(t))
 	for _, want := range []string{
 		`"cb_describer_is_read_replica": false`,
 		`"cb_describer_is_cluster_member": false`,
@@ -262,54 +222,6 @@ func TestBuildGroundedPrompt_RendersFalseAndZeroDescriberFields(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("resource table dropped a zero/false describer field — prompt missing %q", want)
-		}
-	}
-}
-
-// The §4.2 structural HIGH rules each pair a deterministic floor with a prompt
-// detection bullet: applySeverityFloor only RAISES findings the LLM emits, so
-// without the bullet the rule is a silent no-op. Guard that the key phrases the
-// floor's text gates expect — and the cb_describer_* keys / raw fields the
-// bullets reference — survive in the grounded prompt.
-func TestBuildGroundedPrompt_MentionsStructural42Rules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"cb_describer_storage_encrypted",
-		"unencrypted at rest",
-		"MetadataOptions.HttpTokens",
-		"IMDSv1",
-		"cb_describer_assume_role_policy_raw",
-		"ExternalId",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing §4.2 detection phrase %q (the paired floor would be a silent no-op)", want)
-		}
-	}
-}
-
-// TestBuildGroundedPrompt_CloudFrontSecurityRules is a WIRING CHECK: it confirms
-// the four CloudFront security bullets (default-cert/weak-TLS, no-WAF, access-
-// logging-disabled, S3-global-endpoint) and their explicit wire severities are
-// present in the prompt text. These are LLM-emitted findings with NO severity
-// floor, so naming the severity in the bullet is the only thing that pins the
-// emission — a dropped phrase silently weakens the rule. Whether the findings
-// fire is LLM behavior, validated by the deferred live run.
-func TestBuildGroundedPrompt_CloudFrontSecurityRules(t *testing.T) {
-	prompt := buildGroundedPrompt(IaCTypeTerraform, nil, nil, &GroundingBundle{}, nil, rulesbundle.Embedded())
-	for _, want := range []string{
-		"AWS::CloudFront::Distribution`) — evaluate the raw `DistributionConfig`",
-		"ViewerCertificate.CloudFrontDefaultCertificate",
-		"MinimumProtocolVersion=TLSv1.2_2021",
-		"No WAF web ACL",
-		"do NOT rate it higher than `info`", // no-WAF must stay info, not inflated
-		"`WebACLId` is empty or absent",
-		"Access logging disabled",
-		"`DistributionConfig.Logging` is absent",
-		"S3 global-endpoint form `<bucket>.s3.amazonaws.com`",
-		"307 redirects",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("grounded prompt missing CloudFront wiring %q", want)
 		}
 	}
 }

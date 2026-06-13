@@ -3,9 +3,15 @@ package audit
 import (
 	"testing"
 
-	"github.com/cloudbooster-io/cbx-cli/internal/audit/parsers"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 )
+
+// NOTE: the served-pack ⊆ engine-manifest check (every requires_fields
+// entry names a field some describer/lister actually emits) used to
+// live here as TestEmbeddedPackRequiresFieldsKnown. With the pack
+// API-distributed there is no in-repo pack to check against, so that
+// assertion moved to the e2e_staging tier, which validates the pack
+// the registry actually serves.
 
 // TestRulePackWireContractMatchesEngine ties the rulepack's declared
 // wire contract to the engine's actual severity vocabulary.
@@ -30,23 +36,11 @@ func TestRulePackWireContractMatchesEngine(t *testing.T) {
 		}
 	}
 
-	if got := rulesbundle.Embedded().Manifest.WireContract.ResponseSchema; got != rulesbundle.ResponseSchemaVersion {
-		t.Errorf("embedded pack response_schema %d != engine version %d", got, rulesbundle.ResponseSchemaVersion)
-	}
-}
-
-// TestEmbeddedPackRequiresFieldsKnown: every cb_describer_* field the
-// embedded rulepack's rules declare in requires_fields must exist in
-// the engine's generated describer-field manifest. The embedded pack
-// ships WITH the engine, so it can never legitimately be AHEAD of it —
-// a violation here means either rule metadata names a field wrong or a
-// describer was removed without a rulepack update.
-func TestEmbeddedPackRequiresFieldsKnown(t *testing.T) {
-	for _, r := range rulesbundle.Embedded().Rules {
-		for _, f := range r.RequiresFields {
-			if !parsers.DescriberFieldKnown(f) {
-				t.Errorf("rule %s requires_fields names %q, which no describer/lister/cross-ref emits", r.ID, f)
-			}
-		}
+	// ResponseSchemaVersion is what Validate demands of every pack the
+	// ladder accepts; 1 is the only response shape this engine's finding
+	// parser implements. Bumping the constant without a parser change
+	// would let packs through that the engine cannot honour.
+	if rulesbundle.ResponseSchemaVersion != 1 {
+		t.Errorf("rulesbundle.ResponseSchemaVersion = %d — the engine only implements response schema 1; a bump needs a matching parser change", rulesbundle.ResponseSchemaVersion)
 	}
 }

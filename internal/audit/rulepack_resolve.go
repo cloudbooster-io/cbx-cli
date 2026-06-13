@@ -22,8 +22,12 @@ import (
 // before any AWS spend); the result is memoized and the LLM analyzer
 // consumes the memo. An analyzer constructed without that preflight
 // (library callers, unit tests) resolves WITHOUT the network rung —
-// override file → on-disk cache → embedded — so no library or test
-// path ever dials out implicitly. This split is deliberate: the only
+// override file → on-disk cache — so no library or test path ever
+// dials out implicitly. The pack is API-distributed with no embedded
+// floor: a no-preflight construction with a cold cache and no override
+// is abort-class (rulesbundle.ErrNoRulePack) — library callers run
+// ResolveRulePack themselves, set CBX_AUDIT_RULES_FILE, or rely on a
+// previously populated cache. This split is deliberate: the only
 // component allowed to spend network on rules is the CLI preflight,
 // where a failure can still abort before discovery costs anything.
 var (
@@ -46,7 +50,7 @@ func SetEngineVersion(v string) {
 
 // ResolveRulePack resolves the audit rule pack through the full ladder
 // (CBX_AUDIT_RULES_FILE override → registry fetch with ETag
-// revalidation → on-disk cache → embedded) and memoizes the result for
+// revalidation → on-disk cache) and memoizes the result for
 // the rest of the process. pin > 0 pins an exact pack_version (the
 // --rulepack-version flag); pin 0 defers to CBX_RULEPACK_VERSION, then
 // "latest". Errors are abort-class only (see rulesbundle.Resolve);
@@ -137,8 +141,8 @@ func resetRulePackForTests() {
 //     non-firing visible.
 //
 // No-op for analyzers constructed without a resolved pack (zero-value
-// provenance): unit tests and direct library constructions ground on
-// the embedded pack implicitly and have no ladder state to report.
+// provenance): direct test constructions inject a pack explicitly and
+// have no ladder state to report.
 func (l *llmAnalyzer) appendRulesProvenanceFindings(findings []Finding) []Finding {
 	prov := l.rulesProv
 	if prov.Source == "" {
@@ -199,9 +203,8 @@ func (l *llmAnalyzer) appendRulesProvenanceFindings(findings []Finding) []Findin
 // rulesAheadOfEngine lists pack rules whose requires_fields name keys
 // outside the generated describer-field manifest, one
 // "<rule-id>: <field>[, <field>...]" entry per affected rule. Empty
-// when the pack is nil or fully within the engine's emit set (always
-// true for the embedded pack — pinned by
-// TestEmbeddedPackRequiresFieldsKnown).
+// when the pack is nil or fully within the engine's emit set (the
+// e2e_staging tier pins this for the pack the registry serves).
 func rulesAheadOfEngine(pack *rulesbundle.RulePack) []string {
 	if pack == nil {
 		return nil
