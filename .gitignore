@@ -1,0 +1,46 @@
+# Build output
+/bin/
+/dist/
+/cbx
+/cbx.exe
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Vendored deps (we don't vendor)
+/vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+.envrc
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local tooling
+.direnv/
+.envrc.local
+
+# Audit report scratch — `cbx audit` writes <basename>_audit_report.{md,html,svg,json}
+# (plus .replay.* and .state.json variants) to CWD; these are command outputs,
+# not source. Keep nested ones (testdata, fixtures).
+/*_audit_report.*
+
+# Diagram / blueprint scratch — iterative screenshots from local UX work.
+/bp-*.png
+/real-diagram*.png
+/REPO_TOUR.html
+
+# Browser-automation session logs (playwright-mcp).
+/.playwright-mcp/
+
+# Editor / scratch backups.
+*.bak

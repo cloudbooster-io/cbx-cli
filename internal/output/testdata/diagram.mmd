@@ -1,0 +1,14 @@
+flowchart LR
+    s3[S3]
+    api_gateway[API Gateway]
+    lambda[Lambda]
+    dynamodb[DynamoDB]
+    users[Users]
+    users --> s3
+    users --> api_gateway
+    api_gateway --> lambda
+    lambda --> dynamodb
+    click s3 href "#s3"
+    click api_gateway href "#api-gateway"
+    click lambda href "#lambda"
+    click dynamodb href "#dynamodb"

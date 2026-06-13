@@ -1,0 +1,31 @@
+cbx-cli
+Copyright 2026 Cloudbooster.io
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It bundles the following third-party components:
+
+- Mermaid (https://github.com/mermaid-js/mermaid) — MIT License.
+  A minified runtime is embedded as internal/assets/mermaid.min.js.gz and
+  inlined into generated HTML diagram previews. Mermaid is distributed under
+  the MIT License: https://github.com/mermaid-js/mermaid/blob/develop/LICENSE
+
+- AWS Architecture Icons (https://aws.amazon.com/architecture/icons/) —
+  used for visualization in accordance with AWS's icon terms (attribution
+  required). A curated subset of SVGs is embedded under
+  internal/assets/aws-icons/.
+
+- HCL (https://github.com/hashicorp/hcl) — Mozilla Public License 2.0.
+  Linked as the Go module github.com/hashicorp/hcl/v2 to parse Terraform
+  HCL source in internal/audit/parsers/. HCL is distributed under the
+  MPL-2.0: https://github.com/hashicorp/hcl/blob/main/LICENSE
+
+- go-cty (https://github.com/zclconf/go-cty) — MIT License.
+  Linked as the Go module github.com/zclconf/go-cty (HCL's value/type
+  system, used alongside it in internal/audit/parsers/). go-cty is
+  distributed under the MIT License:
+  https://github.com/zclconf/go-cty/blob/main/LICENSE
+
+Go module dependencies are listed in go.mod / go.sum. Their licenses
+(Apache-2.0, MIT, BSD, MPL-2.0) are permissive and compatible with
+Apache-2.0 distribution.

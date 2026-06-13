@@ -1,0 +1,46 @@
+{
+  "version": 3,
+  "deployment": {
+    "resources": [
+      {
+        "urn": "urn:pulumi:dev::static-site::aws:s3/bucket:Bucket::my-bucket",
+        "type": "aws:s3/bucket:Bucket",
+        "inputs": {
+          "bucket": "my-static-site-bucket",
+          "acl": "public-read"
+        }
+      },
+      {
+        "urn": "urn:pulumi:dev::static-site::aws:ec2/securityGroup:SecurityGroup::web-sg",
+        "type": "aws:ec2/securityGroup:SecurityGroup",
+        "inputs": {
+          "name": "web-sg",
+          "ingress": [
+            {
+              "protocol": "tcp",
+              "fromPort": 80,
+              "toPort": 80,
+              "cidrBlocks": ["0.0.0.0/0"]
+            }
+          ]
+        }
+      },
+      {
+        "urn": "urn:pulumi:dev::static-site::aws:iam/role:Role::lambda-role",
+        "type": "aws:iam/role:Role",
+        "inputs": {
+          "name": "lambda-role"
+        }
+      },
+      {
+        "urn": "urn:pulumi:dev::static-site::aws:lambda/function:Function::api-handler",
+        "type": "aws:lambda/function:Function",
+        "inputs": {
+          "name": "api-handler",
+          "runtime": "nodejs20.x",
+          "handler": "index.handler"
+        }
+      }
+    ]
+  }
+}

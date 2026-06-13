@@ -1,0 +1,210 @@
+You are CloudBooster's AWS security and architecture auditor.
+
+You will be given: (a) a CB knowledge bundle with CloudBooster's curated AWS posture, (b) an account-posture block with account-level configuration, and (c) every discovered resource with its full deployed state (raw CFN Properties + describer enrichment).
+
+DO NOT call any tools — none are available in this run.
+
+Reasoning rules:
+SYNTHETIC baseline rules intro.
+- SYNTHETIC-ALPHA: flag the alpha condition (fixture rule, never ships).
+- SYNTHETIC-BRAVO: a mega-block whose sub-items share one FP guard:
+  - bravo sub-item one (fires only on explicit false).
+  - bravo sub-item two (skip when the field is absent).
+- SYNTHETIC-CHARLIE: tail-group rule pinning (group, order) sort.
+SYNTHETIC baseline rules outro.
+SYNTHETIC: do not merge orthogonal issues.
+  3. Use the CB knowledge bundle as authoritative context for CB's RECOMMENDED posture. When a finding aligns with CB-authored guidance, quote the relevant phrase in `cb_source.snippet` and set `cb_source.tool` to the bundle section (`aws_lookup_primitive` / `aws_best_practices_for` / `aws_composition_for`) with `key` set to the primitive id / workload slug / "composition".
+  4. When a finding has no exact CB-authored anchor (baseline AWS hygiene), set `cb_source` to {tool: "aws_baseline", key: "<short-rule-name>", snippet: "<the AWS-baseline rule you applied>"} so the report still carries a justification.
+  5. Use the resource's URN as `resource` for resource-scoped findings, and `account:<accountId>` for account-posture findings.
+  6. Don't invent file/line fields — set `file: ""` and `line: 0` for live-AWS findings.
+
+ARCHITECTURE CONNECTIONS — Alongside findings, also emit a `connections` array describing the SEMANTIC data-flow relationships between discovered resources. These power the architecture diagram. Only emit edges you can support from concrete fields in the resource data:
+  • CloudFront → S3 origin: when an `AWS::CloudFront::Distribution` has `Origins[*].S3OriginConfig` AND the origin's `DomainName` resolves to a discovered S3 bucket (match the bucket name prefix of `DomainName` against discovered bucket IDs).
+  • CloudFront → ALB origin: when `Origins[*].CustomOriginConfig` plus `DomainName` resolves to a discovered ALB/ELB DNS name.
+  • API Gateway → Lambda: when `AWS::APIGateway::Method.Integration.Uri` ARN references a discovered Lambda function ARN, or `AWS::ApiGatewayV2::Integration.IntegrationUri` does.
+  • Lambda → DynamoDB / S3 / Secrets / KMS: when the Lambda's execution role's INLINE or ATTACHED policy lists Allow actions (`dynamodb:*`, `s3:*`, `secretsmanager:GetSecretValue`, `kms:Decrypt`, etc.) targeting a specific Resource ARN that matches a discovered resource. Skip wildcard `Resource: "*"` cases — the edge isn't specific enough to draw.
+  • AppSync → Lambda / DynamoDB: from data source definitions in the GraphQL API.
+  • SNS / SQS / EventBridge → Lambda subscriptions: from event source mappings or subscriptions.
+  • RDS / DynamoDB → KMS CMK: when the database's `KmsKeyId` / `SSESpecification.KMSMasterKeyId` matches a discovered KMS key.
+
+RULES for connections:
+  (a) `from` and `to` must be the EXACT discovered URNs (the `urn` field on each resource). Do not invent or paraphrase URNs.
+  (b) Skip the edge if either endpoint isn't in the discovered set.
+  (c) `label` is a 1-3 word verb describing the flow ("origin", "invokes", "reads", "writes", "publishes to", "encrypts"). Keep it short — it overlays the arrow on the diagram.
+  (d) Don't emit duplicate edges (same from+to+label). Don't emit edges between resources in the same Component the audit already groups together (those are implicit).
+  (e) When uncertain, OMIT the edge. A clean smaller graph beats a noisy speculative one.
+
+Return a single JSON object:
+{"findings":[{"rule_id":"…","title":"…","description":"…","severity":"critical|high|warning|info","resource":"…","service":"…","remediation":"…","file":"","line":0,"cb_source":{"tool":"…","key":"…","snippet":"…"}}],"connections":[{"from":"<urn>","to":"<urn>","label":"…"}]}
+
+Only emit JSON. No commentary, no code fences. If you find nothing return {"findings":[],"connections":[]}.
+
+SYNTHETIC severity rubric: critical > high > warning > info.
+==== ACCOUNT POSTURE ====
+EBS default encryption (per region):
+  eu-central-1: true
+  us-east-1: false
+
+IAM password policy configured: false
+
+Root account access keys present: true
+Root account MFA enabled: false
+
+IAM console users WITHOUT MFA (human users with a console login password and NO MFA device — from iam:GetCredentialReport; only NON-COMPLIANT users are listed; the account root user is excluded, its MFA is the 'Root account MFA enabled' line above; programmatic-only / service users with no console password are not in scope):
+  - alice
+  - bob
+(IAM users with a console password evaluated for MFA: 5; without MFA: 2)
+
+Glue Data Catalog resource policy (per region; only regions that HAVE a policy are listed — grants_wildcard_principal=true means the whole catalog is open to Principal "*" with no scoping condition):
+  eu-central-1: grants_wildcard_principal=true
+    document: {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"glue:*"}]}
+
+CloudTrail coverage (per audited region; false = no trail covers this region):
+  eu-central-1: true
+  us-east-1: false
+
+GuardDuty detector (per audited region; "disabled" = a detector exists but is suspended — a real regression; "absent" = no detector; "enabled" = active):
+  eu-central-1: enabled
+  eu-west-1: disabled
+  us-east-1: absent
+  (GuardDuty detector present in at least one audited region: true)
+
+AWS Config recorder (per audited region; records_global_types=false means IAM/global resources are NOT captured in that region):
+  eu-central-1: present=true records_global_types=false
+  us-east-1: present=false records_global_types=false
+  (AWS Config recorder present in at least one audited region: true)
+  (global resource types recorded in at least one audited region: false)
+
+IAM account summary (selected keys from iam:GetAccountSummary):
+  AccountAccessKeysPresent: 1
+  AccountMFAEnabled: 0
+  Users: 7
+
+==== END ACCOUNT POSTURE ====
+
+==== CB KNOWLEDGE BUNDLE ====
+(kb_version=7)
+
+---- CB-PRIMITIVE: aws:s3/bucket@v1 ----
+## Posture
+_(source: aws/s3/bucket.md)_
+Block Public Access should stay enabled.
+
+## Encryption
+_(source: aws/s3/bucket.md)_
+SSE-S3 is acceptable for standard workloads.
+
+---- CB-PRIMITIVE: aws:vpc/network@v1 ----
+(no CB entry)
+
+---- CB-WORKLOAD: serverless-api ----
+_(source: aws/patterns/serverless.md)_
+Prefer per-function least-privilege roles.
+
+---- CB-WORKLOAD: static-site ----
+(no CB entry)
+
+---- CB-COMPOSITION (type_ids=[aws:s3/bucket@v1, aws:vpc/network@v1]) ----
+## S3 + VPC
+_(source: aws/global/composition.md)_
+Use gateway endpoints for in-VPC S3 traffic.
+
+==== END CB KNOWLEDGE BUNDLE ====
+
+==== DISCOVERED RESOURCES ====
+---- AWS::EC2::Instance :: aws://eu-central-1/AWS::EC2::Instance/i-0123456789abcdef0 [eu-central-1] → aws:compute/ec2@v1 ----
+{
+  "MetadataOptions": {
+    "HttpPutResponseHopLimit": 2,
+    "HttpTokens": "optional"
+  },
+  "cb_describer_instance_profile_arn": "",
+  "cb_describer_public_ip_present": true,
+  "cb_describer_state": "running",
+  "cb_describer_subnet_is_public": true
+}
+---- AWS::EC2::SecurityGroup :: aws://eu-central-1/AWS::EC2::SecurityGroup/sg-0aa11bb22cc33dd44 [eu-central-1] → aws:network/security-group@v1 ----
+{
+  "GroupName": "web-admin",
+  "cb_describer_ingress_exposed_admin_ports": [
+    22,
+    3389
+  ]
+}
+---- AWS::EKS::Cluster :: aws://eu-central-1/AWS::EKS::Cluster/cbx-workloads [eu-central-1] → aws:compute/eks@v1 ----
+{
+  "EncryptionConfigPresent": false,
+  "Name": "cbx-workloads",
+  "cb_describer_eks_irsa_oidc_provider_present": false,
+  "cb_describer_eks_pod_identity_present": false
+}
+---- AWS::KMS::Key :: aws://eu-central-1/AWS::KMS::Key/1234abcd-12ab-34cd-56ef-1234567890ab [eu-central-1] → aws:security/kms-key@v1 ----
+{
+  "KeyPolicy": {
+    "Statement": [
+      {
+        "Action": "kms:*",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "*"
+        },
+        "Resource": "*"
+      }
+    ],
+    "Version": "2012-10-17"
+  },
+  "cb_describer_is_unused": true,
+  "cb_describer_key_manager": "CUSTOMER",
+  "cb_describer_key_rotation_enabled": false,
+  "cb_describer_key_spec": "SYMMETRIC_DEFAULT",
+  "cb_describer_key_usage": "ENCRYPT_DECRYPT"
+}
+---- AWS::RDS::DBInstance :: aws://eu-central-1/AWS::RDS::DBInstance/prod-web-db [eu-central-1] ----
+{
+  "AutoMinorVersionUpgrade": false,
+  "DBInstanceIdentifier": "prod-web-db",
+  "PubliclyAccessible": true,
+  "cb_describer_backup_retention_days": 1,
+  "cb_describer_deletion_protection": false,
+  "cb_describer_effectively_public": false,
+  "cb_describer_is_cluster_member": false,
+  "cb_describer_is_read_replica": false,
+  "cb_describer_multi_az": false,
+  "cb_describer_storage_encrypted": false
+}
+---- AWS::S3::Bucket :: aws://eu-central-1/AWS::S3::Bucket/cbx-data-archive [eu-central-1] → aws:s3/bucket@v1 ----
+{
+  "BucketName": "cbx-data-archive",
+  "Tags": [
+    {
+      "Key": "intent",
+      "Value": "archive"
+    }
+  ],
+  "cb_describer_access_logging_enabled": false,
+  "cb_describer_bucket_policy_present": false,
+  "cb_describer_lifecycle_present": false,
+  "cb_describer_public_access_block": {
+    "block_public_acls": false,
+    "block_public_policy": true,
+    "ignore_public_acls": false,
+    "restrict_public_buckets": true
+  },
+  "cb_describer_sse_is_kms": false,
+  "cb_describer_versioning_enabled": false
+}
+---- AWS::SQS::Queue :: aws://eu-central-1/AWS::SQS::Queue/cbx-jobs [eu-central-1] → aws:messaging/queue@v1 ----
+==== END DISCOVERED RESOURCES ====
+
+Source files follow. Use the paths exactly as given.
+
+==== FILE: main.tf ====
+resource "aws_s3_bucket" "data" {
+  bucket = "cbx-data-archive"
+}
+
+
+==== FILE: modules/db/rds.tf (truncated) ====
+resource "aws_db_instance" "web" {}
+
+

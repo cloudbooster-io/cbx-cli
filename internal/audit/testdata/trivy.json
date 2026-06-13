@@ -1,0 +1,32 @@
+{
+  "SchemaVersion": 2,
+  "Results": [
+    {
+      "Target": "aws_s3_bucket.my_bucket.tf.json",
+      "Class": "config",
+      "Type": "terraform",
+      "Misconfigurations": [
+        {
+          "Type": "Terraform Security Check",
+          "ID": "AVD-AWS-0089",
+          "Title": "S3 bucket should have versioning enabled",
+          "Description": "S3 bucket does not have versioning enabled",
+          "Message": "Resource 'aws_s3_bucket.my_bucket' does not have versioning enabled",
+          "Resolution": "Enable versioning for S3 buckets",
+          "Severity": "MEDIUM",
+          "PrimaryURL": "https://avd.aquasec.com/misconfig/aws/s3/avd-aws-0089/"
+        },
+        {
+          "Type": "Terraform Security Check",
+          "ID": "AVD-AWS-0132",
+          "Title": "S3 bucket encryption should use Customer Managed Keys",
+          "Description": "S3 bucket encryption does not use a customer-managed key",
+          "Message": "Resource 'aws_s3_bucket.my_bucket' does not use a customer-managed key",
+          "Resolution": "Enable encryption using a customer-managed key",
+          "Severity": "HIGH",
+          "PrimaryURL": "https://avd.aquasec.com/misconfig/aws/s3/avd-aws-0132/"
+        }
+      ]
+    }
+  ]
+}

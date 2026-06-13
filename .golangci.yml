@@ -1,0 +1,36 @@
+version: "2"
+
+# Default linter set only (errcheck, govet, ineffassign, staticcheck, unused).
+# core/api/v1/client.gen.go is skipped by the default generated-file
+# exclusion (standard "Code generated ... DO NOT EDIT." header).
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        # Terminal / strings.Builder writes: the error is not actionable.
+        # File-handle writes still go through checked APIs (os.WriteFile,
+        # (*os.File).Close stays checked).
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # Read-path HTTP response bodies (`defer resp.Body.Close()`):
+        # nothing to do with the error. Write-path closes stay checked.
+        - (io.ReadCloser).Close
+  exclusions:
+    rules:
+      # Test files: unchecked Setenv/Close return values are noise.
+      - path: _test\.go
+        linters:
+          - errcheck
+      # QF1012 (WriteString(Sprintf) → Fprintf) is a style-only quickfix;
+      # converting ~45 render-path sites is churn without a correctness
+      # payoff. Burn down separately if desired.
+      - text: "QF1012"
+        linters:
+          - staticcheck
+
+# Report everything — the default 3-per-same-issue cap hides real hits
+# and makes local runs disagree with CI.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

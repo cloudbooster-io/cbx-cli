@@ -1,0 +1,313 @@
+openapi: 3.0.3
+info:
+  title: CloudBooster API
+  version: 1.0.0
+servers:
+  - url: https://api.cloudbooster.io
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+              description: Remaining requests in the current window
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying
+        '500':
+          description: Internal server error
+  /v1/me:
+    get:
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+  /v1/orgs/{id}/projects:
+    get:
+      operationId: getOrgProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+  /v1/environments/{environment_id}/cost:
+    get:
+      operationId: getEnvironmentCost
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cost summary for the environment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentCostResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Paid tier required
+        '404':
+          description: Environment not found
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+  /v1/environments/{environment_id}/drift:
+    get:
+      operationId: getEnvironmentDrift
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Drift check results for the environment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentDriftResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Paid tier required
+        '404':
+          description: Environment not found
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+  /v1/environments/{environment_id}/logs:
+    get:
+      operationId: getEnvironmentLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: environment_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tail
+          in: query
+          schema:
+            type: boolean
+          description: Return only the trailing portion of the logs
+      responses:
+        '200':
+          description: Logs for the latest deployment run in the environment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentLogsResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Paid tier required
+        '404':
+          description: Environment not found
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+  /v1/auth/cli-exchange:
+    post:
+      operationId: postAuthCLIExchange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CLIExchangeRequest'
+      responses:
+        '200':
+          description: Token exchange result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CLIExchangeResponse'
+        '429':
+          description: Rate limit exceeded
+          headers:
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: Internal server error
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        org:
+          $ref: '#/components/schemas/UserOrg'
+    UserOrg:
+      type: object
+      description: |-
+        is the organisation the presented API key is bound to.
+        Surfaced inline on GET /v1/me so `cbx auth status` can render it
+        without a second call to /v1/me/orgs.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    CLIExchangeRequest:
+      type: object
+      properties:
+        code:
+          type: string
+    CLIExchangeResponse:
+      type: object
+      properties:
+        token:
+          type: string
+    EnvironmentCostResponse:
+      type: object
+      properties:
+        total_cost:
+          type: number
+          format: float
+        unit:
+          type: string
+        start_date:
+          type: string
+        end_date:
+          type: string
+        daily_costs:
+          type: array
+          items:
+            type: object
+        profiles_count:
+          type: integer
+    EnvironmentDriftResponse:
+      type: object
+      properties:
+        environment_id:
+          type: string
+        checks:
+          type: array
+          items:
+            type: object
+    EnvironmentLogsResponse:
+      type: object
+      properties:
+        environment_id:
+          type: string
+        run_id:
+          type: string
+        logs:
+          type: string

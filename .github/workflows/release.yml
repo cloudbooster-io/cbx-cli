@@ -1,0 +1,99 @@
+# Canonical release path — replaced the GitLab `release` + `smoke-brew` jobs
+# when the repo migrated off GitLab CI (2026-06; the GitLab repo is archived).
+#
+# Cross-repo publishing (this repo's Release + cask/scoop manifests in
+# homebrew-tap/scoop-bucket) authenticates via the org-owned GitHub App
+# `cbx-release-bot` (Contents: read/write on exactly those three repos).
+# The workflow mints a fresh 1-hour installation token per run — no PAT,
+# no person-bound credential, no expiry rotation.
+#
+# Required configuration (Settings → Secrets and variables → Actions):
+#   RELEASE_APP_ID           variable (not secret) — the App ID from the
+#                            app's General page.
+#   RELEASE_APP_PRIVATE_KEY  secret — the app's private key (.pem contents).
+#   SENTRY_DSN               secret, optional — telemetry endpoint baked into
+#                            the binary via ldflags; when unset the release
+#                            ships with no telemetry endpoint
+#                            (.goreleaser.yml defaults it).
+#
+# Keyless Cosign signing uses the ambient GitHub OIDC token (id-token: write
+# below) — the equivalent of GitLab's SIGSTORE_ID_TOKEN id_tokens block.
+# cosign and syft ship in the goreleaser image on GitLab; here they are
+# installed as explicit steps.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual runs, two modes:
+  #   dry_run=true (default) — full release rehearsal: mints the App token,
+  #     builds every artifact via `goreleaser --snapshot`, generates SBOMs;
+  #     publishing and signing are skipped, nothing leaves the runner.
+  #   dry_run=false — smoke-brew only, against the already-published cask
+  #     (the GitHub equivalent of GitLab's RUN_SMOKE_BREW=true pipeline).
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Release rehearsal: build all artifacts, publish nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+  id-token: write # keyless Cosign signing via ambient OIDC
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full clone: GoReleaser needs the whole tag history for the
+          # changelog and refuses to release from a shallow checkout.
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: cloudbooster-io
+          repositories: cbx-cli,homebrew-tap,scoop-bucket
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          # Pinned to the same GoReleaser release as the retired GitLab job's
+          # goreleaser/goreleaser:v2.16.0 image. Bump deliberately.
+          version: v2.16.0
+          # Dispatch = dry run: snapshot build, no publish, no signing (keyless
+          # Cosign would write the run's identity to the public Rekor log —
+          # withheld until a real tagged release).
+          args: release --clean ${{ github.event_name == 'workflow_dispatch' && '--snapshot --skip=publish,sign' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      - name: List built artifacts (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        run: ls -la dist/ && cat dist/checksums.txt
+
+  # Post-release verification of the Homebrew cask install path. Runs on a
+  # macOS runner (casks are macOS-only) — GitHub has hosted darwin runners,
+  # unlike the GitLab setup where this job sat stuck waiting for a `darwin`
+  # tag. `skipped` is accepted so a workflow_dispatch run (no release job)
+  # still executes the smoke test, mirroring GitLab's `optional: true` need.
+  smoke-brew:
+    runs-on: macos-latest
+    needs: release
+    # Skipped on dry runs: there is no published cask to install yet.
+    if: ${{ !cancelled() && (needs.release.result == 'success' || needs.release.result == 'skipped') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    # TODO(N9): drop continue-on-error once the brew tap is public and the
+    # `release` job above has cut a cask release (L1.19) — then a red
+    # smoke-brew is real signal of a broken install path.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./scripts/smoke-brew.sh

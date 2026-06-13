@@ -1,0 +1,116 @@
+# Canonical CI — replaced .gitlab-ci.yml when the repo migrated off GitLab
+# CI (2026-06; the GitLab repo is archived). Jobs mirror the retired GitLab
+# pipeline: validate / lint / codegen-check / test / mermaid-validate /
+# e2e / e2e-staging.
+#
+# Deliberate differences from the retired GitLab pipeline:
+#   - No `resource_group: e2e_compile` equivalent: that serialization works
+#     around GitLab's 2-slot self-hosted runner pool OOM-wedging on concurrent
+#     aws-sdk-go-v2 compiles. GitHub-hosted runners are isolated VMs, so the
+#     heavy compiles can run in parallel here.
+#   - Module/build caching comes from actions/setup-go (keyed on go.sum),
+#     replacing the hand-rolled .go-cache template.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded runs on PRs; let pushes to main always run to completion.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          # Resolves the `toolchain go1.26.4` pin in go.mod, so CI builds with
+          # exactly the pinned toolchain (GitLab floats on golang:1.26).
+          go-version-file: go.mod
+      - run: go mod download
+      - run: go vet ./...
+      - run: go build ./cmd/cbx
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pinned to major.minor so CI matches the maintainers' local v2.11.x
+          # (same pin as the GitLab golangci/golangci-lint:v2.11 image).
+          version: v2.11
+
+  codegen-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go mod download
+      - run: make codegen-check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # ./e2e is excluded: the dedicated `e2e` job below runs that suite.
+      - run: |
+          # shellcheck disable=SC2046  # the package list must word-split into args
+          go test -v $(go list ./... | grep -v /e2e)
+
+  # Mermaid fixture validation — ensures mermaid v10+ syntax is correct.
+  # ubuntu-latest ships Chrome's shared-library deps, so the apt-get pile from
+  # the GitLab node:22-slim job is unnecessary; --no-sandbox is still needed
+  # because puppeteer's bundled Chromium can't sandbox on these runners.
+  mermaid-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install -g @mermaid-js/mermaid-cli
+      - run: |
+          echo '{"args":["--no-sandbox"]}' > /tmp/puppeteer-config.json
+          mmdc -p /tmp/puppeteer-config.json -i internal/output/testdata/diagram.mmd -o /tmp/out.svg
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -v ./e2e/...
+
+  # Staging E2E — compiles & runs the e2e suite under the e2e_staging build tag.
+  # TestStagingConnectivity is OPT-IN (CB_E2E_STAGING): it drives an interactive
+  # device-code login, so it self-skips in unattended CI and this job stays
+  # green (it then mirrors `e2e`, just under the build tag). Fork PRs need no
+  # secrets here. See e2e/staging_test.go and the matching GitLab job.
+  e2e-staging:
+    runs-on: ubuntu-latest
+    env:
+      CB_API_URL: "https://api.staging.cloudbooster.io"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test -v ./e2e/... -tags=e2e_staging

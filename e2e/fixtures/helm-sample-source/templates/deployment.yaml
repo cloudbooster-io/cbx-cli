@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name | default "cbx-audit-source-helm-demo" }}
+  labels:
+    app: {{ .Release.Name | default "demo" }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name | default "demo" }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name | default "demo" }}
+    spec:
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: 80
+          # Mirrors the K8s fixture's misconfiguration so checkov / trivy
+          # against the rendered template have something to flag.
+          securityContext:
+            privileged: {{ .Values.securityContext.privileged }}
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+            allowPrivilegeEscalation: true

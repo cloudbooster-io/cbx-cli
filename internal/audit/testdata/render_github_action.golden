@@ -1,0 +1,4 @@
+::error file=bucket-1,title=S3-002::S3 bucket encryption not configured — The S3 bucket lacks server-side encryption configuration.
+::warning file=bucket-1,title=S3-001::S3 bucket versioning not enabled — The S3 bucket does not have versioning enabled, which prevents recovery from accidental deletion or overwrites.
+::error file=sg-1,title=EC2-001::Security group allows unrestricted ingress — A security group rule allows ingress from 0.0.0.0/0 on a sensitive port.
+::notice file=func-1,title=LAMBDA-001::Lambda function environment variables may contain secrets — Environment variables on Lambda functions are visible in plain text.

@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "rule_id": "S3-002",
+      "title": "S3 bucket encryption not configured",
+      "description": "The S3 bucket lacks server-side encryption configuration.",
+      "severity": "high",
+      "resource": "bucket-1",
+      "service": "S3",
+      "remediation": "Enable SSE-S3 or SSE-KMS encryption on the bucket."
+    },
+    {
+      "rule_id": "S3-001",
+      "title": "S3 bucket versioning not enabled",
+      "description": "The S3 bucket does not have versioning enabled, which prevents recovery from accidental deletion or overwrites.",
+      "severity": "warning",
+      "resource": "bucket-1",
+      "service": "S3",
+      "remediation": "Enable versioning on the S3 bucket."
+    },
+    {
+      "rule_id": "EC2-001",
+      "title": "Security group allows unrestricted ingress",
+      "description": "A security group rule allows ingress from 0.0.0.0/0 on a sensitive port.",
+      "severity": "high",
+      "resource": "sg-1",
+      "service": "EC2",
+      "remediation": "Restrict security group ingress to specific CIDR blocks."
+    },
+    {
+      "rule_id": "LAMBDA-001",
+      "title": "Lambda function environment variables may contain secrets",
+      "description": "Environment variables on Lambda functions are visible in plain text.",
+      "severity": "info",
+      "resource": "func-1",
+      "service": "Lambda",
+      "remediation": "Use AWS Secrets Manager or Parameter Store for sensitive values."
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# Intentionally misconfigured CloudFormation fixture for `cbx audit --source`.
+# Do not copy into real infrastructure.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: cbx audit source-mode CFN canary
+
+Resources:
+  DemoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: cbx-audit-source-cfn-demo
+      # No PublicAccessBlockConfiguration, no BucketEncryption, no VersioningConfiguration
+      # — at least one of these is flagged by checkov / trivy.
+
+  WideOpenSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Intentionally permissive — fixture only.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0

@@ -1,0 +1,28 @@
+Severity  Count
+--------  -----
+HIGH      2
+WARNING   1
+INFO      1
+
+=== HIGH ===
+
+[HIGH] EC2-001 — Security group allows unrestricted ingress
+  Resource: sg-1 (EC2)
+  Remediation: Restrict security group ingress to specific CIDR blocks.
+
+[HIGH] S3-002 — S3 bucket encryption not configured
+  Resource: bucket-1 (S3)
+  Remediation: Enable SSE-S3 or SSE-KMS encryption on the bucket.
+
+=== WARNING ===
+
+[WARNING] S3-001 — S3 bucket versioning not enabled
+  Resource: bucket-1 (S3)
+  Remediation: Enable versioning on the S3 bucket.
+
+=== INFO ===
+
+[INFO] LAMBDA-001 — Lambda function environment variables may contain secrets
+  Resource: func-1 (Lambda)
+  Remediation: Use AWS Secrets Manager or Parameter Store for sensitive values.
+
