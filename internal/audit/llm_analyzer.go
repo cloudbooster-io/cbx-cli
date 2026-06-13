@@ -349,6 +349,7 @@ func (l *llmAnalyzer) ScanSource(ctx context.Context, dir string) ([]Finding, er
 			findings = l.appendTruncationFinding(findings, len(resources), omitted)
 		}
 		findings = l.appendKnowledgePartialFinding(findings, bundle)
+		findings = l.appendRulesProvenanceFindings(findings)
 	}
 	return findings, nil
 }

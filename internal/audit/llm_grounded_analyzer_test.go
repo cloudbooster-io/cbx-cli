@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle"
 	"github.com/cloudbooster-io/cbx-cli/internal/audit/rulesbundle/rulesbundletest"
 )
 
@@ -157,6 +158,49 @@ func TestLLMAnalyzer_Grounded_BackfillsSnippetFromTrail(t *testing.T) {
 	}
 	if findings[0].CBSource == nil || !strings.Contains(findings[0].CBSource.Snippet, "Private bucket") {
 		t.Errorf("snippet not backfilled from trail: %+v", findings[0].CBSource)
+	}
+}
+
+// TestLLMAnalyzer_Grounded_EmitsRulesProvenance pins that the source-mode
+// grounded path appends the rulepack provenance meta-finding, mirroring
+// ScanResources. A grounded run that resolved a pack through the ladder
+// must be able to name it (the project treats an unnamed pack as
+// unscoreable). This regressed silently before — ScanSource omitted the
+// appendRulesProvenanceFindings tail call that ScanResources had.
+func TestLLMAnalyzer_Grounded_EmitsRulesProvenance(t *testing.T) {
+	useFakeKnowledgeBackend(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(`resource "aws_s3_bucket" "x" {}`), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	stream := &fakeGroundedStreamer{
+		response: `{"findings":[{"rule_id":"LLM-CB-001","title":"S3","severity":"high","resource":"aws_s3_bucket.x","cb_source":{"tool":"aws_lookup_primitive","key":"aws:s3/bucket@v1"}}]}`,
+		cost:     0.10,
+	}
+	a := newGroundedTestAnalyzer(t, stream, 2.0)
+	// A non-zero provenance is what arms appendRulesProvenanceFindings;
+	// direct test constructions never run the resolution ladder, so inject
+	// a clean "network" resolution of the synthetic pack the analyzer holds.
+	a.rulesProv = rulesbundle.Provenance{
+		Source: "network", PackVersion: 1, SchemaVersion: 1,
+		ContentSHA256: a.rules.Manifest.ContentSHA256,
+	}
+
+	findings, err := a.ScanSource(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ScanSource: %v", err)
+	}
+
+	var found bool
+	for _, f := range findings {
+		if f.RuleID == "LLM-CB-RULES-PROVENANCE" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("grounded ScanSource did not emit LLM-CB-RULES-PROVENANCE; got %+v", findings)
 	}
 }
 
