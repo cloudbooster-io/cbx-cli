@@ -1,12 +1,9 @@
 # Code owners for cbx-cli. GitHub requests review from these owners on PRs
-# that touch matching paths.
-#
-# NOTE: replace @cloudbooster-io/maintainers with the real GitHub team or
-# usernames before relying on automatic review assignment.
+# that touch matching paths. Maintainers are also listed in /MAINTAINERS.md.
 
-* @cloudbooster-io/maintainers
+* @rforgac @snopedom
 
 # Public, importable surface consumed by downstream modules — review with care,
 # changes here are semver-public.
-/pkg/   @cloudbooster-io/maintainers
-/core/  @cloudbooster-io/maintainers
+/pkg/   @rforgac @snopedom
+/core/  @rforgac @snopedom
