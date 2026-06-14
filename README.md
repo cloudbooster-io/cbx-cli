@@ -30,14 +30,20 @@ $ cbx audit aws prod --region eu-central-1
 
 `cbx audit aws` reads a live account through the AWS SDK — **strictly
 read-only** — and grounds every finding in CloudBooster's curated AWS
-knowledge base, analyzed with [Claude Code](https://github.com/anthropics/claude-code)
-(`claude` must be on your `PATH`). You get findings that cite *why* something
-matters, written to a markdown report.
+knowledge base, analyzed by a local LLM CLI. You get findings that cite
+*why* something matters, written to a markdown report.
+
+The grounding CLI is your choice via `--llm-executor`:
+[Claude Code](https://github.com/anthropics/claude-code) (`claude -p`, the
+default) or the [Codex CLI](https://github.com/openai/codex) (`codex exec`,
+with `--llm-executor codex`). The selected binary must be on your `PATH` and
+own its own authentication.
 
 Audit the default profile, a named one, or several regions at once:
 
 ```bash
-cbx audit aws
+cbx audit aws --region us-east-1                       # default: Claude Code
+cbx audit aws --region us-east-1 --llm-executor codex  # ground with Codex
 cbx audit aws prod --region us-east-1 --region us-west-2
 ```
 
@@ -58,12 +64,26 @@ Every release is Cosign-signed and ships a Syft SBOM. Once installed,
 ## Quick start
 
 ```bash
-# Audit (read-only; needs AWS credentials + `claude` on PATH)
+# Audit (read-only; needs AWS credentials + a grounding CLI on PATH)
 cbx audit aws
 
-# Optional: pin the model Claude Code runs with
+# Verify the grounding CLI is installed and authed (claude-code or codex)
+cbx llm cli test claude-code
+
+# Optional: choose Codex as the default grounding executor
+cbx llm default codex
+
+# Optional: pin the model an executor runs with
 cbx llm model claude-code claude-opus-4-8
+cbx llm model codex gpt-5-codex
 ```
+
+The grounding CLI must be on `PATH` and own its own auth — for an API
+provider, run `cbx llm api login <provider>`. `--llm-executor` defaults to
+whatever `cbx llm default` names (when it's `claude-code` or `codex`),
+otherwise `claude-code`. Pin a one-off model with `--llm-model`, and cap a
+run's spend with `--llm-max-cost` (USD) — note the cap is enforced only for
+`claude-code`; `codex exec` reports no per-run cost, so it's a no-op there.
 
 `cbx login` is optional — it unlocks CloudBooster account features, but
 auditing works anonymously.
