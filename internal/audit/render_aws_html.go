@@ -1,7 +1,7 @@
 package audit
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -219,8 +219,17 @@ func severityRank(sev string) int {
 // hand a real file back to the user without needing the .md sibling
 // on disk.
 func renderHTMLShell(body, markdownSource, mdFileName string, ctx AWSAuditContext) string {
-	mdJSON, _ := json.Marshal(markdownSource)
-	mdNameJSON, _ := json.Marshal(mdFileName)
+	// Both values are embedded into JavaScript contexts (the md-source
+	// <script type="text/plain"> block and the `const mdFile = …`
+	// assignment). Embed them base64-encoded so a markdown report or
+	// filename containing </script>, quotes, or the U+2028/U+2029 line
+	// terminators can't break out of its enclosing literal — the base64
+	// alphabet is [A-Za-z0-9+/=] only, so there is nothing to escape and
+	// nothing to inject. The page JS decodes both back via atob + a UTF-8
+	// TextDecoder (the source is UTF-8, so a bare atob would mojibake
+	// multi-byte characters).
+	mdB64 := base64.StdEncoding.EncodeToString([]byte(markdownSource))
+	mdNameB64 := base64.StdEncoding.EncodeToString([]byte(mdFileName))
 	titleSuffix := ""
 	if ctx.AccountID != "" {
 		titleSuffix = " · " + ctx.AccountID
@@ -230,8 +239,8 @@ func renderHTMLShell(body, markdownSource, mdFileName string, ctx AWSAuditContex
 	return fmt.Sprintf(htmlShellTemplate,
 		htmlEscape("CloudBooster Audit"+titleSuffix),
 		body,
-		string(mdJSON),
-		string(mdNameJSON),
+		mdB64,
+		mdNameB64,
 	)
 }
 
@@ -1705,9 +1714,21 @@ const htmlShellTemplate = `<!DOCTYPE html>
     // on disk is the authoritative copy; this is here so the HTML is
     // self-portable (emailable, archivable) without breaking the
     // download button if the .md is missing.
+    //
+    // The markdown source and filename are embedded base64-encoded so
+    // arbitrary content (</script>, quotes, U+2028/U+2029) can never
+    // break out of the surrounding literal. b64ToUtf8 decodes them back
+    // to the original UTF-8 text; a bare atob() would corrupt multi-byte
+    // characters, so we round-trip the bytes through TextDecoder.
+    function b64ToUtf8(b64) {
+      const clean = (b64 || '').trim();
+      if (!clean) return '';
+      const bytes = Uint8Array.from(atob(clean), function(c) { return c.charCodeAt(0); });
+      return new TextDecoder('utf-8').decode(bytes);
+    }
     const mdEl = document.getElementById('md-source');
-    const mdText = mdEl ? mdEl.textContent : '';
-    const mdFile = %s;
+    const mdText = mdEl ? b64ToUtf8(mdEl.textContent) : '';
+    const mdFile = b64ToUtf8("%s");
 
     // ---- Theme toggle (auto → light → dark → auto) ----
     // Persists via localStorage so the user's pick survives reloads.
