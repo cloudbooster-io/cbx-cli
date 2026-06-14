@@ -3,6 +3,7 @@ package audit
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -853,6 +854,12 @@ func (m Model) renderKeymap() string {
 // ---- platform shims ----
 
 func openInOS(path string) error {
+	// Resolve to an absolute path so the OS handler (which may run with a
+	// different working directory) finds the file, and so we never hand a
+	// relative, ambiguous string to the platform opener.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -860,7 +867,11 @@ func openInOS(path string) error {
 	case "linux":
 		cmd = exec.Command("xdg-open", path)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", path)
+		// Do NOT use `cmd /c start <path>`: cmd.exe treats &, |, <, >, ^ in
+		// the path as shell metacharacters, so a report filename containing
+		// them could inject commands. rundll32 receives the path as a single
+		// argv element (Go quotes it) and never runs it through a shell.
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
 	default:
 		return fmt.Errorf("open not supported on %s", runtime.GOOS)
 	}

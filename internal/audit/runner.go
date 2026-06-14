@@ -418,7 +418,10 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 		// that sanitize inline <svg> link to this asset instead.
 		if result.DiagramSVG != "" {
 			svgPath := strings.TrimSuffix(reportPath, ".md") + ".svg"
-			if err := os.WriteFile(svgPath, []byte(result.DiagramSVG), 0o644); err == nil {
+			// 0o600: the report, its SVG/HTML siblings and the state sidecar
+			// all embed the account ID, resource inventory and findings —
+			// owner-only, not the world-readable default, on shared hosts.
+			if err := os.WriteFile(svgPath, []byte(result.DiagramSVG), 0o600); err == nil {
 				result.DiagramSVGFile = filepath.Base(svgPath)
 			}
 		}
@@ -430,7 +433,7 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 	} else {
 		report = RenderMarkdown(findings)
 	}
-	if writeErr := os.WriteFile(reportPath, []byte(report), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(reportPath, []byte(report), 0o600); writeErr != nil {
 		return nil, fmt.Errorf("writing report: %w", writeErr)
 	}
 
@@ -442,7 +445,7 @@ func RunFromResources(opts Options, resources []DiscoveredResource, awsCtx *AWSA
 	if awsCtx != nil {
 		htmlPath := strings.TrimSuffix(reportPath, ".md") + ".html"
 		html := RenderAWSHTML(result, *awsCtx, report)
-		if writeErr := os.WriteFile(htmlPath, []byte(html), 0o644); writeErr != nil {
+		if writeErr := os.WriteFile(htmlPath, []byte(html), 0o600); writeErr != nil {
 			return nil, fmt.Errorf("writing html report: %w", writeErr)
 		}
 		result.HTMLReportPath = htmlPath
@@ -482,7 +485,7 @@ func Run(opts Options) (*Result, error) {
 		reportPath = defaultReportPath(opts)
 	}
 
-	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o644); writeErr != nil {
+	if writeErr := os.WriteFile(reportPath, []byte(RenderMarkdown(findings)), 0o600); writeErr != nil {
 		return nil, fmt.Errorf("writing report: %w", writeErr)
 	}
 

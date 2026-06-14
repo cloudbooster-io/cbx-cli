@@ -200,7 +200,11 @@ func runStatus(cmd *cobra.Command) error {
 	if token != nil && len(token.AccessToken) > 16 {
 		fingerprint = token.AccessToken[:8] + "…" + token.AccessToken[len(token.AccessToken)-8:]
 	} else if token != nil && token.AccessToken != "" {
-		fingerprint = token.AccessToken
+		// Never print a short token verbatim — a fingerprint must never BE
+		// the secret. Tokens this short only show up in tests/mocks today,
+		// but the redaction is unconditional so a future short token can't
+		// leak to the status card or --json output.
+		fingerprint = "[redacted]"
 	}
 
 	expiry := "—"
