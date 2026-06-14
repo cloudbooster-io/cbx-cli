@@ -5,7 +5,11 @@
 If you believe you have found a security vulnerability in `cbx-cli`,
 please report it privately. **Do not open a public GitHub issue.**
 
-Email: **security@cloudbooster.io**
+Preferred: open a private report through GitHub Security Advisories —
+[**Report a vulnerability**](https://github.com/cloudbooster-io/cbx-cli/security/advisories/new).
+This keeps the report, our discussion, and any fix coordinated in one place.
+
+Alternatively, email **security@cloudbooster.io**.
 
 Please include:
 
