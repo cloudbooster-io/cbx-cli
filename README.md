@@ -109,86 +109,23 @@ cbx audit aws -o json -q || [ $? -lt 3 ]
 
 ## What a real run looks like
 
-Below is genuine `cbx audit aws` output (cbx `v0.1.0`, grounded with the Codex
-CLI) against a small, deliberately-misconfigured serverless stack — an HTTP API
-Gateway fronting an admin-privileged Lambda backed by a DynamoDB table. Account
-IDs, resource IDs and ARNs are scrubbed; nothing else is edited.
+Findings stream into an interactive TUI as they're discovered, each with a
+detail pane showing the remediation and the CloudBooster knowledge it's
+grounded in:
 
-```console
-$ cbx audit aws --region eu-central-1 --no-tui
+<p align="center">
+  <img src="docs/examples/assets/cbx-audit-tui.gif" alt="cbx audit aws TUI showing grounded findings" width="800">
+</p>
 
-20 findings    [CRITICAL] × 2    [HIGH] × 3    [WARNING] × 11    [INFO] × 4
+This is a genuine `cbx v0.1.0` run against a deliberately-misconfigured
+serverless stack (HTTP API → admin-privileged Lambda → DynamoDB) — two
+CRITICALs, three HIGHs, and a long tail of warnings. The worst finding is
+critical, so it **exits `3`** (CI-gate ready). On exit `cbx` also writes a
+styled HTML/Markdown report with an architecture diagram.
 
-CRITICAL · 2
-
-  [CRITICAL]  IAM role cbx-serverless-lambda-admin has AdministratorAccess
-    iam | role | cbx-serverless-lambda-admin | eu-central-1
-
-    Remove AdministratorAccess and attach a least-privilege policy scoped to the exact DynamoDB,
-    Secrets Manager, CloudWatch Logs, and other APIs the functions require.
-
-    rule LLM-codex-9403a4d9
-
-  [CRITICAL]  Unauthenticated API route invokes admin-privileged Lambda
-    apigatewayv2 | route | a1b2c3d4e5|r5t6y7u | eu-central-1
-
-    Require JWT, IAM, or Lambda authorization on the route, and replace the Lambda execution role
-    with least-privilege permissions scoped to only the resources the function needs.
-
-    rule LLM-codex-cfd35275
-
-HIGH · 3
-
-  [HIGH]  No CloudTrail covers eu-central-1                          account:123456789012
-  [HIGH]  Root account MFA is disabled                               account:123456789012
-  [HIGH]  Default EBS encryption is disabled in eu-central-1         account:123456789012
-
-WARNING · 11
-
-  [WARNING]  DynamoDB table cbx-serverless-items has point-in-time recovery disabled
-  [WARNING]  DynamoDB table cbx-serverless-items lacks deletion protection
-  [WARNING]  API Gateway access logging is disabled
-  [WARNING]  Lambda cbx-serverless-api has no dead-letter queue
-  ... 7 more
-
-INFO · 4
-
-  [INFO]  Review secret-shaped Lambda environment variable on cbx-serverless-api
-  ... 3 more
-
-[OK] report 123456789012_audit_report.md
-  open in browser 123456789012_audit_report.html
-```
-
-The worst finding is `critical`, so the command **exits `3`** (see the table
-above) — drop-in for a CI gate. The two CRITICALs compound: a public route with
-no authorizer in front of a Lambda that runs as account admin is an
-internet → account-takeover path, which the audit surfaces as one finding.
-
-Every finding carries its grounding. With `-o json` you get the stable
-`{data, error}` envelope, and each finding cites the CloudBooster knowledge
-primitive that justifies it under `cb_source`:
-
-```json
-{
-  "rule_id": "LLM-codex-ac715732",
-  "title": "AdministratorAccess attached to cbx-serverless-lambda-admin",
-  "severity": "critical",
-  "resource": "aws://eu-central-1/AWS::IAM::Role/cbx-serverless-lambda-admin",
-  "service": "IAM",
-  "remediation": "Replace AdministratorAccess with a least-privilege Lambda execution policy scoped to the exact DynamoDB, logs, and other resources the functions require.",
-  "cb_source": {
-    "tool": "aws_lookup_primitive",
-    "key": "aws:iam/role@v1",
-    "snippet": "Avoid wildcard actions and resources: never use Action: \"*\" or Resource: \"*\" in production policies."
-  }
-}
-```
-
-> The grounded audit needs a grounding LLM CLI on your `PATH` and authenticated
-> (`claude` or `codex` — verify with `cbx llm cli test claude-code`) plus network
-> access to the CloudBooster knowledge API. See the
-> [full guide](https://docs.cloudbooster.io) for the complete walkthrough.
+→ **[See the full example](docs/examples/serverless-api.md)** — the rendered
+report, the architecture diagram, and the `-o json` envelope with `cb_source`
+citations. (All identifiers scrubbed.)
 
 ## Use it as a Go library
 
