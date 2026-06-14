@@ -94,7 +94,16 @@ func scrubEnv(allowAWS bool) []string {
 // JSON parsers downstream. On error stderr is folded into the returned
 // error message so the user still sees it.
 func runScanner(ctx context.Context, name string, args []string, allowAWS bool) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	// Resolve the binary against PATH up front. exec.CommandContext would
+	// resolve it the same way, but pinning the absolute path makes the lookup
+	// intentional and keeps parity with the LLM CLI streamers. Fall back to
+	// the bare name on lookup failure so checkVersion's missing-binary
+	// diagnostics and error messages stay unchanged.
+	bin := name
+	if resolved, lookErr := exec.LookPath(name); lookErr == nil {
+		bin = resolved
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = scrubEnv(allowAWS)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -234,7 +243,10 @@ func writeResourcesToTempDir(resources []Resource) (string, error) {
 			_ = os.RemoveAll(dir)
 			return "", fmt.Errorf("marshaling resource: %w", err)
 		}
-		if err := os.WriteFile(filename, data, 0o644); err != nil {
+		// 0o600: these temp files hold the discovered resource inputs handed
+		// to the scanner; the parent temp dir is already 0o700, but keep the
+		// files owner-only too for defence in depth.
+		if err := os.WriteFile(filename, data, 0o600); err != nil {
 			_ = os.RemoveAll(dir)
 			return "", fmt.Errorf("writing resource file: %w", err)
 		}
@@ -292,7 +304,9 @@ func writeTerraformStateFile(resources []Resource) (string, error) {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("marshaling state: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// 0o600: the synthetic tfstate carries the discovered resource inputs;
+	// keep it owner-only inside the already-0o700 temp dir.
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("writing state file: %w", err)
 	}

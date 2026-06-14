@@ -369,7 +369,14 @@ func doTokenRequest(ctx context.Context, tokenURL string, data url.Values) (*Exc
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
+		// Truncate the upstream body before surfacing it — mirrors the
+		// knowledge client's error handling so a verbose or sensitive error
+		// body can't land in logs/stderr verbatim.
+		msg := strings.TrimSpace(string(body))
+		if len(msg) > 240 {
+			msg = msg[:240] + "…"
+		}
+		return nil, fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, msg)
 	}
 
 	var result struct {

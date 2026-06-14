@@ -205,9 +205,11 @@ func RenderMarkdown(findings []Finding) string {
 	return sb.String()
 }
 
-// WriteMarkdownReport writes the markdown report to the given path.
+// WriteMarkdownReport writes the markdown report to the given path. The file
+// is created 0o600: reports embed findings and infrastructure detail and
+// should not be world-readable on shared hosts.
 func WriteMarkdownReport(path string, findings []Finding) error {
-	return os.WriteFile(path, []byte(RenderMarkdown(findings)), 0o644)
+	return os.WriteFile(path, []byte(RenderMarkdown(findings)), 0o600)
 }
 
 // RenderSARIF returns findings formatted as SARIF JSON.

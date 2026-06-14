@@ -853,14 +853,14 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 	for _, e := range kept {
 		r := e.resource
 		sb.WriteString("---- ")
-		sb.WriteString(r.Type)
+		sb.WriteString(sanitizePromptField(r.Type))
 		if r.URN != "" {
 			sb.WriteString(" :: ")
-			sb.WriteString(r.URN)
+			sb.WriteString(sanitizePromptField(r.URN))
 		}
 		if r.Region != "" {
 			sb.WriteString(" [")
-			sb.WriteString(r.Region)
+			sb.WriteString(sanitizePromptField(r.Region))
 			sb.WriteString("]")
 		}
 		pid := primitiveIDFor(r)
@@ -879,6 +879,29 @@ func writeResourceTable(sb *strings.Builder, resources []DiscoveredResource) {
 			omitted, defaultLLMMaxPromptResources, defaultLLMMaxResourceTableBytes)
 	}
 	sb.WriteString("==== END DISCOVERED RESOURCES ====\n\n")
+}
+
+// sanitizePromptField strips control characters (notably newlines, CR and
+// tab) from a value before it is written into the discovered-resources
+// prompt header. Type/URN/Region originate from AWS API responses; AWS
+// naming rules already forbid newlines, but defence in depth keeps a hostile
+// value from breaking out of the table structure — e.g. forging an
+// "==== END ... ====" marker or injecting instructions — if those guarantees
+// ever change. The serialised Inputs payload is already safe (json.Marshal
+// escapes control chars), so only these header fields need it. The mapping
+// is a no-op for well-formed AWS identifiers, so deterministic prompts and
+// golden fixtures are unaffected.
+func sanitizePromptField(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1 // drop other C0 control chars
+		default:
+			return r
+		}
+	}, s)
 }
 
 // serialiseInputs renders a resource's Inputs map as deterministic

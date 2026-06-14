@@ -40,7 +40,10 @@ func SaveAuditState(path string, s AuditState) error {
 	if err != nil {
 		return fmt.Errorf("marshal audit state: %w", err)
 	}
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	// 0o600: audit state carries the account ID, the full resource inventory
+	// and findings — restrict to the owner rather than the world-readable
+	// default on shared hosts.
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return fmt.Errorf("write audit state: %w", err)
 	}
 	return nil
