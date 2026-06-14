@@ -4,7 +4,7 @@
 
 ### Audit it after you ship it.
 
-**The CloudBooster CLI — AWS audits grounded in curated cloud expertise<br>instead of generic advice.**
+**The CloudBooster CLI — AWS audits grounded in CloudBooster's curated AWS knowledge,<br>not generic LLM advice.**
 
 [![CI](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudbooster-io/cbx-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/cloudbooster-io/cbx-cli)](https://github.com/cloudbooster-io/cbx-cli/releases)
@@ -32,6 +32,8 @@ $ cbx audit aws prod --region eu-central-1
 read-only** — and grounds every finding in CloudBooster's curated AWS
 knowledge base, analyzed by a local LLM CLI. You get findings that cite
 *why* something matters, written to a markdown report.
+
+📖 Full documentation: **[docs.cloudbooster.io](https://docs.cloudbooster.io)**
 
 The grounding CLI is your choice via `--llm-executor`:
 [Claude Code](https://github.com/anthropics/claude-code) (`claude -p`, the
