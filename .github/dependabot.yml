@@ -7,6 +7,16 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: deps
+    groups:
+      # One weekly PR for all non-major Go module bumps. Major bumps stay
+      # ungrouped so they still get an individual PR + human review (pkg/* is
+      # a semver-public library contract — see CLAUDE.md).
+      gomod:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -14,3 +24,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: ci
+    groups:
+      # One weekly PR for all non-major GitHub Actions bumps.
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
