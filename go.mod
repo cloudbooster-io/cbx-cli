@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/backup v1.57.4
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
-	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.8
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.1
