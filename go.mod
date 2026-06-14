@@ -9,16 +9,16 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.18
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.5
-	github.com/aws/aws-sdk-go-v2/service/backup v1.57.4
+	github.com/aws/aws-sdk-go-v2/service/backup v1.57.6
 	github.com/aws/aws-sdk-go-v2/service/cloudcontrol v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.1
-	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/configservice v1.64.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.8
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.1
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.83.0
 	github.com/aws/aws-sdk-go-v2/service/eks v1.85.0
-	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.54.14
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.4
 	github.com/aws/aws-sdk-go-v2/service/glue v1.143.0
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.2
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
